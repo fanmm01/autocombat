@@ -512,7 +512,10 @@ class QTrainer:
             pd = engine.hp_diff(mt) - engine.hp_diff('X' if mt=='Y' else 'Y')
             execute_action(engine, uid, ak)
             is_xs_act = engine.get_char(uid).get_attr('技能不消耗主动', 0) == 1 and ak.startswith('SKILL_')
-            if not is_xs_act:
+            is_bonus_act = ak.startswith('EAT_CAKE') or ak.startswith('GIVE_CAKE')
+            if is_bonus_act:
+                acts['附加'] = max(0, acts.get('附加', 0) - 1); engine._set_actions(engine._get_actions())
+            elif not is_xs_act:
                 acts['主动']-=1; engine._set_actions(engine._get_actions())
             if acts['主动']<=0: engine._end_turn(uid)
             cd = engine.hp_diff(mt) - engine.hp_diff('X' if mt=='Y' else 'Y')
