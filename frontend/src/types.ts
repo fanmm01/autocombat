@@ -5,8 +5,8 @@ export function compareSerials(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-export function sortBySerial<T extends { serial: string }>(items: readonly T[]): T[] {
-  return [...items].sort((a, b) => compareSerials(a.serial, b.serial));
+export function sortBySerial<T extends { serial?: string }>(items: readonly T[]): T[] {
+  return [...items].sort((a, b) => compareSerials(a.serial ?? '', b.serial ?? ''));
 }
 export type Skill = { index: number; skill_id?: string; name: string; command: string; timing: string; mp_cost: number | string; san_cost?: number | string; formula?: string; effects: Effect[]; available: boolean; reason: string; cooldown: number; revive_candidates: string[]; once: boolean };
 export type Unit = { uid: string; serial: string; name: string; team: string; coord: string; hp: number; hp_max: number; mp: number; mp_max: number; san: number; summon: boolean; owner?: string; representative: string; group_count: number; spirit?: number; statuses: Effect[]; buffs: Effect[]; inventory: Effect[]; controller: string; move_remaining: number; actions: Record<string, number>; phase: number; auto_reaction?: { enabled: boolean; choice: string; remaining: number; revision: number }; reaction_choices?: string[] };
