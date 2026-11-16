@@ -1,0 +1,317 @@
+{
+  "total": 62,
+  "passed": 62,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Character name",
+      "pass": true,
+      "detail": "夜诏明"
+    },
+    {
+      "name": "Serial Y17",
+      "pass": true,
+      "detail": "Y17"
+    },
+    {
+      "name": "HP=7",
+      "pass": true,
+      "detail": "7"
+    },
+    {
+      "name": "MP=26",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "MOV=8",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "闪避=85",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Initial blood 2000ml",
+      "pass": true,
+      "detail": "2000"
+    },
+    {
+      "name": "_add_blood +500",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Blood after add = 2500",
+      "pass": true,
+      "detail": "2500"
+    },
+    {
+      "name": "_consume_blood 300 success",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Blood after consume = 2200",
+      "pass": true,
+      "detail": "2200"
+    },
+    {
+      "name": "_consume_blood 3000 fail",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Blood still 2200",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "9 combat spells loaded (3 non-combat filtered)",
+      "pass": true,
+      "detail": "Got 9: ['阿瑞卡纳律动', '凝血式-守', '祭炼式-破', '凝血式-幻', '污血战争', '凝血式-存', '血染披风', '血月斩击', '血色突刺']"
+    },
+    {
+      "name": "s2 阿瑞卡纳律动 loaded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s3 凝血式-守 loaded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s4 祭炼式-破 loaded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 污血战争 loaded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s10 血染披风 loaded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s11 血月斩击 loaded",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s3 timing=3 (附加)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s3 cost_blood_ml=300",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s3 casts on self",
+      "pass": true,
+      "detail": "夜诏明 释放【凝血式-守】→ 自身\n  消耗 300ml 血液\n  获得 1 点护盾 (1)\n"
+    },
+    {
+      "name": "s10 cost_blood_ml=1000",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s10 is heal category",
+      "pass": true,
+      "detail": "3"
+    },
+    {
+      "name": "s12 cost_blood_ml=1000",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s12 is summon category",
+      "pass": true,
+      "detail": "5"
+    },
+    {
+      "name": "s12 template=血液长枪",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "血液长枪 in templates",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 cost_mp_pct_max=20",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 cost_hp_dice=1d8",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 on_kill_heal_hp=1",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 on_kill_blood_ml=300",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 chain_on_blood_ml=3000",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 damage=2d12",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s6 executes",
+      "pass": true,
+      "detail": "夜诏明 释放【污血战争】→ 测试目标\n  消耗 4 HP (1d8)\n  消耗 5 MP\n  消耗 4 SAN\n  成功率检定: D100=50/100, 10位5, 个位0 困难成功！\n测试目标 的反应【闪避=30】(法术):\n  D100=59/30, 10位5, 个位9 失败\n  夜诏明 的法术突破闪避！(有效等级:困难成功)\n  伤害: 优势(2d12(10+3=13)=13, 2d12("
+    },
+    {
+      "name": "s2 吟唱回合=3",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s2 mp_cost_formula set",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s2 cost_blood_ml=100",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s2 damage_mp_multiplier=4",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s2 starts chanting",
+      "pass": true,
+      "detail": "夜诏明 释放【阿瑞卡纳律动】→ 测试目标\n  消耗 100ml 血液\n  消耗 13 MP\n  开始吟唱【阿瑞卡纳律动】（3回合後发动）\n"
+    },
+    {
+      "name": "chanting effect created",
+      "pass": true,
+      "detail": "Found 1 chanting effects"
+    },
+    {
+      "name": "chant rounds=3",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "chant interruptible=False",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "chant stores effects",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s4 吟唱回合=2",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s4 chant_interruptible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s4 interrupt_hp_pct=90",
+      "pass": true,
+      "detail": "90"
+    },
+    {
+      "name": "s4 damage_pct_caster_max_hp=90",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s4 starts chanting",
+      "pass": true,
+      "detail": "夜诏明 释放【祭炼式-破】→ 测试目标\n  开始吟唱【祭炼式-破】（2回合後发动）\n"
+    },
+    {
+      "name": "Has interruptible chanting before hit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Interrupt triggered",
+      "pass": true,
+      "detail": "['夜诏明 吟唱【祭炼式-破】被打断！损失 6 HP！', '夜诏明 损失 13 MP！']"
+    },
+    {
+      "name": "Chant removed after interrupt",
+      "pass": true,
+      "detail": "Still 0 chanting"
+    },
+    {
+      "name": "s11 cost_blood_ml=500",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s11 extra_attack_per_blood=1000",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s11 damage_table=moon_phase",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "_blood_ml_per_hp=250",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "_hp_to_blood_ml=250(pvp)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s7 heal_limit_not_dying",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "s7 is heal category",
+      "pass": true,
+      "detail": "3"
+    },
+    {
+      "name": "s2 MP cost = max(25%max, 50%cur)",
+      "pass": true,
+      "detail": "MP cost calculated"
+    },
+    {
+      "name": "s10 fails with low blood",
+      "pass": true,
+      "detail": "夜诏明 释放【血染披风】→ 自身\n  血液不足，献祭 4 HP 补足 950ml 血液\n  回复 MP +4\n"
+    }
+  ]
+}

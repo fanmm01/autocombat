@@ -7,7 +7,7 @@
 在项目根目录运行：
 
 ```powershell
-pip install flask
+python -m pip install -r requirements.txt
 python start_ui.py
 ```
 
@@ -28,8 +28,8 @@ cd frontend
 npm ci
 npm run build
 cd ..
-python merge_backend.py
-python autocombat_backend.py --host 127.0.0.1 --port 8889
+python scripts/merge_backend.py
+python backend/autocombat_backend.py --host 127.0.0.1 --port 8889
 ```
 
 开发时先启动 Python 后端（8889），再在 frontend 运行 `npm run dev`。代理会转发 `/api` 并设置同源 Origin；界面默认路径为 `/ui/`。正常使用推荐 Python 同源入口。
@@ -68,7 +68,7 @@ python autocombat_backend.py --host 127.0.0.1 --port 8889
 
 角色专属被动参数维护在 `../characters_data.py` 各角色的 `passive_rules` 中；冰冻循环、卡带资源、火鼠裘、写作收益和月能门槛不再散落在引擎计算中。血术月相表归入夜诏明的 `blood_rules.moon_phases`，初始武器使用 `initial_weapon`。这是数据归位，不是一次数值平衡调整。
 
-18 个角色徽记与 106 个技能 SVG 资源位于 `public/icons/`，可用 `python scripts/generate_library_icons.py`（在项目根目录执行）重新生成。新增角色时先补充资料和徽记路径；改动源码后重新构建前端，改动引擎后运行 `python merge_backend.py`，重启服务以载入新的 Python 模块。
+18 个角色徽记与 106 个技能 SVG 资源位于 `public/icons/`，可用 `python scripts/generate_library_icons.py`（在项目根目录执行）重新生成。新增角色时先补充资料和徽记路径；改动源码后重新构建前端，改动引擎后运行 `python scripts/merge_backend.py`，重启服务以载入新的 Python 模块。
 
 在 `public/portraits/` 放置 `Y1.webp` 等竖版图片、`Y1-avatar.webp` 等头像，再重新构建。没有图片时使用统一配色的徽记。推荐 3:4 竖版立绘与方形头像。界面设置可关闭动效。
 
@@ -85,8 +85,8 @@ python autocombat_backend.py --host 127.0.0.1 --port 8889
 ```powershell
 npm run build
 cd ..
-python -m unittest tests.test_ui tests.test_battle_execution tests.test_summon_groups tests.test_support_balance
-node tests/js_rules_check.js
+python scripts/run_tests.py tests.test_ui tests.test_battle_execution tests.test_summon_groups tests.test_support_balance
+node dev/tests/js_rules_check.js
 ```
 
 
@@ -162,7 +162,7 @@ WebUI 配置中的地图边长支持 8–16，允许长宽不同；命令行显�
 
 服务器保存支持版本冲突检查、类型与范围校验、原子替换和保存前备份。设置加入备份恢复；任务目录中的 `settings-snapshot.json` 记录创建时的配置。恢复旧版备份时，也会迁移原 Python 队伍表。分组恢复默认值需保存后生效，离开页面或刷新会提示未保存修改。
 
-配置逐项清单与核对结果见 [配置提取与验证](../artifacts/settings/配置提取与验证.md)。
+配置逐项清单与核对结果见 [配置提取与验证](../archive/artifacts/settings/配置提取与验证.md)。
 
 ## 帮助与角色资料
 

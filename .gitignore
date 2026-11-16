@@ -1,5 +1,30 @@
+# Python caches and local environments
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Build and release products
 frontend/node_modules/
 frontend/dist/
+backend/autocombat_backend.py
+releases/
+build/
+dist/
+
+# Local state, generated logs and simulation results
 .ui-runtime/
+*.log
+backend/result.txt
+backend/bracket_info.txt
+backend/sim_matrix_*.csv
+backend/sim_matrix_*.json
+backend/prelim_results*
+backend/prelim_avg_stats_results.txt
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

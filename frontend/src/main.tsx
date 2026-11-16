@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Activity, ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, CakeSlice, Check, ChevronDown, ChevronRight, CircleHelp, CirclePause, CirclePlay, Clock3, Compass, Copy, Diamond, Eye, Feather, Flame, Flower2, Gem, Heart, Home, Leaf, Link, LoaderCircle, MapPin, Moon, MoreHorizontal, MousePointer2, Plus, Radio, RotateCcw, Settings2, Shield, Snowflake, Sparkles, Star, StepForward, Sun, Sword, Swords, Users, Waves, Wifi, X, Zap, BarChart3, VolumeX } from 'lucide-react';
-import { api, requestId, type BattleEvent, type Character, type Effect, type Room, type Skill, type Snapshot, type Unit } from './types';
+import { api, requestId, sortBySerial, type BattleEvent, type Character, type Effect, type Room, type Skill, type Snapshot, type Unit } from './types';
 import './styles.css';
 import { characterStats } from './characterStats';
 import { withEncyclopedia, type CatalogCharacter } from './encyclopedia';
@@ -17,9 +17,9 @@ import { RuntimeSettings, readPreferences, savePreferences, type SettingsRespons
 
 const accents = ['#db775a', '#8a78c5', '#5b9b91', '#c88c45', '#c56785', '#6694bc', '#9a80b1', '#cb8b9e', '#658878', '#c29b52', '#688ab6', '#847fc0'];
 type CatalogResponse = { characters: CatalogCharacter[]; summon_templates?: Record<string, Effect>; item_templates?: Record<string, Effect> };
-const hydrateCatalog = (data: CatalogResponse) => data.characters.map(character => withEncyclopedia({
+const hydrateCatalog = (data: CatalogResponse) => sortBySerial(data.characters.map(character => withEncyclopedia({
   ...character, summon_templates: data.summon_templates || {}, item_templates: data.item_templates || {},
-}));
+})));
 const styleColor = (color: string): CSSProperties => ({ '--character': color } as CSSProperties);
 function Emblem({ name = 'star', size = 24, className = '' }: { name?: string; size?: number; className?: string }) {
   return <span aria-hidden="true" className={'library-emblem ' + className} style={{ width:size, height:size, maskImage:`url(/ui/icons/${name}.svg)`, WebkitMaskImage:`url(/ui/icons/${name}.svg)` }}/>;

@@ -1,0 +1,87 @@
+Y17 夜诏明 Spell Test Results
+============================================================
+[PASS] Character name -- 夜诏明
+[PASS] Serial Y17 -- Y17
+[PASS] HP=7 -- 7
+[PASS] MP=26
+[PASS] MOV=8
+[PASS] 闪避=85
+[PASS] Initial blood 2000ml -- 2000
+[PASS] _add_blood +500
+[PASS] Blood after add = 2500 -- 2500
+[PASS] _consume_blood 300 success
+[PASS] Blood after consume = 2200 -- 2200
+[PASS] _consume_blood 3000 fail
+[PASS] Blood still 2200
+[PASS] 9 combat spells loaded (3 non-combat filtered) -- Got 9: ['阿瑞卡纳律动', '凝血式-守', '祭炼式-破', '凝血式-幻', '污血战争', '凝血式-存', '血染披风', '血月斩击', '血色突刺']
+[PASS] s2 阿瑞卡纳律动 loaded
+[PASS] s3 凝血式-守 loaded
+[PASS] s4 祭炼式-破 loaded
+[PASS] s6 污血战争 loaded
+[PASS] s10 血染披风 loaded
+[PASS] s11 血月斩击 loaded
+[PASS] s3 timing=3 (附加)
+[PASS] s3 cost_blood_ml=300
+[PASS] s3 casts on self -- 夜诏明 释放【凝血式-守】→ 自身
+  消耗 300ml 血液
+  获得 1 点护盾 (1)
+
+[PASS] s10 cost_blood_ml=1000
+[PASS] s10 is heal category -- 3
+[PASS] s12 cost_blood_ml=1000
+[PASS] s12 is summon category -- 5
+[PASS] s12 template=血液长枪
+[PASS] 血液长枪 in templates
+[PASS] s6 cost_mp_pct_max=20
+[PASS] s6 cost_hp_dice=1d8
+[PASS] s6 on_kill_heal_hp=1
+[PASS] s6 on_kill_blood_ml=300
+[PASS] s6 chain_on_blood_ml=3000
+[PASS] s6 damage=2d12
+[PASS] s6 executes -- 夜诏明 释放【污血战争】→ 测试目标
+  消耗 4 HP (1d8)
+  消耗 5 MP
+  消耗 4 SAN
+  成功率检定: D100=50/100, 10位5, 个位0 困难成功！
+测试目标 的反应【闪避=30】(法术):
+  D100=59/30, 10位5, 个位9 失败
+  夜诏明 的法术突破闪避！(有效等级:困难成功)
+  伤害: 优势(2d12(10+3=13)=13, 2d12(
+[PASS] s2 吟唱回合=3
+[PASS] s2 mp_cost_formula set
+[PASS] s2 cost_blood_ml=100
+[PASS] s2 damage_mp_multiplier=4
+[PASS] s2 starts chanting -- 夜诏明 释放【阿瑞卡纳律动】→ 测试目标
+  消耗 100ml 血液
+  消耗 13 MP
+  开始吟唱【阿瑞卡纳律动】（3回合後发动）
+
+[PASS] chanting effect created -- Found 1 chanting effects
+[PASS] chant rounds=3
+[PASS] chant interruptible=False
+[PASS] chant stores effects
+[PASS] s4 吟唱回合=2
+[PASS] s4 chant_interruptible
+[PASS] s4 interrupt_hp_pct=90 -- 90
+[PASS] s4 damage_pct_caster_max_hp=90
+[PASS] s4 starts chanting -- 夜诏明 释放【祭炼式-破】→ 测试目标
+  开始吟唱【祭炼式-破】（2回合後发动）
+
+[PASS] Has interruptible chanting before hit
+[PASS] Interrupt triggered -- ['夜诏明 吟唱【祭炼式-破】被打断！损失 6 HP！', '夜诏明 损失 13 MP！']
+[PASS] Chant removed after interrupt -- Still 0 chanting
+[PASS] s11 cost_blood_ml=500
+[PASS] s11 extra_attack_per_blood=1000
+[PASS] s11 damage_table=moon_phase
+[PASS] _blood_ml_per_hp=250
+[PASS] _hp_to_blood_ml=250(pvp)
+[PASS] s7 heal_limit_not_dying
+[PASS] s7 is heal category -- 3
+[PASS] s2 MP cost = max(25%max, 50%cur) -- MP cost calculated
+[PASS] s10 fails with low blood -- 夜诏明 释放【血染披风】→ 自身
+  血液不足，献祭 4 HP 补足 950ml 血液
+  回复 MP +4
+
+
+============================================================
+62/62 PASS, 0 FAIL

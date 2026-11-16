@@ -1,0 +1,94 @@
+======================================================================
+  Magical Girl Spell Comprehensive Test
+  2026-07-21 00:29:45
+  Y14: Mai Zhixia (22 spells) | Y15: Yu Changfeng (9) | Y16: Lin Bai (12)
+======================================================================
+  Total characters: 16
+
+======================================================================
+  Y14: Mai Zhixia -- 22 spells, 4-phase cartridge system
+======================================================================
+  Initial phase: 2
+  Phase 2 spells: 11
+  [PASS] Y14 麦知夏 | s1 卡带切换·魂斗罗  --  phase=0 universal, timing=[addl]
+  [PASS] Y14 麦知夏 | s2 卡带切换·最终幻想  --  phase=0 universal, timing=[addl]
+  [PASS] Y14 麦知夏 | s3 卡带切换·音速索尼克  --  phase=0 universal, timing=[addl]
+
+  --- Phase 2: Final Fantasy (initial cartridge) ---
+  [PASS] Y14 麦知夏 | s9 重剑·迅捷  --  exec=OK
+  [PASS] Y14 麦知夏 | s10 重剑·勇气  --  exec=OK
+  [PASS] Y14 麦知夏 | s11 模式切换·迅捷  --  exec=OK
+  [PASS] Y14 麦知夏 | s12 模式切换·勇气  --  exec=OK
+  [PASS] Y14 麦知夏 | s13 极限槽  --  passive/special, counter=limit_gauge
+  [PASS] Y14 麦知夏 | s14 三连斩·散  --  exec=OK
+  [PASS] Y14 麦知夏 | s15 三连斩·聚  --  exec=OK
+  [PASS] Y14 麦知夏 | s16 极限技·凶斩  --  passive/special, counter_req=['limit_gauge', 5], once=True
+
+  --- Phase 1: Contra ---
+  Phase now: 1, Spells: 8
+  [PASS] Y14 麦知夏 | s4 像素射击  --  exec=OK
+  [PASS] Y14 麦知夏 | s5 S弹幕·散射  --  exec=OK
+  [PASS] Y14 麦知夏 | s6 S弹幕·集中  --  exec=OK
+  [PASS] Y14 麦知夏 | s7 L型贯穿激光  --  exec=OK
+  [PASS] Y14 麦知夏 | s8 残机替身  --  passive (timing=1), deathPrevention
+
+  --- Phase 3: Sonic ---
+  Phase now: 3, Spells: 9
+  [PASS] Y14 麦知夏 | s17 金环  --  passive/resource counter
+  [PASS] Y14 麦知夏 | s18 回旋踢  --  exec=OK
+  [PASS] Y14 麦知夏 | s19 音速冲刺  --  timing=3 additional action, buff spell
+  [PASS] Y14 麦知夏 | s20 光速救援  --  exec=OK
+  [PASS] Y14 麦知夏 | s21 金环回收·壹  --  heal spell (requires rings counter)
+  [PASS] Y14 麦知夏 | s22 金环回收·贰  --  heal spell (requires rings counter)
+
+  --- Phase transition tests ---
+  [PASS] Y14 麦知夏 | Phase 2->1 (Final Fantasy->Contra)  --  phase now=1
+  [PASS] Y14 麦知夏 | Phase 1->2 (Contra->Final Fantasy)  --  phase now=2
+  [PASS] Y14 麦知夏 | Phase 2->3 (Final Fantasy->Sonic)  --  phase now=3
+
+======================================================================
+  Y15: Yu Changfeng -- 9 spells (7 combat, 2 non-combat)
+======================================================================
+  Combat spells: 7
+  [PASS] Y15 于长风 | s1 爆破圈  --  timing=4, once_per_battle=True
+  [PASS] Y15 于长风 | s2 瞬爆  --  exec=OK
+  [PASS] Y15 于长风 | s3 余烬  --  exec=OK
+  [PASS] Y15 于长风 | 燃梦孤灯·自身  --  phase=99 non-combat, correctly excluded
+  [PASS] Y15 于长风 | 燃梦孤灯·他人  --  phase=99 non-combat, correctly excluded
+  [PASS] Y15 于长风 | s6 葬火流光  --  zone+DOT, exec=OK
+  [PASS] Y15 于长风 | s7 火鼠裘  --  passive=YES, exec=OK
+  [PASS] Y15 于长风 | s8 焰动力·悬浮  --  passive=YES, exec=OK
+  [PASS] Y15 于长风 | s9 焰动力·疾飞  --  additional=YES, exec=OK
+
+======================================================================
+  Y16: Lin Bai -- 12 spells + summons + weapon system
+======================================================================
+  Default weapon: sword
+  Combat spells (staff): 10
+  [PASS] Y16 林白 | s1 灵感大爆发  --  exec=OK
+  [PASS] Y16 林白 | s2 虚假之月  --  exec=OK, summons=1
+  [PASS] Y16 林白 | s3 月中的倒影  --  exec=OK, clones=1
+  [PASS] Y16 林白 | 影之克隆·技能继承  --  clone_spells=10 [INHERITED]
+  [PASS] Y16 林白 | s4 辉月女神的祝福  --  timing=[passive]
+  [PASS] Y16 林白 | s5 幻造兵武  --  timing=[passive]
+  [PASS] Y16 林白 | s6 幻造兵武·即兴短句  --  exec=OK
+
+  --- Weapon switch tests ---
+  [PASS] Y16 林白 | s7 切换·法杖  --  exec=OK
+  [PASS] Y16 林白 | s8 切换·弓  --  exec=OK
+  [PASS] Y16 林白 | s9 切换·剑  --  exec=OK
+  [PASS] Y16 林白 | s11 已然遥远的理想城  --  wpn=staff, exec=OK
+  [PASS] Y16 林白 | s10 万众瞩目的乌托邦  --  wpn=bow, visible (3-turn chant)
+  [PASS] Y16 林白 | s12 月光王座全额率输出  --  wpn=sword, visible (consumes moon)
+
+  --- Weapon filter cross-check ---
+  [PASS] Y16 林白 | Weapon filter: bow  --  Utopia=VIS, IdealCity=HID
+  [PASS] Y16 林白 | Weapon filter: sword  --  MoonThrone=VIS
+  [PASS] Y16 林白 | Weapon filter: sword (exclusion)  --  bow+staff ults correctly excluded
+
+======================================================================
+  Summary
+======================================================================
+  Total: 50  PASS: 50  FAIL: 0  SKIP: 0
+
+  JSON output saved to: D:\Datastruct\logai\autocombat\reference\test_spells_output.json

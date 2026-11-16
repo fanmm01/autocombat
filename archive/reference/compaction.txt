@@ -1,0 +1,59 @@
+以下是在上一会话上下文耗尽时，由压缩流程生成的完整摘要——与本次会话开头注入的 <system-reminder> 块中的内容完全一致：
+
+Summary:
+
+Primary Request and Intent:
+用户正在为 SealDice 骰子机器人系统构建 CoC（克苏鲁的呼唤）魔法少女半自动战斗扩展。跨越多次会话的请求包括：
+
+修复变身后属性同步问题（.bta start/.bta end 指令）
+使战斗中的 .st（设置属性）修改实时反映
+扩展变身（.hs）以增强 COC 技能表中所有战斗类技能，而非仅 3 项
+默认反击应使用最高近战战斗技能
+修复奖励骰 NaN bug（骰子表达式语法与 seal.format 不兼容）
+五项改进：parseSkillValue 替换而非累加、骰子作为首参作为伤害、仅 @target 使用最高近战、unh 使用战斗 HP + 自动 btaend、.stb 指令
+.e c 70 3d6 解析：纯数字应为技能值而非伤害骰
+.hs 应自动执行 .btastart 逻辑
+远程武器应跳过反应直接结算伤害
+大失败闪避/反击机制及双向加成
+通过 n# 次数参数支持多次攻击
+移除 COC 模板依赖（使用纯文本）
+.btastart 中的 HP/MP/SAN 同步
+修复 .st 修改时 HP 未正确更新到战斗存储的问题
+远程攻击失败应未命中（不仅是大失败） 主要修改文件：d:\Datastruct\logai\autocombat\autocombat.js。同时创建了 README.md。
+Key Technical Concepts:
+
+SealDice 扩展系统（seal.ext、seal.vars.intGet/intSet、seal.format、seal.getCtxProxyFirst）
+COC7 成功等级系统
+战斗 HP 存储：按组 ID 键控的 JSON，将 HP 修改推迟到 .unh/.btaend
+COC7 奖励/惩罚骰
+COC 技能表：20 项战斗技能，分为近战（9）和远程（11）
+伤害计算含优势/劣势、贯穿、致死骰
+onCommandReceived 钩子在指令执行前触发
+cmdArgs.cleanArgs 用于 seal 指令参数解析
+seal.format(ctx, '{1d100}') 用于骰子掷骰
+Files and Code Sections:
+
+d:\Datastruct\logai\instance\napcat_file_bridge\Others\logstat&enAll.c（只读）— COC 技能表定义
+d:\Datastruct\logai\autocombat\autocombat.js（主文件，大量修改，v0.3.0→v0.4.0）— 包含战斗技能列表、getBestMeleeSkill、rollD100 重写、parseSkillValue 修复、calcDamageValue 等
+d:\Datastruct\logai\autocombat\README.md（已创建）— 玩家快速入门指南 + 开发更新日志
+Errors and fixes:
+
+奖励骰 NaN → 重写 rollD100 手动掷 d10
+.e c 70 3d6 解析错误 → 数字识别为技能值，仅含 d 的匹配为伤害骰
+大失败 +1 vs +2 争议 → 最终方案：effAtk += (effAtk === -1) ? 2 : 1
+多次攻击反应 → 每次攻击独立反应掷骰
+HP 同步失败 → .st 钩子直接解析指令文本；calcDamageAndSyncCard 将伤害写回人物卡
+Problem Solving:
+所有问题已解决（详见上文）
+
+All user messages:
+按时间顺序列出的全部用户请求
+
+Pending Tasks:
+无
+
+Current Work:
+最近完成的工作：修复远程攻击失败处理——远程攻击失败（等级 ≤ 0）现在正确未命中
+
+Optional Next Step:
+无待处理任务
