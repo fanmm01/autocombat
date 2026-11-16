@@ -41,6 +41,20 @@ test('all 106 articles contain current costs, damage, healing and summon quantit
   assert.equal(cards.find(c => c.serial === 'Y15').spells.find(s => s.name === '余烬').effects.length, 2);
 });
 
+test('long-range attack prose does not expose the global override value or a substitute phrase', () => {
+  const entries = [
+    ['Y1', '火焰附魔'], ['Y2', '火球术'], ['Y4', '星闪攻击'],
+    ['Y5', '吸血'], ['Y6', '发送雪球'], ['Y10', '藤蔓术'],
+    ['Y14', '光速救援'], ['Y16', '万众瞩目的乌托邦'],
+    ['Y60', '制造雪带'], ['Y60', '发送雪球'],
+  ];
+  for (const [serial, name] of entries) {
+    const skill = profiles[serial].skills.find(item => item.name === name);
+    const text = prose(skill);
+    assert.doesNotMatch(text, /99\s*格|较远/, `${serial}/${name}`);
+  }
+});
+
 test('current combat data never rewrites unrelated prose, summon stats, db or resource formulas', () => {
   for (const character of cards) {
     for (const spell of character.spells) {

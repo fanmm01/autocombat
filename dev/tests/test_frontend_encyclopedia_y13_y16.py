@@ -60,9 +60,9 @@ class FrontendEncyclopediaY13Y16Tests(unittest.TestCase):
                     if not effect.get('consume_moon'):
                         self.assertIn(effect['伤害骰'], text, (serial, spell['name'], 'damage'))
                     self.assertIn(f"检定值 {effect['成功率']}", text, (serial, spell['name'], 'check'))
-                    if '射程' in effect:
+                    if '射程' in effect and effect['射程'] != 99:
                         self.assertIn(f"射程 {effect['射程']} 格", text)
-                    else:
+                    elif '射程' not in effect:
                         self.assertIn('默认近战射程', text)
 
     def test_cartridge_resource_rules_and_noncombat_phase_are_explicit(self):
