@@ -246,6 +246,8 @@ def register_ui(app, ns):
         event = dict(id=room['revision'], kind=kind, output=output.strip(), time=time.time(), snapshot=snapshot(room))
         room['history'].append(event)
         room['history'] = room['history'][-room['settings']['ROOM_HISTORY_LIMIT']:]
+        if room.get('story') and 'stories' in app.extensions['combat_ui']:
+            app.extensions['combat_ui']['stories'].battles.room_event(room, eng)
         room['updated'].set()
         return event
 
@@ -256,7 +258,7 @@ def register_ui(app, ns):
                     me=session_id(), members=list(room['members'].values()), revision=room['revision'],
                     running=room['running'], speed=room['speed'], controls=room['controls'],
                     snapshot=snapshot(room), history=room['history'] if history else [], invite_urls=invite_urls,
-                    tournament=tournaments.room_context(room))
+                    tournament=tournaments.room_context(room), story=room.get('story'))
 
     def valid_teams(data):
         valid = {c['serial'] for c in catalog()}
@@ -283,7 +285,7 @@ def register_ui(app, ns):
         with ns['_lock'], room_random(room):
             lines = ns['_run_ai_turns'](eng, Q=eng._ui_q_table, max_steps=1, ui_step=True)
             eng._check_and_mark_end(eng._get_state())
-            if room.get('tournament_id') and eng._get_state().get('phase') == 'active' and eng._get_state().get('round', 0) > eng.max_rounds:
+            if (room.get('tournament_id') or room.get('story')) and eng._get_state().get('phase') == 'active' and eng._get_state().get('round', 0) > eng.max_rounds + max(0, (room.get('story') or {}).get('round_start', 1) - 1):
                 from ai_battle import BattleEngine
                 eng._battle_result = BattleEngine._timeout_verdict(eng)
                 st = eng._get_state()
@@ -294,10 +296,11 @@ def register_ui(app, ns):
         return True
 
     def runner(code):
+        expected_room = rooms.get(code)
         while True:
             with guard, app.app_context():
                 room = rooms.get(code)
-                if not room:
+                if not room or room is not expected_room:
                     return
                 if time.time() - room['touched'] > room['settings']['ROOM_IDLE_HOURS'] * 3600:
                     ns['_battles'].pop(room['battle_id'], None)
@@ -305,6 +308,12 @@ def register_ui(app, ns):
                     rooms.pop(code, None)
                     return
                 delay = setting('ROOM_AI_DELAY', live=True) / room['speed']
+                if room.get('story') and 'stories' in app.extensions['combat_ui']:
+                    try:
+                        app.extensions['combat_ui']['stories'].battles.advance_pending(room)
+                    except Exception:
+                        app.logger.exception('Story wave advancement failed')
+                        room['running'] = False
                 if room['running'] or pending_for(room):
                     try:
                         if not reactions.step(room) and room['running']:
@@ -374,6 +383,9 @@ def register_ui(app, ns):
     def create_room():
         data = body()
         sid = session_id()
+        return jsonify(public(create_room_state(data, sid), True))
+
+    def create_room_state(data, sid):
         if not sid:
             raise Forbidden('请先建立玩家会话')
         a, b = valid_teams(data)
@@ -409,7 +421,7 @@ def register_ui(app, ns):
             rooms[code] = room
             emit(room, 'created', '战术室已就绪。调整角色控制权与站位后，开始本次演习。')
             threading.Thread(target=runner, args=(code,), daemon=True).start()
-            return jsonify(public(room, True))
+            return room
 
     @bp.post('/api/ui/rooms/<code>/join')
     def join_room(code):
@@ -461,7 +473,7 @@ def register_ui(app, ns):
                         yield 'event: reset\ndata: {}\n\n'
                         return
                     events = [e for e in history if e['id'] > after]
-                    meta = dict(running=room['running'], speed=room['speed'], members=list(room['members'].values()), controls=room['controls'], tournament=tournaments.room_context(room))
+                    meta = dict(running=room['running'], speed=room['speed'], members=list(room['members'].values()), controls=room['controls'], tournament=tournaments.room_context(room), story=room.get('story'))
                     room['updated'].clear()
                 for event in events:
                     after = event['id']
@@ -492,6 +504,8 @@ def register_ui(app, ns):
                 room_for(code, True)
                 if op == 'assign':
                     uid, who = data.get('uid'), data.get('controller')
+                    if room.get('story') and room['story'].get('control') == 'NONE' and who != 'ai':
+                        raise Forbidden('本剧情战斗要求全部由 AI 控制')
                     valid_units = {eng._resolve_uid(e['userId']) for e in eng._battle_unit_entries()}
                     if uid not in valid_units or (who != 'ai' and (who not in room['members'] or room['members'][who]['spectator'])):
                         raise BadRequest('请选择有效角色和控制者')
@@ -746,6 +760,9 @@ def register_ui(app, ns):
     from ui_tournaments import Tournaments
     tournaments = Tournaments(bp, locals(), management, store)
     app.extensions['combat_ui']['tournaments'] = tournaments
+    from ui_story import Stories
+    stories = Stories(bp, locals(), store, management.runtime)
+    app.extensions['combat_ui']['stories'] = stories
     from ui_utilities import register_utilities
     register_utilities(bp, locals())
     app.register_blueprint(bp)

@@ -2,6 +2,8 @@
 
 [目录结构、开发验证与发布流程](docs/PROJECT_STRUCTURE.md)
 
+剧情模式：从首页或侧栏进入章节选择。示例项目位于本工作区 `story-projects/demo/`，支持自然文本、图形流程编辑、`__LOCK` 初始锁定、UNLOCK／LOCK、多 START／CONTINUE 入口、连续 AI 战斗及战斗中途存读档。详见[剧情创作说明](docs/STORY_AUTHORING.md)与[运行接口](docs/STORY_RUNTIME.md)。
+
 ```powershell
 python scripts/run_tests.py
 npm --prefix frontend test
@@ -19,7 +21,7 @@ SealDice（海豹骰）插件，提供 CoC 魔法少女半自动战斗规则支�
 
 ## Windows 一键重启
 
-双击项目根目录的 `restart_services.bat`，自动构建前端、重新生成集成后端，随后重启 8889 战斗服务、8890 集成服务及 8892 → 8890 TCP 隧道，并检查两个网页及服务接口。服务在后台运行，关闭脚本窗口不会停止服务；日志保存在 `.ui-runtime/restart-端口-时间戳.*.log`。
+双击项目根目录的 `restart_services.bat`，自动构建前端、重新生成集成后端，随后重启 8889 战斗服务、8890 集成服务及 8892 → 8890 TCP 隧道，并检查两个网页及服务接口。重启完成后脚本持续监测服务进程，按 Ctrl+C 会结束本次启动的所有服务及其子进程；日志保存在 `.ui-runtime/restart-端口-时间戳.*.log`。
 
 也可在 PowerShell 中执行：
 

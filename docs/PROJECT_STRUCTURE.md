@@ -1,5 +1,9 @@
 # 目录与发布流程
 
+剧情源码位于 `backend/story_*.py`、`backend/ui_story.py` 与 `frontend/src/story/`；引入的 WebGAL 固定源码位于 `webgal-adv/engine/`。默认创作示例位于本工作区 `story-projects/demo/`。运行、发布版本、战斗检查点和玩家权限保存在既有运行目录的 SQLite 与 `story/` 下。
+
+新增验证：`python scripts/test_story.py --coverage`、`npm --prefix frontend run test:story:coverage`。完整构建同时生成主界面和 `frontend/dist/story-engine/`。发布包携带示例项目和修改后的引擎源码归档，无需 Node 即可运行。
+
 ```text
 autocombat/
 ├── start_ui.py               # 源码和发布包的统一启动入口

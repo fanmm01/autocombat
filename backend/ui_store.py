@@ -30,6 +30,16 @@ class Store:
             row = db.execute('SELECT body FROM records WHERE kind=? AND id=?', (kind, identifier)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def put_many(self, records):
+        """Atomically commit a story, its profile and combat checkpoint."""
+        with self.lock, self.connect() as db:
+            db.executemany('INSERT OR REPLACE INTO records VALUES (?,?,?)',
+                          [(kind, value['id'], json.dumps(value, ensure_ascii=False)) for kind, value in records])
+
+    def delete(self, kind, identifier):
+        with self.lock, self.connect() as db:
+            db.execute('DELETE FROM records WHERE kind=? AND id=?', (kind, identifier))
+
     def list(self, kind):
         with self.connect() as db:
             rows = db.execute('SELECT body FROM records WHERE kind=? ORDER BY rowid DESC', (kind,)).fetchall()

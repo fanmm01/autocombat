@@ -31,7 +31,7 @@ def main():
             subprocess.run([npm, 'ci', '--no-audit', '--no-fund'], cwd=frontend, check=True)
         subprocess.run([npm, 'run', 'build'], cwd=frontend, check=True)
         subprocess.run([sys.executable, str(root / 'scripts' / 'merge_backend.py')], cwd=root, check=True)
-    if not (frontend / 'dist' / 'index.html').is_file() or not (root / 'backend' / 'autocombat_backend.py').is_file():
+    if not (frontend / 'dist' / 'index.html').is_file() or not (frontend / 'dist' / 'story-engine' / 'index.html').is_file() or not (root / 'backend' / 'autocombat_backend.py').is_file():
         raise SystemExit('缺少构建产物，请在源码目录运行 python start_ui.py，或重新下载完整发布包。')
     print(f'本机访问：http://127.0.0.1:{args.port}/ui/', flush=True)
     print(f'服务监听：0.0.0.0:{args.port}（局域网或隧道访问时使用本机 IP／映射地址）', flush=True)

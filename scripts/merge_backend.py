@@ -101,6 +101,7 @@ def render_backend():
     output_lines.append('_bem.CN_NUMS = CN_NUMS\n')
     output_lines.append('_bem.CAT_LETTERS = CAT_LETTERS\n')
     output_lines.append('_bem.CombatEngine = CombatEngine\n')
+    output_lines.append('_bem.Character = Character\n')
     output_lines.append('_bem.FullBattleEngine = FullBattleEngine\n')
     output_lines.append('_bem.FastBattleEngine = FastBattleEngine\n')
     # Utility functions needed by ai_trainer.py, ai_battle.py, battle_http_server.py

@@ -8,6 +8,17 @@ venv/
 # Build and release products
 frontend/node_modules/
 frontend/dist/
+webgal-adv/engine/node_modules/
+webgal-adv/engine/packages/*/node_modules/
+webgal-adv/engine/packages/*/dist/
+webgal-adv/engine/packages/*/build/
+webgal-adv/engine/node_modules/.cache/
+webgal-adv/engine/packages/webgal/public/game/
+.coverage*
+coverage/
+.tmpwork/story-*/
+.tmpwork/story-*.png
+.tmpwork/story-*.json
 backend/autocombat_backend.py
 releases/
 build/

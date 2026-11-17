@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $runtime = Join-Path $root '.ui-runtime'
 $lock = $null
+$serviceProcesses = [System.Collections.Generic.List[object]]::new()
 $previousLocation = Get-Location
 
 function Get-ServiceProcess {
@@ -65,6 +66,8 @@ function Start-ServiceProcess {
         $process = Start-Process -FilePath $script:pythonExe -ArgumentList $arguments `
             -WorkingDirectory $root -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        # Track immediately so startup failures and Ctrl+C also trigger cleanup.
+        $serviceProcesses.Add([pscustomobject]@{ Process = $process; Port = $Port })
     } finally {
         $env:AUTOCOMBAT_UI_INSTANCE = $savedInstance
     }
@@ -147,10 +150,42 @@ try {
     Write-Host 'Battle UI:     http://127.0.0.1:8889/ui/'
     Write-Host 'Integrated UI: http://127.0.0.1:8890/ui/'
     Write-Host 'TCP tunnel:    0.0.0.0:8892 -> 127.0.0.1:8890'
+    Write-Host 'Monitoring services. Press Ctrl+C to stop all service processes.'
+    while ($true) {
+        foreach ($service in $serviceProcesses) {
+            $service.Process.Refresh()
+            if ($service.Process.HasExited) {
+                throw "Service on port $($service.Port) exited with code $($service.Process.ExitCode). See logs in $runtime."
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
 } catch {
     Write-Host "Restart failed: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 } finally {
+    # PowerShell runs finally when Ctrl+C interrupts the monitoring loop.
+    foreach ($service in $serviceProcesses) {
+        try {
+            $service.Process.Refresh()
+            if (-not $service.Process.HasExited) {
+                Write-Host "Stopping service on port $($service.Port) (PID $($service.Process.Id))"
+                & "$env:SystemRoot\System32\taskkill.exe" /PID $service.Process.Id /T /F
+                if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $service.Process.Id -ErrorAction SilentlyContinue)) {
+                    Write-Warning "Could not stop service PID $($service.Process.Id)."
+                }
+            }
+            $pidFile = Join-Path $runtime "$($service.Port).pid"
+            if ((Test-Path -LiteralPath $pidFile) -and
+                (Get-Content -LiteralPath $pidFile -Raw).Trim() -eq [string]$service.Process.Id) {
+                Remove-Item -LiteralPath $pidFile -Force
+            }
+        } catch {
+            Write-Warning "Service cleanup failed: $($_.Exception.Message)"
+        } finally {
+            $service.Process.Dispose()
+        }
+    }
     if ($lock) { $lock.Dispose() }
     Set-Location -LiteralPath $previousLocation.Path
 }

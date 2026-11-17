@@ -2,7 +2,7 @@
 
 CoC 魔法少女半自动战斗系统，提供浏览器对战、角色图鉴、AI 模拟、训练和锦标赛，以及 SealDice 插件。
 
-当前包为候选构建。完整 Python 回归 452 项中 449 项通过，3 项已有失败及复验结果见 [验证记录](docs/REORGANIZATION_VALIDATION.md)。
+当前包为候选构建。剧情框架的测试、覆盖率和完整回归结果见 [剧情验证记录](docs/STORY_VALIDATION.md)；历史目录整理记录另见 [验证记录](docs/REORGANIZATION_VALIDATION.md)。
 
 ## 运行发布包
 
@@ -34,3 +34,10 @@ HTTP 监听 `0.0.0.0:8889`，TCP 转发入口为 `0.0.0.0:8892`；局域网玩�
 升级前备份 `.ui-runtime/`、`backend/characters_data.py`、`backend/team_tables.py` 及 `backend/ai_weights*.json`。
 角色编辑、训练和配置需要目录可写。此包不包含原工作区的房间、身份、白名单、数据库或历史任务。
 请从项目维护者处确认代码及角色、字体等资源的分发授权；当前源码未附统一项目许可证。
+# 剧情模式
+
+“剧情模式”提供三章示例，第三章接续第二章。包内 `story-projects/demo/` 可直接作为创作工作区；在页面中打开目录即可编辑和预览，发布后运行使用固定版本。
+
+角色立绘最多五人，支持中英文逗号；选项前置 `__LOCK` 初始锁定，LOCK／UNLOCK 保存到玩家项目档案。多入口文件头使用 `||`。详细使用见 `docs/STORY_AUTHORING.md`。
+
+剧情战斗复用战术室并支持连续波次及完整检查点；服务重启后恢复为暂停状态。修改后的 WebGAL 源码位于 `webgal-adv/engine-source.zip`，第三方声明见 `docs/THIRD_PARTY_NOTICES.md`。

@@ -1,0 +1,113 @@
+{
+  "home": {
+    "intro": {
+      "eyebrow": "YOUR NEXT CHAPTER STARTS HERE",
+      "welcome": "欢迎回来，",
+      "description": "让下一场战斗成为闪耀的故事。",
+      "badge": "星光常伴 · 战术大厅"
+    },
+    "hero": {
+      "tag": "魔法少女 · 战术演习",
+      "title": [
+        "每一次抉择，",
+        "都闪耀着魔法"
+      ],
+      "punctuation": "。",
+      "description": [
+        "编织你的阵容。在星光交汇的战场上，",
+        "找到属于你们的胜利方式。"
+      ],
+      "button": "进入锦标赛",
+      "features": "CoC 规则驱动 · 自由组队 · 回合制策略",
+      "backCard": {
+        "name": "环花暖",
+        "caption": "FLOWER OF REBIRTH"
+      },
+      "frontCard": {
+        "name": "比哈米",
+        "caption": "A LITTLE SWEET MAGIC"
+      },
+      "caption": "A constellation of possibilities."
+    },
+    "modes": {
+      "story": {
+        "title": "剧情模式",
+        "en": "STORY MODE",
+        "desc": "循着灯塔的来信，让战斗与故事交织。"
+      },
+      "local": {
+        "title": "自由对战",
+        "en": "FREE BATTLE",
+        "desc": "由你掌控双方，每一步都由你决定。"
+      },
+      "lan": {
+        "title": "与伙伴同行",
+        "en": "PLAY TOGETHER",
+        "desc": "创建局域网房间，邀请好友并肩作战。"
+      },
+      "watch": {
+        "title": "星光观战席",
+        "en": "AI SPECTATOR",
+        "desc": "让 AI 自由交锋，发现阵容的无限可能。"
+      }
+    },
+    "roster": {
+      "eyebrow": "MEET YOUR COMPANIONS",
+      "title": "与你并肩的星光",
+      "button": "浏览角色图鉴"
+    },
+    "footer": {
+      "tagline": "星序 · 让策略与故事相遇",
+      "join": "已有房间码？加入好友"
+    }
+  },
+  "battle": {
+    "result": {
+      "eyebrow": "A BRILLIANT CONCLUSION",
+      "tagline": "每一场交锋，都是下一次闪耀的起点。"
+    },
+    "tagline": "策略成就每一束星光",
+    "emptyGraveyard": "星光尚未黯淡",
+    "reactionEyebrow": "DEFENSIVE REACTION",
+    "localEyebrow": "LOCAL EXERCISE",
+    "lanEyebrow": "LAN BATTLE ROOM",
+    "reviewEyebrow": "BATTLE REVIEW",
+    "liveEyebrow": "LIVE BATTLE"
+  },
+  "setup": {
+    "eyebrow": "PREPARE FOR A NEW STORY",
+    "title": "让星光，汇成你的阵容。",
+    "description": "挑选伙伴，安排策略，准备迎接下一次交锋。",
+    "formationEyebrow": "BUILD YOUR CONSTELLATION",
+    "formationTitle": "选择你的星光阵容"
+  },
+  "library": {
+    "eyebrow": "THE CONSTELLATION ARCHIVE",
+    "description": "每一束星光，都有独一无二的力量。",
+    "encyclopediaEyebrow": "CHARACTER ENCYCLOPEDIA"
+  },
+  "settings": {
+    "eyebrow": "YOUR TACTICAL PREFERENCES",
+    "description": "统一管理战术室、AI 与赛事参数。"
+  },
+  "storyChapters": {
+    "eyebrow": "A LETTER FROM THE STARS",
+    "title": "让故事，从这里开始。",
+    "description": "沿着星光前行。每一次相遇，都留下新的可能。",
+    "emptyTitle": "选择一束星光，开始故事。"
+  },
+  "storyEditor": {
+    "eyebrow": "WEAVE YOUR OWN CONSTELLATION",
+    "description": "以文本为源，让每条支线都有清晰的去向。"
+  },
+  "storyPlayer": {
+    "loading": "正在准备星光舞台…",
+    "retryEyebrow": "ANOTHER CHANCE",
+    "retryTitle": "故事尚未结束。",
+    "continueEyebrow": "TO BE CONTINUED",
+    "continueTitle": "下一束星光，在等你。",
+    "completeEyebrow": "CHAPTER COMPLETE",
+    "completeTitle": "把这一刻，留给星光。",
+    "battleTitle": "战场上的故事，正在继续。"
+  }
+}

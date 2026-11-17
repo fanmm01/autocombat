@@ -1,5 +1,9 @@
 # 星序 · 浏览器战术室
 
+## 页面宣传文案
+
+页面宣传语统一维护在 `src/data/pageCopy.json`，按页面分组：`home`（首页）、`setup`（作战准备）、`library`（图鉴）、`battle`（对战）、`settings`（设置）、`storyChapters`（章节选择）、`storyEditor`（创作室）、`storyPlayer`（剧情播放）。中文宣传语和英文装饰标题均在此修改；数组中的每一项对应一行文字。保留字段名，只修改文字内容。修改后运行 `npm run build:app`，刷新页面即可。角色技能说明仍维护在 `src/data/encyclopedia.json`。
+
 明亮卡牌风的 autocombat 界面，连接原有 CoC 战斗引擎。角色图鉴自动读取当前角色数据，不要求角色立绘。
 
 ## 启动
@@ -173,3 +177,10 @@ WebUI 配置中的地图边长支持 8–16，允许长宽不同；命令行显�
 页面地址采用 `/ui/home`、`/ui/library`、`/ui/tournament` 等路径，支持刷新、前进后退及 `?character=Y1` 角色详情链接。旧 `/ui/?room=...` 邀请链接继续可用；打开其他页面时，后台恢复房间不会强制跳转。
 
 验证：`npm test` 与 `npm run build`。交互回归使用 `npm run test:browser`，默认连接 `http://127.0.0.1:8890` 的已构建页面及本机 Edge；可设置 `UI_BASE_URL`、`UI_BROWSER_CHANNEL`，以及截图目录 `UI_TEST_ARTIFACTS`。测试中的角色保存、白名单和赛事请求均被拦截，不写入真实数据。
+# 剧情模式
+
+首页／侧栏“剧情模式”进入章节列表；“创作工作区”可打开服务端目录，默认是仓库内 `story-projects/demo/`。源码与流程图联动，Ctrl+S 保存，预览使用独立进度，发布固定不可变版本。
+
+`npm run build` 同时构建主界面与独立 WebGAL 播放器。首次构建会安装播放器依赖。`npm test` 包含既有单测与剧情核心单测；`npm run test:story:coverage` 输出剧情核心覆盖率。浏览器测试使用独立服务并设置 `UI_BASE_URL`。
+
+完整语法、权限及连续战斗见 [STORY_AUTHORING.md](../docs/STORY_AUTHORING.md)。

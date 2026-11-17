@@ -21,8 +21,8 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'releases')
     args = parser.parse_args()
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
-    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', version):
-        parser.error('VERSION must contain a semantic version')
+    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){2,3}(?:-[A-Za-z0-9.-]+)?', version):
+        parser.error('VERSION must contain a three- or four-part numeric version')
     if not args.skip_frontend_build:
         npm = shutil.which('npm.cmd' if sys.platform == 'win32' else 'npm')
         if not npm:
@@ -32,6 +32,8 @@ def main():
         subprocess.run([npm, 'run', 'build'], cwd=ROOT / 'frontend', check=True)
     if not (ROOT / 'frontend/dist/index.html').is_file():
         parser.error('frontend/dist/index.html is missing')
+    if not (ROOT / 'frontend/dist/story-engine/index.html').is_file():
+        parser.error('frontend/dist/story-engine/index.html is missing')
     # Generate into the bundle; packaging never relies on a stale deployment file.
     spec = importlib.util.spec_from_file_location('release_merge', ROOT / 'scripts/merge_backend.py')
     merge = importlib.util.module_from_spec(spec)
@@ -50,6 +52,9 @@ def main():
         files += sorted((ROOT / 'backend').glob('*.py'))
         files += [ROOT / 'backend/ai_weights.json', ROOT / 'backend/ai_weights_pvp.json']
         files += sorted(p for base in ('backend/fonts', 'frontend/dist') for p in (ROOT / base).rglob('*') if p.is_file())
+        files += sorted(p for p in (ROOT / 'story-projects/demo').rglob('*') if p.is_file() and not any(x.startswith('.') for x in p.relative_to(ROOT / 'story-projects/demo').parts))
+        files += sorted((ROOT / 'docs').glob('STORY_*.md'))
+        files += [ROOT / 'docs/THIRD_PARTY_NOTICES.md']
         for source in files:
             if source.name == 'autocombat_backend.py':
                 continue
@@ -57,6 +62,14 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
         (bundle / 'backend/autocombat_backend.py').write_text(generated, encoding='utf-8')
+        # Include the exact modified MPL source and build metadata, not dependency caches.
+        source_zip = bundle / 'webgal-adv/engine-source.zip'
+        source_zip.parent.mkdir(parents=True, exist_ok=True)
+        engine_root = ROOT / 'webgal-adv/engine'
+        with zipfile.ZipFile(source_zip, 'w', zipfile.ZIP_DEFLATED) as z:
+            for p in sorted(engine_root.rglob('*')):
+                if p.is_file() and not p.relative_to(engine_root).as_posix().startswith('packages/webgal/public/game/') and not any(x in ('node_modules', 'dist', 'build', '.cache') for x in p.relative_to(engine_root).parts):
+                    z.write(p, p.relative_to(engine_root).as_posix())
         shutil.copy2(ROOT / 'docs/RELEASE_README.md', bundle / 'README.md')
         manifest = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                     for p in sorted(bundle.rglob('*')) if p.is_file()}
@@ -72,6 +85,17 @@ r = c.get('/ui/')
 assert r.status_code == 200 and b'<!doctype html>' in r.data
 r.close()
 assert b._PIL_AVAILABLE and b._FONT_PATH
+c.post('/api/ui/session', json={'name':'release-smoke'})
+p = c.get('/api/ui/story/projects').get_json()
+assert len(p['projects'][0]['chapters']) == 3
+r = c.post('/api/ui/story/runs', json={'project':'astral-demo','flow':'XU'})
+assert r.status_code == 200 and r.get_json()['status'] == 'text'
+r = c.get('/ui/story-engine/')
+assert r.status_code == 200
+r.close()
+from story_state_codec import encode_value, decode_value
+from battle_engine import Character
+assert isinstance(decode_value(encode_value(Character('smoke','smoke'))), Character)
 """
         subprocess.run([sys.executable, '-c', smoke], cwd=bundle / 'backend', env=env, check=True)
         archive = output / (name + '.zip')
