@@ -50,8 +50,8 @@ node_modules/
 /backend/prelim_avg_stats_results.txt
 
 # Generated AI training weights
-ai_weights.json
-ai_weights_pvp.json
+# ai_weights.json
+# ai_weights_pvp.json
 /archive/artifacts/**/*_weights.json
 /artifacts/**/*_weights.json
 
