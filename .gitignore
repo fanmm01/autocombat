@@ -1,41 +1,57 @@
-# Python caches and local environments
+# Python bytecode and tool caches
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 
-# Build and release products
-frontend/node_modules/
-frontend/dist/
-webgal-adv/engine/node_modules/
-webgal-adv/engine/packages/*/node_modules/
-webgal-adv/engine/packages/*/dist/
-webgal-adv/engine/packages/*/build/
-webgal-adv/engine/node_modules/.cache/
-webgal-adv/engine/packages/webgal/public/game/
-.coverage*
+# Test and coverage output
+.coverage
+.coverage.*
 coverage/
-.tmpwork/story-*/
-.tmpwork/story-*.png
-.tmpwork/story-*.json
-backend/autocombat_backend.py
-releases/
-build/
-dist/
+htmlcov/
+playwright-report/
+test-results/
+/.tmpwork/
 
-# Local state, generated logs and simulation results
-.ui-runtime/
+# Frontend dependencies and build output
+node_modules/
+*.tsbuildinfo
+/frontend/dist/
+/webgal-adv/engine/packages/*/dist/
+/webgal-adv/engine/packages/*/build/
+/webgal-adv/engine/packages/webgal/public/game/
+
+# Generated backend and release packages
+/backend/autocombat_backend.py
+/releases/
+/build/
+/dist/
+
+# Local configuration, runtime state and simulation output
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+/.ui-runtime/
+.story-transactions/
 *.log
-backend/result.txt
-backend/bracket_info.txt
-backend/sim_matrix_*.csv
-backend/sim_matrix_*.json
-backend/prelim_results*
-backend/prelim_avg_stats_results.txt
+*.log.[0-9]*
+/backend/result.txt
+/backend/bracket_info.txt
+/backend/sim_matrix_*.csv
+/backend/sim_matrix_*.json
+/backend/prelim_results*
+/backend/prelim_avg_stats_results.txt
 
-# Editor / OS files
+# Editor and OS files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+Desktop.ini
