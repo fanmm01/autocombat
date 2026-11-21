@@ -50,7 +50,8 @@ def main():
                  'plugins/autocombat.js', 'docs/游戏总机制.md', 'docs/MOV规则参考.md',
                  'docs/REORGANIZATION_VALIDATION.md')]
         files += sorted((ROOT / 'backend').glob('*.py'))
-        files += [ROOT / 'backend/ai_weights.json', ROOT / 'backend/ai_weights_pvp.json']
+        files += [path for name in ('ai_weights.json', 'ai_weights_pvp.json')
+                  if (path := ROOT / 'backend' / name).is_file()]
         files += sorted(p for base in ('backend/fonts', 'frontend/dist') for p in (ROOT / base).rglob('*') if p.is_file())
         files += sorted(p for p in (ROOT / 'story-projects/demo').rglob('*') if p.is_file() and not any(x.startswith('.') for x in p.relative_to(ROOT / 'story-projects/demo').parts))
         files += sorted((ROOT / 'docs').glob('STORY_*.md'))
