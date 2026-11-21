@@ -152,10 +152,12 @@ class TrainingAPITests(unittest.TestCase):
             response = self.client.post('/api/ui/training', json={'target_serials': invalid})
             self.assertEqual(response.status_code, 400)
         enabled = [ch['serial'] for ch in data.ALL_CHARACTERS]
-        with patch('ui_tasks.threading.Thread'):
+
+        with patch.object(self.tasks.queue, 'submit'):
             response = self.client.post('/api/ui/training', json={'target_serials': [enabled[1], enabled[0], enabled[1]]})
         self.assertEqual(response.status_code, 200)
         job = response.get_json()
+        self.tasks.queued_leases.pop(job['id']).close()
         self.assertEqual(job['params']['target_serials'], enabled[:2])
         self.assertEqual(job['params']['enabled_serials'], enabled)
         self.assertEqual(self.client.post('/api/ui/training', json={}).status_code, 409)

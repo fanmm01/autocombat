@@ -76,8 +76,13 @@ def main():
         (bundle / 'MANIFEST.sha256.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         # Validate the exact staged files before creating the archive.
         env = os.environ.copy()
-        env.update(AUTOCOMBAT_RUNTIME_DIR=str(Path(folder) / 'runtime'), AUTOCOMBAT_NO_FILE_LOG='1', PYTHONIOENCODING='utf-8')
+        env.pop('PYTHONPATH', None)
+        previous_allowlist = Path(folder) / 'previous-allowlist.json'
+        previous_allowlist.write_text('["198.51.100.7"]', encoding='utf-8')
+        env.update(AUTOCOMBAT_RUNTIME_DIR=str(Path(folder) / 'runtime'), AUTOCOMBAT_NO_FILE_LOG='1',
+                   AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST=str(previous_allowlist), PYTHONIOENCODING='utf-8')
         smoke = """import autocombat_backend as b
+import time
 c = b.app.test_client()
 assert c.get('/api/pvp/ping').status_code == 200
 assert c.get('/api/ui/catalog').status_code == 200
@@ -86,6 +91,22 @@ assert r.status_code == 200 and b'<!doctype html>' in r.data
 r.close()
 assert b._PIL_AVAILABLE and b._FONT_PATH
 c.post('/api/ui/session', json={'name':'release-smoke'})
+assert c.get('/api/ui/allowlist').get_json()['allowlist'] == ['198.51.100.7']
+assert c.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '198.51.100.7'}).status_code == 200
+assert c.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '198.51.100.8'}).status_code == 403
+from combat_settings import settings_scope
+with settings_scope({'TARGET_1V1_MATCHES': 1, 'MAX_ROUNDS_PRELIM_BY_FORMAT': {'1v1': 1, '2v2': 1, '3v3': 1}}):
+    r = c.post('/api/ui/simulations', json={'mode':'prelim', 'formats':['1v1'], 'n':1, 'workers':2, 'seed':17})
+assert r.status_code == 200, r.get_json()
+task = r.get_json()
+deadline = time.monotonic() + 40
+while task['status'] in ('queued', 'running') and time.monotonic() < deadline:
+    time.sleep(.1)
+    task = c.get('/api/ui/simulations/' + task['id']).get_json()
+if task['status'] in ('queued', 'running'):
+    c.post('/api/ui/simulations/' + task['id'] + '/cancel', json={})
+assert task['status'] == 'completed' and task['completed'] == 1, task.get('message', task['status'])
+assert task['progress']['total'] > 0 and task['progress']['completed'] == task['progress']['total']
 p = c.get('/api/ui/story/projects').get_json()
 assert len(p['projects'][0]['chapters']) == 3
 r = c.post('/api/ui/story/runs', json={'project':'astral-demo','flow':'XU'})

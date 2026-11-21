@@ -20,6 +20,7 @@ def main(params=None, wire=None):
 
     buffered_logs = []
     last_log = [time.monotonic()]
+    stream_output = params.get('stream_output', True)
 
     def flush_logs():
         if buffered_logs:
@@ -36,6 +37,8 @@ def main(params=None, wire=None):
         pending = ''
 
         def write(self, text):
+            if not stream_output:
+                return len(text)
             self.pending += text
             while '\n' in self.pending:
                 line, self.pending = self.pending.split('\n', 1)
@@ -67,7 +70,8 @@ def main(params=None, wire=None):
         mode = params.get('mode', 'single')
         if mode == 'train':
             import ai_trainer
-            roster = ai_trainer.main(expected_serials=params.get('enabled_serials'), target_serials=params.get('target_serials'))
+            roster = ai_trainer.main(expected_serials=params.get('enabled_serials'),
+                                     target_serials=params.get('target_serials'), workers=params.get('workers'))
             report(completed=1, result={'message': '训练完成', **roster})
             return
         t = ab.Tournament()
@@ -83,7 +87,8 @@ def main(params=None, wire=None):
                     line = record.getMessage()
                     if re.match(r'^\s*第\d+回合 Y: ', line):
                         replay.append(line)
-                        report(round=line)
+                        if stream_output:
+                            report(round=line)
 
             handler = RoundLog()
             ab.logger.addHandler(handler)
@@ -121,13 +126,32 @@ def main(params=None, wire=None):
             from sim import prelim_runtime, new_prelim_totals, accumulate_prelim_rankings, compute_prelim_averages
             modes = params.get('formats', ['1v1', '2v2', '3v3'])
             totals = new_prelim_totals(modes)
+            completed_rounds = 0
+            checkpoint = params.get('checkpoint')
+            if checkpoint is not None:
+                completed_rounds = checkpoint['completed']
+                version, state, gaussian = checkpoint['random_state']
+                random.setstate((version, tuple(state), gaussian))
+                for fmt, entries in checkpoint['totals'].items():
+                    totals[fmt] = {entry['key']: entry for entry in entries}
             with prelim_runtime(params.get('workers', setting('PRELIM_WORKERS')), season):
-                for i in range(params['n']):
+                for i in range(completed_rounds, params['n']):
+                    next_update = 0
+
+                    def prelim_progress(completed, total):
+                        nonlocal next_update
+                        now = time.monotonic()
+                        if completed in (0, total) or now >= next_update:
+                            report(progress={'round': i + 1, 'completed': completed, 'total': total})
+                            next_update = now + 1
+
                     tournament = ab.Tournament(tournament_type=0, enabled_modes=modes)
                     tournament.init_characters()
-                    tournament.run_phases(write_results_flag=False)
+                    tournament.run_phases(write_results_flag=False, progress=prelim_progress)
                     accumulate_prelim_rankings(totals, tournament._rankings_info)
-                    report(completed=i+1, result={'rankings': compute_prelim_averages(totals, i+1)})
+                    report(completed=i + 1, result={'rankings': compute_prelim_averages(totals, i + 1)},
+                           checkpoint={'completed': i + 1, 'random_state': random.getstate(),
+                                       'totals': {fmt: list(entries.values()) for fmt, entries in totals.items()}})
         else:
             from sim import parallel_pairs
             a = b = rounds = timeouts = 0

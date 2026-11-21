@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Redo2, Undo2 } from 'lucide-react';
-import { api, compareSerials, requestId, sortBySerial, type Character, type Effect, type Room } from './types';
+import { ApiError, api, compareSerials, requestId, sortBySerial, type Character, type Effect, type Room, type Simulation } from './types';
 import { useRuntimeSettings } from './settings';
 import { linkPaneScrolling } from './paneScrolling';
 import { CharacterLink } from './KnowledgeUI';
@@ -155,7 +155,8 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
   };
   async function work(fn: () => Promise<void>) { setBusy(true); try { await fn(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); } }
   useEffect(() => { work(load); api<{ jobs: Effect[] }>('/training').then(x => setTraining(x.jobs[0] || null)).catch(() => {}); }, []);
-  useEffect(() => { if (training?.status !== 'running') return; const timer = setInterval(() => api<Effect>('/simulations/' + training.id).then(setTraining).catch(e => onError(e.message)), 1000); return () => clearInterval(timer); }, [training?.id, training?.status]);
+  const trainingPending = simulationPending(training?.status);
+  useEffect(() => { if (!training || !trainingPending) return; const timer = setInterval(() => api<Effect>('/simulations/' + training.id).then(setTraining).catch(e => onError(e.message)), 1000); return () => clearInterval(timer); }, [training?.id, trainingPending]);
   useEffect(() => { if (training?.status === 'completed') { api<Effect>('/data').then(latest => setData(old => old ? { ...old, needs_training: latest.needs_training } : latest)); api<{backups:Effect[]}>('/backups').then(x => setBackups(x.backups)); } }, [training?.id, training?.status]);
   useEffect(() => {
     if (editorLayout.current) return linkPaneScrolling(editorLayout.current);
@@ -251,13 +252,13 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
         <button className="button danger-text" onClick={deleteCharacter}>删除整个角色（保存后生效）</button></>}</section></div>
       : tab === 'backups' ? <section className="panel editor-content"><h2>备份与重新训练</h2><p>保存、恢复和权重替换前自动备份。未保存修改不会进入训练。</p><div className="expansion-toolbar">
         <button className="button" disabled={busy} onClick={() => work(async () => { await api('/backups', {}); setBackups((await api<{ backups: Effect[] }>('/backups')).backups); })}>立即备份</button>
-        <button className="button primary" disabled={busy || dirty || training?.status === 'running' || enabledCount < 6} onClick={() => work(async () => setTraining(await api<Effect>('/training', {})))}>重新训练全部启用角色</button></div>
-        <fieldset className="training-selection" disabled={busy || dirty || training?.status === 'running'}><legend>选择重训角色（已选 {selectedTrainingTargets.length} 名）</legend><div className="training-targets">{orderedCharacters.filter(ch => enabled.has(ch.serial)).map(ch => <label key={ch.serial}><input type="checkbox" checked={selectedTrainingTargets.includes(ch.serial)} onChange={e => setTrainingTargets(old => e.target.checked ? [...old, ch.serial] : old.filter(s => s !== ch.serial))}/>{ch.serial} · {ch.name}</label>)}</div>
+        <button className="button primary" disabled={busy || dirty || trainingPending || enabledCount < 6} onClick={() => work(async () => setTraining(await api<Effect>('/training', {})))}>重新训练全部启用角色</button></div>
+        <fieldset className="training-selection" disabled={busy || dirty || trainingPending}><legend>选择重训角色（已选 {selectedTrainingTargets.length} 名）</legend><div className="training-targets">{orderedCharacters.filter(ch => enabled.has(ch.serial)).map(ch => <label key={ch.serial}><input type="checkbox" checked={selectedTrainingTargets.includes(ch.serial)} onChange={e => setTrainingTargets(old => e.target.checked ? [...old, ch.serial] : old.filter(s => s !== ch.serial))}/>{ch.serial} · {ch.name}</label>)}</div>
         <p className="muted">所选角色在同一任务中共同训练，从零重建单人、团队及关联召唤物策略。共享召唤物策略更新也会影响其他使用者；其他角色权重保持原值。</p>
         <button className="button primary" disabled={!selectedTrainingTargets.length || enabledCount < 6} onClick={() => work(async () => setTraining(await api<Effect>('/training', { target_serials: selectedTrainingTargets })))}>重训所选角色</button></fieldset>
         {dirty && <p className="muted">请先保存修改，再启动训练。</p>}
         {enabledCount < 6 && <p className="muted">默认训练包含 3 对 3 抽样，需要至少启用 6 名角色。</p>}
-        {training && <><p role="status">训练：{training.status}{training.message && ' · ' + training.message}</p><p>训练目标：{training.params?.target_serials?.slice().sort(compareSerials).map((s: string) => `${s} · ${characters.find(ch => ch.serial === s)?.name || s}`).join('、') || '全部启用角色'}</p>{training.params?.enabled_serials && <p>本次固定参战角色池：{training.params.enabled_serials.slice().sort(compareSerials).map((s: string) => `${s} · ${characters.find(ch => ch.serial === s)?.name || s}`).join('、')}</p>}{training.result?.summons && <p>已重训关联召唤物：{training.result.summons.join('、') || '无'}</p>}{training.status === 'completed' && training.params?.target_serials && <p className="muted">指定角色训练完成；全局待训练标记保留，请在需要时执行全量训练。</p>}{training.result?.preserved_characters?.length > 0 && <p>已保留且未重训的角色表：{training.result.preserved_characters.join('、')}</p>}<pre className="verbose-log">{training.logs?.join('\n')}</pre></>}
+        {training && <><p role="status">训练：{training.status === 'queued' ? '排队中' : training.status}{training.message && ' · ' + training.message}</p><p>训练目标：{training.params?.target_serials?.slice().sort(compareSerials).map((s: string) => `${s} · ${characters.find(ch => ch.serial === s)?.name || s}`).join('、') || '全部启用角色'}</p>{training.params?.enabled_serials && <p>本次固定参战角色池：{training.params.enabled_serials.slice().sort(compareSerials).map((s: string) => `${s} · ${characters.find(ch => ch.serial === s)?.name || s}`).join('、')}</p>}{training.result?.summons && <p>已重训关联召唤物：{training.result.summons.join('、') || '无'}</p>}{training.status === 'completed' && training.params?.target_serials && <p className="muted">指定角色训练完成；全局待训练标记保留，请在需要时执行全量训练。</p>}{training.result?.preserved_characters?.length > 0 && <p>已保留且未重训的角色表：{training.result.preserved_characters.join('、')}</p>}<pre className="verbose-log">{training.logs?.join('\n')}</pre></>}
         <div className="backup-list">{backups.map(b => <div key={b.id}><span>{new Date(b.time * 1000).toLocaleString()} · {backupReasons[b.reason] || b.reason}</span><a className="button subtle" href={`/api/ui/backups/${b.id}/download`}>下载</a><button className="button" disabled={busy} onClick={() => { if (confirm('恢复此备份？当前版本会先自动备份。')) work(async () => { await api(`/backups/${b.id}/restore`, {}); await load(); onSaved(); setMessage('备份已恢复'); }); }}>恢复</button></div>)}</div></section>
         : tab === 'allowlist' ? <section className="panel editor-content"><h2>数据管理访问白名单</h2><p>每行填写 IP 地址或 CIDR。调试时输入 *.*.*.* 可允许所有 IPv4/IPv6 地址，请勿在公网长期启用。</p><label className="allowlist-editor">白名单<textarea rows={8} spellCheck={false} value={allowlist} onChange={e => setAllowlist(e.target.value)} placeholder={'192.168.1.6\\n*.*.*.*'}/></label><div className="expansion-toolbar"><button className="button primary" disabled={allowlistBusy} onClick={saveAllowlist}>保存白名单</button></div></section>
         : <section className="panel editor-content"><Fields value={data[tab]} name={tab} enums={data.enums} samples={samples} change={next => edit({ ...data, [tab]: next })}/></section>}
@@ -272,7 +273,14 @@ function RankingResults({ result }: { result: Effect }) {
   return <div className="ranking-panels">{Object.entries(result.rankings || {}).map(([fmt,raw])=><section key={fmt}><h3>{fmt} · 多轮预赛平均排名</h3><div className="table-scroll"><table><thead><tr><th>排名</th><th>队伍</th><th>平均积分</th><th>平均胜／场</th><th>胜率</th></tr></thead><tbody>{(raw as any[][]).map((r,i)=><tr key={i}><td>{i+1}</td><td>{r[0]}</td><td>{r[1].toFixed(2)}</td><td>{r[2].toFixed(1)} / {r[3].toFixed(1)}</td><td>{r[4].toFixed(1)}%</td></tr>)}</tbody></table></div></section>)}</div>;
 }
 
-export function SimulationPanel({ teamA, teamB, catalog, onError }: Feedback & { teamA: string[]; teamB: string[]; catalog: Character[] }) {
+const simulationKey = 'combat-simulation';
+const simulationStatus = { queued: '模拟排队中', running: '模拟运行中', completed: '模拟已完成', cancelled: '模拟已取消', failed: '模拟失败' };
+
+function simulationPending(status?: string) {
+  return status === 'queued' || status === 'running';
+}
+
+export function SimulationPanel({ teamA, teamB, catalog }: { teamA: string[]; teamB: string[]; catalog: Character[] }) {
   const defaults = useRuntimeSettings();
   const [mode, setMode] = useState<string>(defaults.SIM_DEFAULT_MODE);
   const [format, setFormat] = useState<string>(defaults.SIM_DEFAULT_FORMAT);
@@ -283,13 +291,84 @@ export function SimulationPanel({ teamA, teamB, catalog, onError }: Feedback & {
   const [season, setSeason] = useState('');
   const [workers, setWorkers] = useState<number>(defaults.PRELIM_WORKERS);
   const [map, setMap] = useState<string>(defaults.DEFAULT_MAP_SIZE);
-  const [job, setJob] = useState<Effect | null>(null);
+  const [job, setJob] = useState<Simulation | null>(null);
   const [presets, setPresets] = useState<Effect[]>([]);
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api<{ presets: Effect[] }>('/presets').then(x => setPresets(x.presets)).catch(e => onError(e.message)); }, []);
-  useEffect(() => { const id = localStorage.getItem('combat-simulation'); if (id) api<Effect>('/simulations/' + id).then(setJob).catch(() => {}); }, []);
-  useEffect(() => { if (job?.status !== 'running') return; const t = setInterval(() => api<Effect>('/simulations/' + job.id).then(setJob).catch(e => onError(e.message)), 1000); return () => clearInterval(t); }, [job?.id, job?.status]);
+  const [restoring, setRestoring] = useState(true);
+  const [requestError, setRequestError] = useState('');
+  const [pollError, setPollError] = useState('');
+  const pending = simulationPending(job?.status);
+  useEffect(() => { api<{ presets: Effect[] }>('/presets').then(x => setPresets(x.presets)).catch(e => setRequestError(`读取预设小队失败：${e.message}`)); }, []);
+  useEffect(() => {
+    const id = localStorage.getItem(simulationKey);
+    if (!id) { setRestoring(false); return; }
+    let active = true;
+    api<Simulation>(`/simulations/${id}`).then(saved => {
+      if (active) setJob(saved);
+    }).catch((error: Error) => {
+      if (!active) return;
+      if (error instanceof ApiError && error.status === 404) {
+        localStorage.removeItem(simulationKey);
+        setRequestError('上次模拟任务已不存在，请重新运行。');
+      } else setRequestError(`读取上次模拟失败：${error.message}`);
+    }).finally(() => { if (active) setRestoring(false); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!job || !pending) return;
+    const id = job.id;
+    let active = true;
+    let timer = window.setTimeout(poll, 1000);
+    async function poll() {
+      try {
+        const next = await api<Simulation>(`/simulations/${id}`);
+        if (!active) return;
+        setJob(current => current?.id === id && simulationPending(current.status) ? next : current);
+        setPollError('');
+        if (!simulationPending(next.status)) return;
+      } catch (error) {
+        if (!active) return;
+        if (error instanceof ApiError && error.status === 404) {
+          localStorage.removeItem(simulationKey);
+          setJob(null);
+          setPollError('模拟任务已不存在，请重新运行。');
+          return;
+        }
+        setPollError(`读取模拟进度失败，正在重试：${(error as Error).message}`);
+      }
+      timer = window.setTimeout(poll, 1000);
+    }
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [job?.id, pending]);
+
+  async function start() {
+    setBusy(true);
+    setRequestError('');
+    setPollError('');
+    try {
+      const next = await api<Simulation>('/simulations', {
+        mode, format, formats, n, map_size: map, workers, team_a: teamA, team_b: teamB,
+        ...(seed ? { seed: Number(seed) } : {}), ...(season === '' ? {} : { season: Number(season) }),
+        ...(selectedTeams.length ? { teams: selectedTeams.map(t => t.split('+')) } : {}),
+      });
+      setJob(next);
+      localStorage.setItem(simulationKey, next.id);
+    } catch (error) {
+      setRequestError(`启动模拟失败：${(error as Error).message}`);
+    } finally { setBusy(false); }
+  }
+
+  async function cancel(id: string) {
+    setBusy(true);
+    setRequestError('');
+    try {
+      setJob(await api<Simulation>(`/simulations/${id}/cancel`, {}));
+      setPollError('');
+    } catch (error) {
+      setRequestError(`取消模拟失败：${(error as Error).message}`);
+    } finally { setBusy(false); }
+  }
   const teamNames = (team: string[]) => team.map(s => catalog.find(c => c.serial === s)?.name || s).join(' + ');
   const choices = format === '1v1' ? catalog.map(c => ({ team: [c.serial], valid: true })) : presets.filter(x => x.format === format);
   const result = job?.result;
@@ -302,16 +381,22 @@ export function SimulationPanel({ teamA, teamB, catalog, onError }: Feedback & {
     <label>种子（空为随机）<input type="number" min="0" value={seed} onChange={e => setSeed(e.target.value)}/></label>
     <label>赛季状态（空使用设置）<input type="number" min="0" max="100" value={season} onChange={e => setSeason(e.target.value)}/></label>
     {(mode === 'prelim' || mode === 'single') && <label>并发数<input type="number" min="1" max="32" value={workers} onChange={e => setWorkers(Number(e.target.value))}/></label>}
-    <button className="button primary" disabled={busy || job?.status === 'running' || (mode==='prelim'&&!formats.length)} onClick={async () => { setBusy(true); try { const next = await api<Effect>('/simulations', { mode, format, formats, n, map_size: map, workers, team_a: teamA, team_b: teamB, ...(seed ? { seed: Number(seed) } : {}), ...(season === '' ? {} : {season: Number(season)}), ...(selectedTeams.length ? { teams: selectedTeams.map(t => t.split('+')) } : {}) }); setJob(next); localStorage.setItem('combat-simulation', next.id); } catch (e) { onError((e as Error).message); } finally { setBusy(false); } }}>运行模拟</button>
-    {job?.status === 'running' && <button className="button stop-button" onClick={() => api<Effect>(`/simulations/${job.id}/cancel`, {}).then(setJob).catch(e => onError(e.message))}>取消模拟</button>}
+    <button className="button primary" disabled={restoring || busy || pending || (mode==='prelim'&&!formats.length)} onClick={start}>运行模拟</button>
+    {job && pending && <button className="button stop-button" disabled={busy} onClick={() => cancel(job.id)}>取消模拟</button>}
   </div>
+    {restoring && <p role="status">正在读取上次模拟任务…</p>}
+    {requestError && <p className="danger-text" role="alert">{requestError}</p>}
+    {pollError && <p className="danger-text" role="alert">{pollError}</p>}
     {mode === 'table' && <details><summary>选择参赛小队（留空使用该赛制全部预设）</summary><div className="preset-choices">{choices.map((p, i) => <label key={i}><input type="checkbox" disabled={!p.valid} checked={selectedTeams.includes(p.team.join('+'))} onChange={e => setSelectedTeams(old => e.target.checked ? [...old, p.team.join('+')] : old.filter(t => t !== p.team.join('+')))}/>{teamNames(p.team)}{!p.valid && '（角色已禁用或已删除）'}</label>)}</div><button className="text-button" onClick={() => setSelectedTeams([...new Set([teamA.join('+'), teamB.join('+')])])}>使用当前编队双方</button></details>}
-    {job && <div className="task-results"><p role="status">{job.status} · 已完成 {job.completed}{job.message && ' · ' + job.message}</p>
+    {job && <div className="task-results"><p role={job.status === 'failed' ? 'alert' : 'status'}>{simulationStatus[job.status]} · 已完成 {job.completed}{job.params.workers != null && ` · 并发上限 ${job.params.workers}`}{job.message && ' · ' + job.message}</p>
+      {job.status === 'running' && job.params.mode === 'prelim' && (job.progress
+        ? <p>第 {job.progress.round} / {job.params.n} 轮 · 本轮已完成 {job.progress.completed} / {job.progress.total} 场</p>
+        : <p>正在准备预赛对阵…</p>)}
       {result?.matrix ? <><p>非对角单元格表示“行队伍战胜列队伍”的概率；对角线显示该队伍参与的所有对局平均回合数。</p><div className="table-scroll"><table><thead><tr><th>行队伍 ↓ / 列队伍 →</th>{result.teams.map((t: string, i: number) => <th key={i}>{t}</th>)}</tr></thead><tbody>{result.matrix.map((row: (number | null)[], i: number) => <tr key={i}><th>{result.teams[i]}</th>{row.map((v, j) => <td key={j}>{i === j ? result.average_rounds?.[i] == null ? '无数据' : `${result.average_rounds[i].toFixed(1)} 回合` : v == null ? '待模拟' : (v * 100).toFixed(1) + '%'}</td>)}</tr>)}</tbody></table></div><RankingResults result={result}/></>
         : result?.rankings ? <RankingResults result={result}/>
           : result?.rate_a != null ? <div className="result-metrics"><div>星辉胜率<strong>{(result.rate_a * 100).toFixed(1)}%</strong></div><div>晨曦胜率<strong>{(result.rate_b * 100).toFixed(1)}%</strong></div><div>平均回合<strong>{result.average_rounds.toFixed(1)}</strong></div></div>
             : result && <p>胜方 {result.winner} · {result.rounds} 回合</p>}
-      {job.logs?.length > 0 && <details open={mode === 'verbose'}><summary>完整记录</summary><pre className="verbose-log">{job.logs.join('\n')}</pre></details>}
+      {!!job.logs?.length && <details open={job.params.mode === 'verbose'}><summary>完整记录</summary><pre className="verbose-log">{job.logs.join('\n')}</pre></details>}
       {job.status === 'completed' && <div className="export-actions"><a className="button" href={`/api/ui/simulations/${job.id}/export?format=csv`}>导出 CSV</a><a className="button" href={`/api/ui/simulations/${job.id}/export`}>导出 JSON</a></div>}
     </div>}
   </section>;
@@ -389,7 +474,7 @@ export function TournamentPanel({ catalog, onError, onWatch, onSettings }: Feedb
     <button className="button primary" disabled={busy} onClick={async () => { setBusy(true); try { const basePlayoff = defaults.PLAYOFF_CONFIG || defaultPlayoff; const playoff = { ...basePlayoff, format: playoffFormat, draw: basePlayoff.draw === 'weighted' && playoffFormat !== 'playin12' ? 'tiered' : basePlayoff.draw }; const result = await api<Effect>('/tournaments', { format, playoff, ...(seed ? { seed: Number(seed) } : {}) }); setId(result.id); await load(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); } }}>新建锦标赛</button>
   </div>
     <section className="panel playoff-create"><h2>新赛季季后赛赛制</h2><div className="playoff-create-main"><label>季后赛赛制<select aria-label="季后赛赛制" value={playoffFormat} onChange={e => setPlayoffFormat(e.target.value)}>{Object.entries(playoffLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label><button type="button" className="button" onClick={onSettings}>前往设置</button></div></section>
-    {t && <><p role="status">{t.phase === 'regular' ? '常规赛' : t.phase === 'playoffs' ? '季后赛' : '赛事完成'} · {t.status}{t.current?.series && ' · 当前系列赛 ' + t.current.series} · 常规赛 {t.completed}/{t.schedule.length}{t.message && ' · ' + t.message}</p>
+    {t && <><p role="status">{t.phase === 'regular' ? '常规赛' : t.phase === 'playoffs' ? '季后赛' : '赛事完成'} · {t.status === 'queued' ? '排队中' : t.status}{t.current?.series && ' · 当前系列赛 ' + t.current.series} · 常规赛 {t.completed}/{t.schedule.length}{t.message && ' · ' + t.message}</p>
       <div className="expansion-toolbar"><label>逐回合速度<select aria-label="逐回合速度" value={t.speed ?? 1} onChange={e => setSpeed(Number(e.target.value))}><option value={1}>1× 速度</option><option value={2}>2× 速度</option><option value={4}>4× 速度</option></select></label><button className="button stop-button" disabled={busy || t.status === 'paused'} onClick={() => advance('pause')}>暂停推进</button>
         {t.status === 'paused' && t.current && <button className="button primary" disabled={busy} onClick={() => advance('resume')}>继续当前模拟</button>}
         {t.phase === 'regular' ? <button className="button primary" disabled={busy || t.status !== 'paused'} onClick={() => advance('regular')}>模拟常规赛</button> : <>{buttons.map(([op, text]) => <button key={op} className="button" disabled={busy || t.status !== 'paused' || t.phase === 'done' || !!t.current} onClick={() => advance(op)}>{text}</button>)}

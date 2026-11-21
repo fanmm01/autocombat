@@ -5264,7 +5264,7 @@ class CombatEngine:
         finally:
             self._auto_cake_rescue = False
 
-    def _find_personal_item(self, uid, item_kind=None, item_name=None):
+    def _find_personal_item(self, uid, item_kind=None, item_name=None, *, target_id=None):
         from characters_data import ITEM_TEMPLATES
         ITEM_TEMPLATES = getattr(self, '_item_templates_snapshot', ITEM_TEMPLATES)
         char = self.get_char(uid)
@@ -5279,6 +5279,8 @@ class CombatEngine:
             if item_kind == 'hp' and not ITEM_TEMPLATES[name].get('回复hp'):
                 continue
             if item_kind == 'mp' and not ITEM_TEMPLATES[name].get('回复mp'):
+                continue
+            if target_id is not None and not self._inventory_item_allowed(entry, uid, uid, target_id):
                 continue
             return name, index
         return None
@@ -8058,14 +8060,10 @@ class CombatEngine:
             return ('目标已死亡，无法食用蛋糕', False)
 
         # 1) Prefer the eater's own inventory; only same-team entries are usable.
-        eater_char = self.get_char(eater_id)
-        for i, entry in enumerate(eater_char.inventory):
-            item_name = entry['item']
-            if item_name not in ITEM_TEMPLATES or entry['count'] <= 0:
-                continue
-            if not self._inventory_item_allowed(entry, eater_id, eater_id, tid):
-                continue
-            result, ok = self._consume_inventory_item(eater_id, i, item_name, tid)
+        cake = self._find_personal_item(eater_id, target_id=tid)
+        if cake:
+            item_name, index = cake
+            result, ok = self._consume_inventory_item(eater_id, index, item_name, tid)
             if ok:
                 return (result, True)
 
@@ -8093,7 +8091,7 @@ class CombatEngine:
                     if entry.get('item', '') in ITEM_TEMPLATES and entry.get('count', 0) > 0:
                         return True
         else:
-            if self._find_personal_item(uid, item_kind=item_kind):
+            if self._find_personal_item(uid, item_kind=item_kind, target_id=target_id or uid):
                 return True
             team = self._battle_team_of(uid)
             if any(e.get('type') == 'create' and e.get('craftRoundsRemaining', 1) <= 0

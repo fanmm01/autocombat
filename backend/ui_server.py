@@ -140,6 +140,19 @@ def register_ui(app, ns):
                 raise BadRequest(result.get('message', '战斗操作失败'))
             return result
 
+    def basic_attack_available(eng, uid):
+        return eng._get_my_actions(uid).get('主动', 0) > 0 and eng._can_basic_attack(uid)
+
+    def cake_unavailable_reason(eng, uid):
+        if not eng._has_ready_cake(uid):
+            return '无可用的蛋糕'
+        actions = eng._get_my_actions(uid)
+        if actions.get('主动', 0) <= 0:
+            return '主动作已用尽，请结束回合'
+        if actions.get('附加', 0) <= 0:
+            return '附加动作次数已用尽！'
+        return ''
+
     def spell_info(eng, uid, s):
         timing = str(s.get('时机', s.get('timing', '2')))
         acts = eng._get_my_actions(uid)
@@ -170,6 +183,60 @@ def register_ui(app, ns):
                     effects=s.get('effects', []), available=not reason, reason=reason,
                     cooldown=eng._get_cooldown(uid, s['index']), revive_candidates=cands,
                     once=bool(s.get('_once_per_battle')))
+
+    def spell_target_uids(eng, uid, spell, info, target):
+        if info['revive_candidates']:
+            return set(info['revive_candidates'])
+        return {eng._resolve_uid(t)
+                for effect in spell.get('effects', []) if effect.get('type') != 19
+                for t in eng._resolve_effect_targets(uid, target, effect)}
+
+    def cell_skill_options(room, eng, slot_uid, coord):
+        uid = eng._resolve_uid(slot_uid)
+        if not eng._can_take_active_action(uid):
+            return []
+        units = [eng._resolve_uid(entry['userId']) for entry in eng._battle_unit_entries()
+                 if entry.get('coord') == coord]
+        graves = [g['uid'] for g in getattr(eng, '_graveyard', {}).values()
+                  if not g.get('revived') and (g.get('entry') or g.get('member') or {}).get('coord') == coord]
+        if not units and not graves:
+            return []
+
+        eng = clone_engine(eng)
+        options = []
+        if units and basic_attack_available(eng, slot_uid):
+            enemies = eng._enemy_targets(uid)
+            profile = eng._basic_attack_profile(uid)
+            for target in units:
+                if target in enemies:
+                    reason = clone_engine(eng)._prepare_basic_attack(uid, target, profile[1])[0] if profile else ''
+                    if not reason:
+                        options.append(dict(index=0, target=target))
+
+        # Check each cast from the same starting state, as a single confirmed
+        # action would. Only return eligibility, and never advance battle dice.
+        rng = random.getstate()
+        try:
+            for spell in eng.load_spells(uid):
+                info = spell_info(eng, slot_uid, spell)
+                if not info['available']:
+                    continue
+                for target in graves if info['revive_candidates'] else units:
+                    random.setstate(room.get('rng', rng))
+                    if target not in spell_target_uids(eng, slot_uid, spell, info, target):
+                        continue
+                    clone = clone_engine(eng)
+                    if info['revive_candidates']:
+                        clone._revive_selected_uid = target
+                    try:
+                        valid = ns['action_committed'](clone._execute_spell(uid, target, copy.deepcopy(spell)))
+                    except ns['ReactionNeeded']:
+                        valid = True
+                    if valid:
+                        options.append(dict(index=spell['index'], target=target))
+        finally:
+            random.setstate(rng)
+        return options
 
     def snapshot(room):
         eng = engine_for(room)
@@ -209,11 +276,12 @@ def register_ui(app, ns):
             uid = current['userId']
             ch = eng.get_char(uid)
             skills = [dict(index=0, name='基本攻击', command='.s0', timing='2', mp_cost=0,
-                           effects=[], available=eng._get_my_actions(uid).get('主动', 0) > 0 and eng._can_basic_attack(uid),
+                           effects=[], available=basic_attack_available(eng, uid),
                            reason='', cooldown=0, revive_candidates=[], once=False)]
             skills += [spell_info(eng, uid, s) for s in (ch.spells or eng.load_spells(uid) or [])]
             turn = dict(uid=eng._resolve_uid(uid), slot_uid=uid, skills=skills,
-                        controller=controller(room, eng, uid), actions=eng._get_my_actions(uid))
+                        controller=controller(room, eng, uid), actions=eng._get_my_actions(uid),
+                        cake_unavailable_reason=cake_unavailable_reason(eng, uid))
         p = pending_for(room)
         reaction = None
         if p:
@@ -585,10 +653,7 @@ def register_ui(app, ns):
                 info = spell_info(eng, uid, spell)
                 if not info['available']:
                     raise BadRequest(info['reason'])
-                valid = info['revive_candidates'] or list(dict.fromkeys(
-                    t for e in spell.get('effects', []) for t in eng._resolve_effect_targets(uid, target or uid, e)
-                    if e.get('type') != 19))
-                # A selected unit must actually participate in at least one effect.
+                valid = spell_target_uids(eng, uid, spell, info, target or uid)
                 if target and target not in valid:
                     raise BadRequest('该技能不能作用于所选目标')
             elif target and target not in eng._enemy_targets(uid):
@@ -616,6 +681,10 @@ def register_ui(app, ns):
                     e.update(coord=coord, _anchor_coord=coord)
             eng._set_initiative(il)
             return {'output': f'{eng.get_char(uid).name} 调整站位至 {coord}'}
+        if data['command'] in ('.a eat', '.a give'):
+            reason = cake_unavailable_reason(eng, slot_uid)
+            if reason:
+                raise BadRequest(reason)
         eng._manual_attack_bp = data.get('bp_suffix', '')
         try:
             return invoke('submit_action', bid, payload)
@@ -662,11 +731,21 @@ def register_ui(app, ns):
             entry = active(eng)
             if not entry:
                 return jsonify(targets=[], cells=[])
-            prep = (eng._get_state() or {}).get('phase') == 'preparation'
+            phase = (eng._get_state() or {}).get('phase')
+            prep = phase == 'preparation'
             uid = data.get('actor') if prep else entry['userId']
             if not uid or controller(room, eng, uid) != session_id():
                 raise Forbidden('不能操作此角色')
             command = data.get('command', '')
+            if command == 'cell_skills':
+                if phase != 'active' or pending_for(room):
+                    raise Conflict('当前无法选择技能')
+                md, coord = eng._get_map(), data.get('coord')
+                point = ns['parse_coord'](coord) if isinstance(coord, str) and len(coord) <= 3 else None
+                if not point or not (0 <= point[0] < md['width'] and 0 <= point[1] < md['height']):
+                    raise BadRequest('位置超出地图')
+                coord = ns['format_coord'](*point)
+                return jsonify(skills=cell_skill_options(room, eng, uid, coord), revision=room['revision'])
             if command == 'move':
                 md, cells = eng._get_map(), []
                 # Use exactly the engine's validator on throwaway copies. No path
@@ -687,7 +766,7 @@ def register_ui(app, ns):
                             cells.append(coord)
                 return jsonify(cells=cells, targets=[], revision=room['revision'])
             if command == '.a give':
-                targets = eng._ally_targets(uid, include_self=False)
+                targets = [] if prep or cake_unavailable_reason(eng, uid) else eng._ally_targets(uid, include_self=False)
             elif command == '.s0':
                 targets = eng._enemy_targets(uid)
             else:
@@ -750,13 +829,15 @@ def register_ui(app, ns):
     from ui_management import Management
     from ui_store import Store
     from ui_tasks import Tasks
+    from ui_simulation_queue import SimulationQueue
     management = Management(bp, locals())
     from ui_settings import Settings
     settings = Settings(bp, locals(), management, instance)
     app.extensions['combat_ui']['settings'] = settings
     store = Store(management.runtime / ('browser.sqlite3' if instance == '8889' else f'browser-{instance}.sqlite3'))
+    simulation_queue = SimulationQueue()
     tasks = Tasks(bp, locals(), management, store)
-    app.extensions['combat_ui'].update(management=management, store=store, tasks=tasks)
+    app.extensions['combat_ui'].update(management=management, store=store, tasks=tasks, simulation_queue=simulation_queue)
     from ui_tournaments import Tournaments
     tournaments = Tournaments(bp, locals(), management, store)
     app.extensions['combat_ui']['tournaments'] = tournaments

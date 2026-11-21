@@ -10,6 +10,7 @@ import { generateCurrentStageData } from '@/Core/controller/storage/saveGame';
 import { sceneFetcher } from '@/Core/controller/scene/sceneFetcher';
 import { sceneParser } from '@/Core/parser/sceneParser';
 import { stopAllPerform } from '@/Core/controller/gamePlay/stopAllPerform';
+import { switchAuto } from '@/Core/controller/gamePlay/autoPlay';
 import { forward, commitForward, nextSentence } from '@/Core/controller/gamePlay/nextSentence';
 import { restorePerform } from '@/Core/controller/storage/jumpFromBacklog';
 import cloneDeep from 'lodash/cloneDeep';
@@ -18,6 +19,12 @@ import '@/UI/Hosted/hosted.scss';
 
 let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
 let slotsLoaded = false;
+let autoPlayEnabled = false;
+function syncHostedAutoPlay() {
+  const shouldPlay = autoPlayEnabled && !hostState.paused && !hostState.loading && !hostState.panel
+    && hostState.token !== hostState.sent;
+  if (WebGAL.gameplay.isAuto !== shouldPlay) switchAuto();
+}
 function mediaState() {
   return Array.from(document.querySelectorAll('audio,video')).map((element, index) => {
     const e = element as HTMLMediaElement;
@@ -49,12 +56,14 @@ export function reportCheckpoint() {
 export function completeHostedBlock() {
   if (hostState.loading || hostState.sent === hostState.token) return;
   hostState.sent = hostState.token;
+  syncHostedAutoPlay();
   clearTimeout(checkpointTimer);
   emitHostEvent('advance', { token: hostState.token, snapshot: captureHostedCheckpoint(), user_data: userData() });
 }
 export async function loadHostedScene(payload: any) {
   if (!payload.scene || payload.scene.token === hostState.token) return;
   hostState.loading = true;
+  syncHostedAutoPlay();
   try {
     await waitForStableStage();
     stopAllPerform();
@@ -107,6 +116,7 @@ export async function loadHostedScene(payload: any) {
       requestAnimationFrame(() => nextSentence());
     }
   }
+  syncHostedAutoPlay();
 }
 export function initializeHostedRuntime() {
   document.documentElement.classList.add('story-hosted');
@@ -132,13 +142,18 @@ export function initializeHostedRuntime() {
         hostState.paused = !!message.payload.paused;
         if (hostState.paused) hostState.pendingNext = false;
         if (hostState.paused) WebGAL.gameplay.resetGamePlay();
+        syncHostedAutoPlay();
         document.querySelectorAll('audio,video').forEach(e => {
           const media = e as HTMLMediaElement;
           if (message.payload.mute) media.pause();
           else if (media.src) void media.play().catch(() => {});
         });
+      } else if (message.type === 'autoPlay') {
+        autoPlayEnabled = !!message.payload.enabled;
+        syncHostedAutoPlay();
       } else if (message.type === 'panel') {
         hostState.panel = message.payload.panel || '';
+        syncHostedAutoPlay();
         window.dispatchEvent(new CustomEvent('story-panel', { detail: hostState.panel }));
       } else if (message.type === 'save') emitHostEvent('save', { slot: message.payload.slot, snapshot: captureHostedCheckpoint() });
     } catch (e) { error = String(e); emitHostEvent('error', { message: error }); }

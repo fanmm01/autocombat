@@ -16,6 +16,7 @@ from flask import jsonify, request
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 from combat_settings import value as setting, snapshot as settings_snapshot, settings_scope, season_statuses, valid_season
 import tournament_playoffs as playoffs
+from ui_simulation_queue import SimulationQueue
 
 
 def standings(t):
@@ -83,6 +84,7 @@ def ready(t):
 class Tournaments:
     def __init__(self, bp, context, management, store):
         self.c, self.management, self.store = context, management, store
+        self.queue = context.get('simulation_queue') or SimulationQueue()
         self.lock, self.threads, self.workers = threading.RLock(), set(), {}
         for t in store.list('tournament'):
             if 'fast' in t:
@@ -91,7 +93,7 @@ class Tournaments:
             if 'settings' not in t:
                 t['settings'] = settings_snapshot()
                 self.save(t)
-            if t['status'] in ('running', 'watching'):
+            if t['status'] in ('queued', 'running', 'watching'):
                 t.update(status='paused', current=None, message='服务重启，已完成赛果已保留；未完成场次将从场初重新开始')
                 self.save(t)
         for path, name, method in [('/tournaments', 'create', 'POST'), ('/tournaments', 'list', 'GET'),
@@ -254,6 +256,8 @@ class Tournaments:
                         room['running'] = True
                         self.c['emit'](room, 'control', '继续比赛')
             elif op == 'pause':
+                if t['status'] == 'queued' and self.queue.cancel(('tournament', tid)):
+                    self.threads.discard(tid)
                 t['status'] = 'paused'
                 if watch_room:
                     with self.c['guard']:
@@ -264,7 +268,7 @@ class Tournaments:
             else:
                 if watch_room:
                     raise Conflict('当前比赛尚未结束，请进场观战或继续当前比赛')
-                if t['status'] in ('running', 'watching') or tid in self.threads:
+                if t['status'] in ('queued', 'running', 'watching') or tid in self.threads:
                     raise Conflict('请先暂停当前推进')
                 if data.get('revision') != t['revision']:
                     raise Conflict('赛况已更新，请重试')
@@ -280,13 +284,26 @@ class Tournaments:
                 available = ready(t) if t['phase'] == 'playoffs' else []
                 if op in ('game', 'series', 'round', 'turn_game') and not any(s['id'] == selected for s in available):
                     raise BadRequest('请选择已确定双方且尚未结束的系列赛')
-                t.update(status='running', operation=op, selected=selected)
+                t.update(status='queued' if op == 'regular' else 'running', operation=op, selected=selected)
             t['requests'] = (t['requests'] + [request_key])[-200:]
             self.save(t)
             if op != 'pause' and not resuming:
                 self.threads.add(tid)
-                threading.Thread(target=self.run, args=(tid,), daemon=True).start()
+                if op == 'regular':
+                    self.queue.submit(('tournament', tid), self.run_queued_regular, tid)
+                else:
+                    threading.Thread(target=self.run, args=(tid,), daemon=True).start()
             return jsonify(self.public(t))
+
+    def run_queued_regular(self, tid):
+        with self.lock:
+            t = self.store.get('tournament', tid)
+            if t['status'] != 'queued':
+                self.threads.discard(tid)
+                return
+            t['status'] = 'running'
+            self.save(t)
+        self.run(tid)
 
     def run(self, tid):
         try:
@@ -355,7 +372,7 @@ class Tournaments:
     def run_regular(self, tid):
         from concurrent.futures import ThreadPoolExecutor
         t = self.store.get('tournament', tid)
-        count = max(1, min(t['settings'].get('PRELIM_WORKERS', 8), os.cpu_count() or 1))
+        count = max(1, min(t['settings'].get('PRELIM_WORKERS', 8), self.queue.workers))
         # One persistent isolated subprocess per slot; only a bounded wave is dispatched.
         folder = self.management.runtime/'jobs'/tid
         for name in ('ui_task_worker.py', 'combat_settings.py', 'combat_defaults.py', 'tournament_playoffs.py'):
@@ -389,7 +406,8 @@ class Tournaments:
         import ai_battle as ab
         folder = self.management.runtime/'jobs'/tid
         params = dict(settings=cfg, mode='game', team_a=t['teams'][match['a']], team_b=t['teams'][match['b']],
-                      map_size=match['map_size'], seed=match['seed'], char_season=t['char_season'], verbose=verbose, fast=False,
+                      map_size=match['map_size'], seed=match['seed'], char_season=t['char_season'], verbose=verbose,
+                      stream_output=verbose, fast=False,
                       max_rounds=cfg['MAX_ROUNDS_PRELIM_BY_FORMAT'].get(t['format'], cfg['MAX_ROUNDS_PRELIM']) if t['phase'] == 'regular' else cfg['MAX_ROUNDS_KNOCKOUT'])
         result = None
         replay = []

@@ -449,6 +449,15 @@ class PvPFullBattleEngine(FullBattleEngine):
     resolve_reaction() continues from where _coc7_attack left off.
     """
 
+    def _prepare_basic_attack(self, atk_uid, def_uid, attack_range):
+        can_attack, _ = self._move_to_attack_range(atk_uid, def_uid, attack_range)
+        if not can_attack:
+            return '无法接近目标！', False
+        if self._y17_ranged(atk_uid) or (self._is_y14(atk_uid) and getattr(self.get_char(atk_uid), 'phase', 2) == 1):
+            return '', False
+        can_melee, penalty = self._can_melee(atk_uid, def_uid)
+        return ('' if can_melee else '无法近战飞行目标！'), penalty
+
     def _coc7_attack(self, atk_uid, def_uid, skill_name, skill_val, dmg_dice, pen, leth,
                      bp_suffix="", dmg_adv=False, dmg_dis=False):
         """Override: raise ReactionNeeded at the reaction decision point (line 1210 of parent)."""
@@ -458,19 +467,14 @@ class PvPFullBattleEngine(FullBattleEngine):
         dname = dchar.name
         lines = []
 
-        if self._is_y14(atk_uid) or self._is_y17(atk_uid):
-            profile = self._basic_attack_profile(atk_uid)
-            if profile:
-                can_atk, _ = self._move_to_attack_range(atk_uid, def_uid, profile[1])
-                if not can_atk:
-                    return (def_uid, atk_uid, [f'{aname} 无法接近目标！'])
-                if not (self._y17_ranged(atk_uid) or (self._is_y14(atk_uid) and getattr(achar, 'phase', 2) == 1)):
-                    can_melee, penalty = self._can_melee(atk_uid, def_uid)
-                    if not can_melee:
-                        return (def_uid, atk_uid, [f'{aname} 无法近战飞行目标！'])
-                    if penalty:
-                        bp_suffix = 'p'
-                self._y17_weapon_used(atk_uid)
+        profile = self._basic_attack_profile(atk_uid)
+        if profile:
+            reason, penalty = self._prepare_basic_attack(atk_uid, def_uid, profile[1])
+            if reason:
+                return (def_uid, atk_uid, [aname + reason])
+            if penalty:
+                bp_suffix = 'p'
+            self._y17_weapon_used(atk_uid)
 
         lines.extend(self._received_attack_reactions(atk_uid, def_uid))
         eff_skill = self._apply_buff_skill_mod(atk_uid, skill_val, skill_name)
@@ -6237,8 +6241,10 @@ def api_train_status(job_id):
 # ── Tournament job store ──
 _jour_jobs: dict = {}
 
-def _do_jour(job_id: str, enabled_modes: list):
+def _do_jour(job_id: str, enabled_modes: list, worker_limit=None):
     """Run AI tournament in background, capturing output with phase tags."""
+    if _jour_jobs[job_id]['status'] == 'stopped':
+        return
     try:
         _debug_log(f'[jour] Job {job_id}: starting tournament modes={enabled_modes}')
 
@@ -6246,10 +6252,12 @@ def _do_jour(job_id: str, enabled_modes: list):
 
         current_phase = ['prelim']
 
-        def wrapped_battle_log(level, msg):
-            # Check for stop signal
+        def check_stopped(*_):
             if _jour_jobs.get(job_id, {}).get('status') == 'stopped':
-                raise KeyboardInterrupt()  # Break out of tournament loop
+                raise KeyboardInterrupt()
+
+        def wrapped_battle_log(level, msg):
+            check_stopped()
             phase = current_phase[0]
             s = str(msg)
             # Standings: "预赛结束 — XvX 积分排名"
@@ -6278,11 +6286,12 @@ def _do_jour(job_id: str, enabled_modes: list):
         import ai_battle
         ai_battle.battle_log = wrapped_battle_log
 
-        tournament = Tournament(enabled_modes=enabled_modes)
-        tournament.init_characters()
-        tournament.run_phases(write_results_flag=True)
-
-        ai_battle.battle_log = orig_battle_log
+        try:
+            tournament = Tournament(enabled_modes=enabled_modes)
+            tournament.init_characters()
+            tournament.run_phases(write_results_flag=True, progress=check_stopped, worker_limit=worker_limit)
+        finally:
+            ai_battle.battle_log = orig_battle_log
 
         result_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'result.txt')
         bracket_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bracket_info.txt')
@@ -6294,6 +6303,7 @@ def _do_jour(job_id: str, enabled_modes: list):
             with open(bracket_path, 'r', encoding='utf-8') as f:
                 results['bracket'] = f.read()
 
+        check_stopped()
         _jour_jobs[job_id]['status'] = 'completed'
         _jour_jobs[job_id]['results'] = results
         _jour_jobs[job_id].setdefault('entries', []).append({
@@ -6325,11 +6335,14 @@ def api_jour_start():
     enabled_modes = mode_map.get(mode, ['1v1', '2v2', '3v3'])
     job_id = str(uuid.uuid4())[:8]
     _jour_jobs[job_id] = {'status': 'running', 'entries': [], 'results': None}
-    thread = threading.Thread(target=_do_jour, args=(job_id, enabled_modes), daemon=True)
-    thread.start()
+    queue = app.extensions.get('combat_ui', {}).get('simulation_queue')
+    if queue is None:
+        threading.Thread(target=_do_jour, args=(job_id, enabled_modes), daemon=True).start()
+    else:
+        queue.submit(('jour', job_id), _do_jour, job_id, enabled_modes, queue.workers)
     mode_label = {'1': '1v1', '2': '2v2', '3': '3v3', 'all': '1v1+2v2+3v3'}.get(mode, 'all')
     _debug_log(f'[jour] Job {job_id}: started mode={mode_label}')
-    return jsonify({'ok': True, 'job_id': job_id, 'message': f'锦标赛已启动 ({mode_label})'})
+    return jsonify({'ok': True, 'job_id': job_id, 'message': f'已提交锦标赛 ({mode_label})'})
 
 
 @app.route('/api/jour/<job_id>/poll', methods=['GET'])
@@ -6369,6 +6382,9 @@ def api_jour_stop(job_id):
     if job.get('status') != 'running':
         return jsonify({'error': True, 'message': '锦标赛任务未在运行中'}), 400
     job['status'] = 'stopped'
+    queue = app.extensions.get('combat_ui', {}).get('simulation_queue')
+    if queue is not None:
+        queue.cancel(('jour', job_id))
     job.setdefault('entries', []).append({
         'type': 'done', 'phase': 'stopped', 'msg': '锦标赛已手动停止'
     })

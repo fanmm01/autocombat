@@ -1,0 +1,37 @@
+.board-cell.cell-selected, .board-cell.cell-selected:hover {
+  fill: #d7c9eb99;
+  stroke: #8a78c5;
+  stroke-width: 2px;
+}
+
+.cell-skill-picker {
+  flex: none;
+  border-top: 1px solid var(--line);
+  padding: 6px 13px 12px;
+  background: #faf8fd;
+}
+
+.cell-skill-picker header, .cell-skill-picker h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cell-skill-picker header { justify-content: space-between; }
+.cell-skill-picker h3 { font-size: 12px; color: #746481; }
+.cell-skill-picker p { margin: 4px 0 0; font-size: 12px; color: #746481; }
+
+.cell-skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 2px;
+}
+
+.cell-skill-list li { max-width: 100%; }
+.cell-skill-list .button { flex-direction: column; align-items: flex-start; gap: 2px; min-height: 42px; }
+.cell-skill-list small { color: #746481; font-size: 10px; overflow-wrap: anywhere; }

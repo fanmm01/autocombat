@@ -351,11 +351,9 @@ def parallel_pairs(t, team_a, team_b, map_size, count, season, workers, seed):
     from combat_settings import snapshot
     rng = random.Random(seed)
     with Battles(workers, snapshot(), season) as pool:
-        pending = []
-        for _ in range(count):
-            pending.append(pool.submit(rng.getrandbits(63), team_a, team_b, map_size,
-                                      display_level=DisplayLevel.WINLOSS, delay=0))
-        for future in pending:
+        submissions = (pool.submit(rng.getrandbits(63), team_a, team_b, map_size,
+                                   display_level=DisplayLevel.WINLOSS, delay=0) for _ in range(count))
+        for future in pool.buffered(submissions):
             yield future.result()[3]
 
 

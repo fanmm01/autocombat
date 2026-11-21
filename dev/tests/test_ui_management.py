@@ -3,6 +3,7 @@ import ast
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -356,6 +357,33 @@ class ManagementTests(unittest.TestCase):
         tunneled = self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '127.0.0.1',
             'HTTP_HOST': 'public-tunnel.example:443'})
         self.assertEqual(tunneled.status_code, 403)
+
+    def test_management_allowlist_import_validates_before_replacing_and_persists(self):
+        source = self.root / 'previous-allowlist.json'
+        saved = self.management.allowlist_path
+        source.write_text('["invalid"]', encoding='utf-8')
+        original = saved.read_bytes()
+        with patch.dict(os.environ, AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST=str(source)):
+            with self.assertRaisesRegex(ValueError, '无法读取管理白名单'):
+                Management(Blueprint('invalid_import', __name__), self.c, self.root)
+        self.assertEqual(saved.read_bytes(), original)
+
+        source.write_text('["198.51.100.7/24", "2001:db8::7"]', encoding='utf-8-sig')
+        with patch.dict(os.environ, AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST=str(source)):
+            imported = Management(Blueprint('valid_import', __name__), self.c, self.root)
+            self.assertNotIn('AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST', os.environ)
+        expected = ['198.51.100.0/24', '2001:db8::7']
+        self.assertEqual(json.loads(saved.read_text(encoding='utf-8')), expected)
+        self.assertEqual(format_allowlist(imported.allowlist), expected)
+        reloaded = Management(Blueprint('persistent_import', __name__), self.c, self.root)
+        self.assertEqual(format_allowlist(reloaded.allowlist), expected)
+
+    def test_management_recognizes_ipv6_loopback_host_and_denies_tunnel_host(self):
+        remote = {'REMOTE_ADDR': '::1'}
+        localhost = self.client.get('/api/ui/allowlist', base_url='http://[::1]:8889', environ_overrides=remote)
+        self.assertEqual(localhost.status_code, 200)
+        tunnel = self.client.get('/api/ui/allowlist', base_url='http://tunnel.example', environ_overrides=remote)
+        self.assertEqual(tunnel.status_code, 403)
 
     def test_wildcard_allowlist_allows_ipv4_ipv6_and_tunnel_debug_access(self):
         wildcard = parse_allowlist('*.*.*.*')

@@ -12,7 +12,7 @@ const artifacts=process.env.UI_TEST_ARTIFACTS||path.resolve(__dirname,'../../../
   fs.writeFileSync(path.join(root,'figure/guide.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="900"><rect width="300" height="900" fill="#8876ac"/><circle cx="150" cy="110" r="80" fill="#ffe1bf"/></svg>');
   fs.writeFileSync(path.join(root,'story.project.json'),JSON.stringify({id,name:'Responsive fixture',figures:{Guide:'guide.svg'}}));
   fs.writeFileSync(path.join(root,'A.flow'),'@START:\n->dialog\n->END\n');
-  fs.writeFileSync(path.join(root,'dialog.txt'),'\\bg courtyard.svg\nNarrator:“First responsive line.”\n“Second responsive line.”\n“Third responsive line.”\n\\c{\n1“Continue”;\n2“Stay”;\n}\n\\c1 “The first path.”\n\\c2 “The second path.”\n\\c\n');
+  fs.writeFileSync(path.join(root,'dialog.txt'),'\\bg courtyard.svg\nNarrator:“First responsive line.”\n“Second responsive line.”\n“Third responsive line.”\n“Fourth responsive line.”\n\\c{\n1“Continue”;\n2“Stay”;\n}\n\\c1 “The first path.”\n\\c2 “The second path.”\n\\c\n');
   fs.mkdirSync(artifacts,{recursive:true});
   fs.writeFileSync(path.join(root,'dialog.txt'),'\\mem Guide\n'+fs.readFileSync(path.join(root,'dialog.txt'),'utf8'));
   const browser=await chromium.launch({channel:process.env.UI_BROWSER_CHANNEL||'msedge',headless:true,args:['--autoplay-policy=no-user-gesture-required']});
@@ -36,6 +36,9 @@ const artifacts=process.env.UI_TEST_ARTIFACTS||path.resolve(__dirname,'../../../
     await page.getByRole('button',{name:'预览草稿',exact:true}).click();
     const frame=page.frameLocator('iframe[title="剧情播放器"]');await frame.locator('#textBoxMain').waitFor();
     const getRun=()=>page.evaluate(async()=>fetch('/api/ui/story/runs/'+localStorage.getItem('story-run')).then(response=>response.json()));
+    const firstScene=(await getRun()).scene.token;
+    await page.waitForTimeout(3000);
+    assert.equal((await getRun()).scene?.token,firstScene,'autoplay must start disabled');
     // Each dialog takes at most two clicks: reveal immediately, then advance.
     const before=await getRun();const start=Date.now();
     await frame.locator('#FullScreenClick').click({position:{x:200,y:180}});
@@ -70,6 +73,13 @@ const artifacts=process.env.UI_TEST_ARTIFACTS||path.resolve(__dirname,'../../../
     await frame.getByRole('dialog',{name:'历史',exact:true}).waitFor();assert.match(await frame.locator('.hosted-history').innerText(),/First responsive line/);await frame.getByRole('button',{name:'关闭',exact:true}).click();
     await page.setViewportSize({width:1280,height:800});
     await page.getByRole('button',{name:'全屏',exact:true}).click();await page.waitForFunction(()=>document.fullscreenElement?.classList.contains('story-player-shell'));
+    const menu=page.getByRole('button',{name:'菜单',exact:true});
+    await menu.click();await page.getByRole('button',{name:'继续',exact:true}).click();
+    await frame.locator('#textBoxMain').filter({hasText:'Fourth'}).waitFor({timeout:8000});
+    await menu.click();await page.getByRole('button',{name:'暂停',exact:true}).click();
+    const fourthScene=(await getRun()).scene.token;
+    await page.waitForTimeout(3000);
+    assert.equal((await getRun()).scene?.token,fourthScene,'pausing must stop autoplay');
     for(let i=0;i<15;i++){
       const run=await getRun();if(run.status==='choice')break;
       await frame.locator('#FullScreenClick').click({position:{x:200,y:180}});await page.waitForTimeout(70);
@@ -83,6 +93,6 @@ const artifacts=process.env.UI_TEST_ARTIFACTS||path.resolve(__dirname,'../../../
     await page.screenshot({path:path.join(artifacts,'choice-fullscreen.png')});await page.locator('.story-choice').first().click();
     await page.waitForFunction(async()=>{const run=await fetch('/api/ui/story/runs/'+localStorage.getItem('story-run')).then(response=>response.json());return run.status==='text';});
     await page.getByRole('button',{name:'退出全屏',exact:true}).click();
-    assert.deepEqual(errors,[]);console.log('Story responsive browser: portrait editor, graph file navigation, fast advance, landscape, settings and fullscreen choice passed');
+    assert.deepEqual(errors,[]);console.log('Story responsive browser: portrait editor, graph file navigation, manual advance, autoplay controls, landscape, settings and fullscreen choice passed');
   }finally{await browser.close();if(!path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep+'story-responsive-'))throw new Error('Unexpected fixture path');fs.rmSync(root,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exit(1);});

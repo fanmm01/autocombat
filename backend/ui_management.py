@@ -12,6 +12,7 @@ import secrets
 import shutil
 import threading
 import time
+from urllib.parse import urlsplit
 import zipfile
 
 from flask import jsonify, request, Response
@@ -44,6 +45,16 @@ def parse_allowlist(value):
         elif entry:
             networks.append(ipaddress.ip_network(entry, strict=False))
     return tuple(dict.fromkeys(networks))
+
+
+def read_allowlist(path):
+    try:
+        entries = json.loads(path.read_text(encoding='utf-8-sig'))
+        if not isinstance(entries, list) or any(not isinstance(item, str) for item in entries):
+            raise ValueError('需要由 IP 地址或 CIDR 网段组成的 JSON 数组')
+        return parse_allowlist(','.join(entries))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f'无法读取管理白名单 {path}：{exc}') from exc
 
 
 def allows_all_addresses(networks):
@@ -86,7 +97,8 @@ def is_trusted_proxy(remote_addr, networks):
 
 def is_loopback(remote_addr):
     try:
-        return ipaddress.ip_address(remote_addr).is_loopback
+        address = ipaddress.ip_address(remote_addr)
+        return (getattr(address, 'ipv4_mapped', None) or address).is_loopback
     except (TypeError, ValueError):
         return False
 
@@ -99,15 +111,15 @@ class Management:
         self.allowlist_path = self.runtime / 'management-allowlist.json'
         self.default_allowlist = parse_allowlist('192.168.1.6,' + os.environ.get('AUTOCOMBAT_MANAGEMENT_ALLOWLIST', ''))
         self.trusted_proxies = parse_allowlist(os.environ.get('AUTOCOMBAT_TRUSTED_PROXIES', ''))
-        if self.allowlist_path.exists():
-            saved = json.loads(self.allowlist_path.read_text(encoding='utf-8'))
-            if not isinstance(saved, list) or any(not isinstance(item, str) for item in saved):
-                raise ValueError('management-allowlist.json must contain a list of IP addresses or CIDRs')
-            self.allowlist = parse_allowlist(','.join(saved))
-            self.persist_allowlist()
+        import_path = os.environ.pop('AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST', None)
+        if import_path:
+            self.allowlist = read_allowlist(Path(import_path))
+            self.persist_allowlist(self.allowlist)
+        elif self.allowlist_path.exists():
+            self.allowlist = read_allowlist(self.allowlist_path)
         else:
             self.allowlist = self.default_allowlist
-            self.persist_allowlist()
+            self.persist_allowlist(self.allowlist)
         self.lock = threading.RLock()
         self.loaded_version = digest((self.root / 'characters_data.py').read_bytes())
         self.training = None
@@ -119,12 +131,12 @@ class Management:
                                    ('/allowlist', 'set_allowlist', 'POST')]:
             bp.add_url_rule('/api/ui' + path, 'manage_' + name, getattr(self, name), methods=[method])
 
-    def persist_allowlist(self):
-        atomic_write(self.allowlist_path, json.dumps(format_allowlist(self.allowlist), indent=2).encode('utf-8'))
+    def persist_allowlist(self, networks):
+        atomic_write(self.allowlist_path, json.dumps(format_allowlist(networks), indent=2).encode('utf-8'))
 
     def require_local(self):
         remote_addr = request.remote_addr
-        host = request.host.split(':', 1)[0].strip('[]').lower()
+        host = urlsplit(request.host_url).hostname
         local_host = host in ('localhost', 'testserver') or is_loopback(host)
         forwarded = request.headers.get('X-Forwarded-For', '').split(',')
         forwarded_ip = forwarded[0].strip() if forwarded else ''
@@ -157,8 +169,8 @@ class Management:
         except ValueError as exc:
             raise BadRequest('白名单中包含无效的 IP 地址或 CIDR 网段') from exc
         with self.lock:
+            self.persist_allowlist(networks)
             self.allowlist = networks
-            self.persist_allowlist()
         normalized = format_allowlist(networks)
         return jsonify(allowlist=normalized)
 

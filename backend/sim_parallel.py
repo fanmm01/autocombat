@@ -4,8 +4,10 @@ import multiprocessing
 import os
 import random
 import json
+from collections import deque
 from contextvars import ContextVar
 from concurrent.futures import ProcessPoolExecutor
+from itertools import islice
 
 _tournament = None
 _scope = None
@@ -72,6 +74,13 @@ class Battles:
 
     def submit(self, seed, *args, **kwargs):
         return self.pool.submit(battle, (seed, self.season, args, kwargs))
+
+    def buffered(self, submissions):
+        """Yield queued futures in order, keeping at most two per worker in flight."""
+        pending = deque(islice(submissions, self.workers * 2))
+        while pending:
+            yield pending.popleft()
+            pending.extend(islice(submissions, 1))
 
     def __exit__(self, *exc):
         if exc[0] is not None and hasattr(self.pool, 'terminate_workers'):

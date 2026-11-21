@@ -12,7 +12,7 @@ const result = spawnSync(process.execPath, args, { cwd: path.join(root, 'fronten
 if (result.error) throw result.error;
 if(result.status)process.exit(result.status);
 const extra=process.argv.includes('--browser')
-  ? ['story.cjs','story-editor.cjs','story-continuation.cjs','story-responsive.cjs'].map(name=>[path.join(tests,'browser',name)])
+  ? ['simulation.cjs','story.cjs','story-editor.cjs','story-continuation.cjs','story-responsive.cjs'].map(name=>[path.join(tests,'browser',name)])
   : [[path.join(root,'frontend/node_modules/vitest/vitest.mjs'),'run','--config','vitest.story.config.ts']];
 for(const args of extra){const next=spawnSync(process.execPath,args,{cwd:path.join(root,'frontend'),env,stdio:'inherit'});if(next.error)throw next.error;if(next.status)process.exit(next.status);}
 process.exit(0);

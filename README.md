@@ -247,7 +247,9 @@ python backend/sim.py --mode prelim --format all -n 10 -s 31415 --workers 8
 python backend/sim.py Y1+Y2 vs Y3+Y4 --verbose -s 31415 --fast
 ```
 
-`--fast` 跳过 verbose 播放等待，保留完整日志。网页端“两队批量对战”和“多轮预赛”提供并发数；锦标赛预赛使用创建赛事时的 `PRELIM_WORKERS` 设置。网页 verbose 和锦标赛逐回合模式已移除“极速”开关，使用正常播放速度。升级后需重启后端。
+`--fast` 跳过 verbose 播放等待，保留完整日志。网页端“两队批量对战”和“多轮预赛”可填写并发数，锦标赛常规赛使用创建赛事时的 `PRELIM_WORKERS` 设置，两者都受服务端上限约束。网页 verbose 和锦标赛逐回合模式使用正常播放速度。升级后需重启后端。
+
+同一后端中的模拟实验室、网页训练、锦标赛常规赛和 `.jour` 锦标赛共用队列，按提交顺序一次运行一项。并发上限默认为可用逻辑 CPU 数减 2，最低 1、最高 8。四核机默认为 2，可在启动前设置环境变量 `AUTOCOMBAT_WEB_WORKERS=1` 将上限降到 1。
 
 新版按场次分配独立随机种子，跨并发数可复现；相同种子的赛果可能与旧版不同。短任务的收益受进程启动成本影响。实测与兼容检查见 [加速验证报告](archive/artifacts/performance/report.md)。
 

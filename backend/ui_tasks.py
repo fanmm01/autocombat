@@ -1,5 +1,6 @@
 """Isolated background tasks with pinned source/weights and private exports."""
 import csv
+import errno
 import io
 import json
 import os
@@ -13,22 +14,86 @@ import time
 from flask import jsonify, request, Response
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 from ui_management import atomic_write, digest
-from combat_settings import value as setting, snapshot as settings_snapshot, settings_scope, valid_season
+from ui_simulation_queue import SimulationQueue
+from combat_settings import value as setting, snapshot as settings_snapshot, valid_season
+
+
+def lock_job(folder):
+    """Hold a job's file open while its backend owns the worker."""
+    handle = (folder / 'task.lock').open('a+b')
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        if exc.errno not in (errno.EACCES, errno.EAGAIN):
+            raise
+        return None
+    return handle
 
 
 class Tasks:
     def __init__(self, bp, context, management, store):
         self.c, self.management, self.store = context, management, store
+        self.queue = context.get('simulation_queue') or SimulationQueue()
         self.lock, self.processes = threading.RLock(), {}
-        for job in store.list('task'):
-            if job['status'] == 'running':
-                job.update(status='failed', message='服务重启，任务已中断；原权重未替换')
-                store.put('task', job)
+        self.queued_leases = {}
+        self.recover()
         for path, name, method in [('/simulations', 'start', 'POST'), ('/simulations/<jid>', 'get', 'GET'),
                                    ('/simulations/<jid>/cancel', 'cancel', 'POST'),
                                    ('/simulations/<jid>/export', 'export', 'GET'),
                                    ('/training', 'train', 'POST'), ('/training', 'training_status', 'GET')]:
             bp.add_url_rule('/api/ui' + path, 'tasks_' + name, getattr(self, name), methods=[method])
+
+    def recover(self):
+        saved_jobs = sorted(reversed(self.store.list('task')), key=lambda job: job.get('created', 0))
+        for saved in saved_jobs:
+            if saved['status'] not in ('queued', 'running'):
+                continue
+            folder = self.management.runtime / 'jobs' / saved['id']
+            exists = folder.is_dir()
+            lease = lock_job(folder) if exists else None
+            if exists and lease is None:
+                continue
+            job = self.store.get('task', saved['id'])
+            resumable = job['status'] == 'running' and job.get('_resumable_prelim')
+            if lease and (job['status'] == 'queued' or resumable):
+                if resumable:
+                    job.pop('progress', None)
+                    job['message'] = '服务重启后继续预赛'
+                self.enqueue(job, lease)
+                continue
+            try:
+                if job['status'] in ('queued', 'running'):
+                    message = ('服务重启，训练已中断，原权重未替换' if job['params']['mode'] == 'train'
+                               else '服务重启，模拟已中断，可以重新运行')
+                    job.update(status='failed', message=message)
+                    self.store.put('task', job)
+            finally:
+                if lease:
+                    lease.close()
+
+    def enqueue(self, job, lease):
+        jid = job['id']
+        try:
+            with self.lock:
+                job['status'] = 'queued'
+                self.store.put('task', job)
+                self.queued_leases[jid] = lease
+                self.queue.submit(('task', jid), self.run, jid)
+        except BaseException:
+            self.queued_leases.pop(jid, None)
+            lease.close()
+            raise
+
+    @staticmethod
+    def public(job):
+        return {key: value for key, value in job.items() if not key.startswith('_')}
 
     def params(self, data):
         mode = data.get('mode', 'single')
@@ -88,12 +153,11 @@ class Tasks:
     def start(self):
         if not self.c['session_id']():
             raise BadRequest('请先建立会话')
-        data = self.c['body']()
-        return jsonify(self.launch(self.params(data)))
+        return jsonify(self.public(self.launch(self.params(self.c['body']()))))
 
     def launch(self, params):
         with self.lock, self.management.lock:
-            if params['mode'] == 'train':
+            if params.get('mode') == 'train':
                 from ai_trainer import normalize_training_targets
                 enabled = [ch['serial'] for ch in self.management.module().ALL_CHARACTERS]
                 try:
@@ -106,70 +170,130 @@ class Tasks:
             else:
                 params = self.params(params)
             params = {**params, 'settings': settings_snapshot()}
-            if any(j['status'] == 'running' for j in self.store.list('task')):
-                raise Conflict('已有任务正在运行，请等待或取消模拟')
+            if 'workers' in params or params['mode'] == 'train':
+                params['workers'] = min(params.get('workers', self.queue.workers), self.queue.workers)
+            owner = self.c['session_id']()
+            for active in self.store.list('task'):
+                if active['status'] in ('queued', 'running'):
+                    if active['owner'] == owner:
+                        raise Conflict('此会话已有任务在排队或运行，请等待或取消模拟')
+                    if params['mode'] == active['params']['mode'] == 'train':
+                        raise Conflict('已有训练任务在排队或运行，请等待完成')
             jid = secrets.token_hex(8)
             folder = self.management.snapshot_task(jid)
-            job = dict(id=jid, owner=self.c['session_id'](), status='running', completed=0, params=params,
+            job = dict(id=jid, owner=owner, completed=0, params=params,
                        result=None, logs=[], created=time.time(), data_version=digest((folder/'characters_data.py').read_bytes()))
-            self.store.put('task', job)
-            threading.Thread(target=self.run, args=(jid,), daemon=True).start()
+            if params['mode'] == 'prelim':
+                job['_resumable_prelim'] = True
+            lease = lock_job(folder)
+            if lease is None:
+                raise Conflict('无法取得任务目录的写入权限')
+            self.enqueue(job, lease)
             return job
 
     def run(self, jid):
         folder = self.management.runtime / 'jobs' / jid
-        job = self.store.get('task', jid)
         error_path = folder / 'stderr.log'
+        proc = None
+        with self.lock:
+            lease = self.queued_leases.pop(jid)
         try:
+            with self.lock:
+                job = self.store.get('task', jid)
+                if job['status'] != 'queued':
+                    return
+                if 'workers' in job['params']:
+                    job['params']['workers'] = min(job['params']['workers'], self.queue.workers)
+                job['status'] = 'running'
+                self.store.put('task', job)
             with error_path.open('w', encoding='utf-8') as err:
                 proc = subprocess.Popen([sys.executable, '-u', str(folder/'ui_task_worker.py')], stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=err, text=True, encoding='utf-8', cwd=folder,
-                    start_new_session=os.name != 'nt', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
+                    start_new_session=os.name != 'nt', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                    env={'PYTHONHASHSEED': '0', **os.environ, 'PYTHONIOENCODING': 'utf-8'})
                 with self.lock:
                     self.processes[jid] = proc
                     if self.store.get('task', jid)['status'] == 'cancelled':
-                        proc.terminate()
-                proc.stdin.write(json.dumps(job['params']) + '\n')
+                        return
+                params = job['params']
+                if '_checkpoint' in job:
+                    params = {**params, 'checkpoint': job['_checkpoint']}
+                proc.stdin.write(json.dumps(params) + '\n')
                 proc.stdin.close()
-                last_save = time.monotonic()
+                last_save = time.monotonic() - 1
                 for line in proc.stdout:
-                    row = json.loads(line)
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise RuntimeError('工作进程返回了无法解析的状态更新') from exc
+                    if not isinstance(row, dict):
+                        raise RuntimeError('工作进程返回了无法解析的状态更新')
                     with self.lock:
-                        if self.store.get('task', jid)['status'] == 'cancelled':
-                            continue
+                        checkpoint = row.pop('checkpoint', None)
                         if 'log' in row or 'logs' in row:
                             job['logs'].extend(row.get('logs', [row['log']] if 'log' in row else []))
                             if job['params']['mode'] != 'verbose':
                                 job['logs'] = job['logs'][-3000:]
                         else:
                             job.update(row)
-                        if time.monotonic() - last_save >= 1:
+                        if checkpoint is not None:
+                            job['_checkpoint'] = checkpoint
+                        if checkpoint is not None or time.monotonic() - last_save >= 1:
+                            if self.store.get('task', jid)['status'] == 'cancelled':
+                                self.stop_process(proc)
+                                break
                             self.store.put('task', job)
                             last_save = time.monotonic()
                 with self.lock:
                     if self.store.get('task', jid)['status'] != 'cancelled':
                         self.store.put('task', job)
-                proc.stdout.close()
                 code = proc.wait()
             with self.lock:
                 job = self.store.get('task', jid)
                 if job['status'] == 'cancelled':
                     return
                 if code or job['result'] is None:
-                    raise RuntimeError(error_path.read_text(encoding='utf-8')[-1500:] or '任务未返回结果')
+                    message = f'工作进程异常退出（代码 {code}）' if code else '工作进程未返回结果'
+                    detail = error_path.read_text(encoding='utf-8', errors='replace').strip().splitlines()
+                    if detail:
+                        message += '：' + detail[-1].strip()[:300]
+                    raise RuntimeError(message)
                 if job['params']['mode'] == 'train':
                     self.install_weights(folder, job)
                 job['status'] = 'completed'
+                job.pop('_checkpoint', None)
+                job.pop('message', None)
                 self.store.put('task', job)
         except Exception as exc:
             with self.lock:
                 job = self.store.get('task', jid)
                 if job['status'] != 'cancelled':
-                    job.update(status='failed', message=str(exc))
+                    job.update(status='failed', message=str(exc) or type(exc).__name__)
                     self.store.put('task', job)
         finally:
-            with self.lock:
-                self.processes.pop(jid, None)
+            try:
+                with self.lock:
+                    self.processes.pop(jid, None)
+                if proc is not None:
+                    self.stop_process(proc)
+                    proc.wait()
+                    proc.stdin.close()
+                    proc.stdout.close()
+            finally:
+                lease.close()
+
+    @staticmethod
+    def stop_process(proc):
+        if proc.poll() is None:
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'], capture_output=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                import signal
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
     def install_weights(self, folder, job):
         weights = (folder/'ai_weights.json').read_bytes()
@@ -191,7 +315,7 @@ class Tasks:
         return job
 
     def get(self, jid):
-        return jsonify(self.lookup(jid))
+        return jsonify(self.public(self.lookup(jid)))
 
     def cancel(self, jid):
         self.c['body']()
@@ -199,17 +323,16 @@ class Tasks:
             job = self.lookup(jid)
             if job['params']['mode'] == 'train':
                 raise Conflict('训练正在独立执行，请等待完成')
-            if job['status'] == 'running':
+            if job['status'] in ('queued', 'running'):
                 job['status'] = 'cancelled'
+                job.pop('message', None)
+                job.pop('_checkpoint', None)
                 self.store.put('task', job)
+                if jid in self.queued_leases and self.queue.cancel(('task', jid)):
+                    self.queued_leases.pop(jid).close()
                 if jid in self.processes:
-                    proc = self.processes[jid]
-                    if os.name == 'nt':
-                        subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'], capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                    else:
-                        import signal
-                        os.killpg(proc.pid, signal.SIGTERM)
-            return jsonify(job)
+                    self.stop_process(self.processes[jid])
+            return jsonify(self.public(job))
 
     def train(self):
         self.management.require_local()
@@ -244,5 +367,5 @@ class Tasks:
                 for k, v in result.items():
                     writer.writerow([k, json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v])
             return Response('\ufeff' + buf.getvalue(), mimetype='text/csv', headers={'Content-Disposition': f'attachment; filename=simulation-{jid}.csv'})
-        return Response(json.dumps(job, ensure_ascii=False, indent=2), mimetype='application/json',
+        return Response(json.dumps(self.public(job), ensure_ascii=False, indent=2), mimetype='application/json',
                         headers={'Content-Disposition': f'attachment; filename=simulation-{jid}.json'})

@@ -14,11 +14,19 @@ def main():
     parser.add_argument('--skip-build', action='store_true', help='Use the existing frontend and generated backend')
     parser.add_argument('--tcp-port', type=int, default=8892,
                         help='TCP tunnel forwarding port (default: 8892)')
+    parser.add_argument('--import-management-allowlist', type=Path, metavar='FILE',
+                        help='导入上一版运行目录的 management-allowlist.json')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 1 <= args.tcp_port <= 65535:
         parser.error('端口必须在 1–65535 之间')
     if args.port == args.tcp_port:
         parser.error('--port 和 --tcp-port 必须不同')
+    env = os.environ.copy()
+    if args.import_management_allowlist is not None:
+        source = args.import_management_allowlist.resolve()
+        if not source.is_file():
+            parser.error(f'管理白名单文件不存在：{source}')
+        env['AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST'] = str(source)
     root = Path(__file__).resolve().parent
     frontend = root / 'frontend'
     # Release bundles already contain the built UI and generated backend.
@@ -38,7 +46,7 @@ def main():
     print(f'TCP 隧道入口：0.0.0.0:{args.tcp_port} -> 127.0.0.1:{args.port}', flush=True)
     subprocess.run([sys.executable, str(root / 'backend' / 'autocombat_backend.py'), '--host',
                     '0.0.0.0', '--port', str(args.port), '--tcp-port', str(args.tcp_port)],
-                   cwd=root, check=True)
+                   cwd=root, check=True, env=env)
 
 
 if __name__ == '__main__':

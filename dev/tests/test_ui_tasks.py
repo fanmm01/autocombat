@@ -30,7 +30,7 @@ class WorkerTests(unittest.TestCase):
     def run_worker(self, params):
         result = subprocess.run([sys.executable, str(self.root/'ui_task_worker.py')], cwd=self.root,
             input=json.dumps(params)+'\n', text=True, encoding='utf-8', capture_output=True, timeout=60,
-            env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
+            env={'PYTHONHASHSEED': '0', **os.environ, 'PYTHONIOENCODING': 'utf-8'})
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertTrue(rows)
@@ -83,13 +83,33 @@ class WorkerTests(unittest.TestCase):
         self.assertIn(rows[-1]['result']['winner'], ('Y', 'X'))
         self.assertTrue(any('D100' in r.get('log', '') for r in rows))
         params = dict(mode='game', team_a=['Y1'], team_b=['Y1'], seed=19, season=50, max_rounds=20)
+        games = [params, {**params, 'stream_output': False}]
         run = subprocess.run([sys.executable, str(self.root/'ui_task_worker.py'), '--server'], cwd=self.root,
-            input=(json.dumps(params)+'\n')*2, capture_output=True, text=True, encoding='utf-8', timeout=60,
+            input=''.join(json.dumps(game)+'\n' for game in games), capture_output=True, text=True, encoding='utf-8', timeout=60,
             env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
         self.assertEqual(run.returncode, 0, run.stderr)
-        results = [json.loads(line)['result'] for line in run.stdout.splitlines() if '"result"' in line]
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0], results[1])
+        rows = [json.loads(line) for line in run.stdout.splitlines()]
+        first_result = next(i for i, row in enumerate(rows) if 'result' in row)
+        self.assertTrue(any('round' in row for row in rows[:first_result]))
+        self.assertEqual(rows[first_result + 1:], [rows[first_result]])
+
+    def test_prelim_worker_reports_progress_and_resumes_with_identical_rankings(self):
+        params = dict(mode='prelim', formats=['1v1', '2v2'], n=2, workers=2, seed=17, season=50,
+                      settings={'TARGET_1V1_MATCHES': 1, 'TARGET_TEAM_MATCHES': 1,
+                                'TEAM_TABLES_2V2': [['Y1', 'Y2'], ['Y4', 'Y8']],
+                                'MAX_ROUNDS_PRELIM_BY_FORMAT': {'1v1': 1, '2v2': 1, '3v3': 1}})
+        rows = self.run_worker(params)
+        progress = [row['progress'] for row in rows if 'progress' in row]
+        self.assertGreater(progress[0]['total'], 0)
+        self.assertEqual(progress[0]['completed'], 0)
+        self.assertEqual(progress[-1]['completed'], progress[-1]['total'])
+        self.assertEqual(rows[-1]['completed'], 2)
+        self.assertTrue(rows[-1]['result']['rankings']['1v1'])
+        self.assertTrue(rows[-1]['result']['rankings']['2v2'])
+        checkpoint = next(row['checkpoint'] for row in rows if 'checkpoint' in row)
+        resumed = self.run_worker({**params, 'checkpoint': checkpoint})
+        self.assertEqual(next(row['progress']['round'] for row in resumed if 'progress' in row), 2)
+        self.assertEqual(resumed[-1]['result'], rows[-1]['result'])
 
     def test_training_writes_only_isolated_weights(self):
         # Keep the public/default configuration unchanged; shorten only this

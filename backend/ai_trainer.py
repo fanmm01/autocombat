@@ -1875,7 +1875,7 @@ class QTrainer:
                     updates.append((other_table, ck, st, ak, tr * 0.3, None))
         return updates
 
-    def train(self):
+    def train(self, workers=None):
         def log(msg):
             print(msg, flush=True)
         log('Q-Learning AI Trainer')
@@ -1940,7 +1940,7 @@ class QTrainer:
             summon_tasks = [(ta,tb,ms,self.summon_templates) for ta,tb,ms in summon_specs]
             total_tasks = len(char_tasks) + len(summon_tasks)
             completed = 0
-            with ProcessPoolExecutor(max_workers=NUM_WORKERS) as ex:
+            with ProcessPoolExecutor(max_workers=workers or NUM_WORKERS) as ex:
                 futs = {}
                 for i, t in enumerate(char_tasks):
                     futs[ex.submit(_mp_run_battle, t)] = ('char', i)
@@ -2071,14 +2071,14 @@ def load_q_table(path=None):
         return None
     return result
 
-def main(expected_serials=None, target_serials=None):
+def main(expected_serials=None, target_serials=None, workers=None):
     random.seed(42)
     trainer = QTrainer()
     trainer.init_characters(target_serials=target_serials)
     if expected_serials is not None and list(trainer.char_map) != expected_serials:
         raise ValueError('训练角色名单与启用角色快照不一致，请重新启动训练')
     print(f'Characters loaded: {list(trainer.char_map.keys())}', flush=True)
-    trainer.train()
+    trainer.train(workers=workers)
     return {'characters': trainer.target_serials if trainer.target_serials is not None else list(trainer.char_map),
             'participant_serials': list(trainer.char_map), 'target_serials': trainer.target_serials,
             'summons': trainer.training_summons,

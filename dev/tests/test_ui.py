@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import sys
+from threading import Event
 import time
 import unittest
 from pathlib import Path
@@ -135,13 +136,14 @@ class BrowserUITests(unittest.TestCase):
     def test_training_job_records_current_enabled_roster(self):
         module = self.srv.characters_data_pvp
         enabled = module.ALL_CHARACTERS[:6]
-        with patch.object(module, 'ALL_CHARACTERS', enabled), patch('ui_tasks.threading.Thread'):
+        tasks = self.ext['tasks']
+        with patch.object(module, 'ALL_CHARACTERS', enabled), patch.object(tasks.queue, 'submit'):
             response = self.client.post('/api/ui/training', json={})
         self.assertEqual(response.status_code, 200, response.get_json())
         job = response.get_json()
         self.assertEqual(job['params']['enabled_serials'], [ch['serial'] for ch in enabled])
-        job['status'] = 'cancelled'
-        self.ext['store'].put('task', job)
+        tasks.queued_leases.pop(job['id']).close()
+        self.ext['store'].delete('task', job['id'])
 
     def test_zero_hp_is_not_replaced_by_maximum(self):
         self.create()
@@ -259,6 +261,41 @@ class BrowserUITests(unittest.TestCase):
         self.assertEqual(before, self.eng.storage)
         self.assertEqual(self.submit(command='.a m '+cells[0]).status_code, 200)
 
+    def test_cell_skill_options_follow_target_and_available_resources(self):
+        self.create()
+        self.close_range()
+        entries = self.eng._get_initiative()
+        actor_index = next(i for i, e in enumerate(entries) if self.eng.get_char(e['userId']).serial == 'Y2')
+        actor, enemy = entries[actor_index], entries[1 - actor_index]
+        state = self.eng._get_state()
+        state['activeIndex'] = actor_index
+        self.eng._set_state(state)
+        revision = self.state()['revision']
+        path = f'/api/ui/rooms/{self.code}'
+
+        def options(coord, rev=revision):
+            return self.client.post(path + '/options', json=dict(command='cell_skills', coord=coord, revision=rev))
+
+        before = self.state()['snapshot']
+        room_rng = self.ext['rooms'][self.code]['rng']
+        rng = random.getstate()
+        on_enemy = options(enemy['coord'])
+        self.assertEqual(on_enemy.status_code, 200, on_enemy.get_json())
+        self.assertEqual(on_enemy.get_json()['skills'], [dict(index=i, target=enemy['userId']) for i in (0, 1)])
+        self.assertEqual(options(actor['coord']).get_json()['skills'], [dict(index=2, target=actor['userId'])])
+        self.assertEqual(options('A1').get_json()['skills'], [])
+        self.assertEqual(options('Z99').status_code, 400)
+        self.assertEqual(options(enemy['coord'], revision - 1).status_code, 409)
+        self.assertEqual(self.state()['snapshot'], before)
+        self.assertEqual(random.getstate(), rng)
+        self.assertEqual(self.ext['rooms'][self.code]['rng'], room_rng)
+        preview = self.client.post(path + '/preview', json=dict(command='.s1', target=enemy['userId'], revision=revision))
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+
+        self.eng.get_char(actor['userId']).set_attr('魔力', 0)
+        self.assertEqual(options(enemy['coord']).get_json()['skills'], [dict(index=0, target=enemy['userId'])])
+        self.assertEqual(options(actor['coord']).get_json()['skills'], [])
+
     def test_unknown_target_and_cross_origin_are_rejected(self):
         self.create()
         self.close_range()
@@ -312,7 +349,7 @@ class BrowserUITests(unittest.TestCase):
         jid = response.get_json()['id']
         for _ in range(150):
             job = self.client.get('/api/ui/simulations/'+jid).get_json()
-            if job['status'] != 'running':
+            if job['status'] not in ('queued', 'running'):
                 break
             time.sleep(.1)
         self.assertEqual(job['status'],'completed',job)
@@ -325,6 +362,172 @@ class BrowserUITests(unittest.TestCase):
         other.post('/api/ui/session',json={})
         self.assertEqual(other.get('/api/ui/simulations/'+jid).status_code,404)
         self.assertEqual(other.get(f'/api/ui/simulations/{jid}/export').status_code,404)
+
+    def test_simulation_worker_exit_is_returned_as_failed_with_reason(self):
+        management = self.ext['management']
+        snapshot = management.snapshot_task
+
+        def broken_snapshot(jid):
+            folder = snapshot(jid)
+            worker = folder / 'ui_task_worker.py'
+            worker.write_text('import sys\nsys.stdin.readline()\nraise RuntimeError("worker-test-error")\n',
+                              encoding='utf-8')
+            return folder
+
+        with patch.object(management, 'snapshot_task', side_effect=broken_snapshot):
+            response = self.client.post('/api/ui/simulations', json={'team_a': ['Y1'], 'team_b': ['Y2'], 'n': 1})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        jid = response.get_json()['id']
+        for _ in range(100):
+            job = self.client.get(f'/api/ui/simulations/{jid}').get_json()
+            if job['status'] not in ('queued', 'running'):
+                break
+            time.sleep(.05)
+        self.assertEqual(job['status'], 'failed', job)
+        self.assertIn('RuntimeError: worker-test-error', job['message'])
+        self.assertTrue((management.runtime / 'jobs' / jid / 'stderr.log').is_file())
+
+    def test_concurrent_prelims_share_the_server_queue(self):
+        from combat_settings import settings_scope
+        from ui_simulation_queue import SimulationQueue
+
+        with patch.dict(os.environ, {'AUTOCOMBAT_WEB_WORKERS': ''}), patch.object(os, 'process_cpu_count', return_value=4, create=True):
+            self.assertEqual(SimulationQueue().workers, 2)
+
+        queue, store, tournaments = (self.ext[name] for name in ('simulation_queue', 'store', 'tournaments'))
+        occupied, release = Event(), Event()
+
+        def hold_queue():
+            occupied.set()
+            release.wait(30)
+
+        queue.submit(('test', self.me), hold_queue)
+        self.addCleanup(release.set)
+        self.assertTrue(occupied.wait(5))
+        other = self.app.test_client()
+        other.post('/api/ui/session', json={'name': '另一位参赛者'})
+        params = dict(mode='prelim', formats=['1v1'], n=1, workers=32, seed=17)
+        cfg = dict(TARGET_1V1_MATCHES=1, MAX_ROUNDS_PRELIM_BY_FORMAT={'1v1': 1, '2v2': 1, '3v3': 1})
+        with patch.object(queue, 'workers', 2), settings_scope(cfg):
+            first = self.client.post('/api/ui/simulations', json=params).get_json()
+            t = self.client.post('/api/ui/tournaments', json={'format': '1v1', 'teams': [['Y1'], ['Y2'], ['Y3'], ['Y4']], 'seed': 17}).get_json()
+            response = self.client.post(f"/api/ui/tournaments/{t['id']}/advance",
+                                        json={'op': 'regular', 'request_id': 'queue-test', 'revision': t['revision']})
+            self.assertEqual(response.get_json()['status'], 'queued')
+            paused = self.client.post(f"/api/ui/tournaments/{t['id']}/advance",
+                                      json={'op': 'pause', 'request_id': 'queue-pause'}).get_json()
+            self.assertEqual(paused['status'], 'paused')
+            restarted = self.client.post(f"/api/ui/tournaments/{t['id']}/advance",
+                                         json={'op': 'regular', 'request_id': 'queue-restart', 'revision': paused['revision']}).get_json()
+            self.assertEqual(restarted['status'], 'queued')
+            second = other.post('/api/ui/simulations', json=params).get_json()
+            self.assertEqual((first['status'], second['status']), ('queued', 'queued'))
+            self.assertEqual((first['params']['workers'], second['params']['workers']), (2, 2))
+            self.assertEqual(other.get(f"/api/ui/simulations/{first['id']}").status_code, 404)
+            cancelled = other.post(f"/api/ui/simulations/{second['id']}/cancel", json={}).get_json()
+            self.assertEqual(cancelled['status'], 'cancelled')
+            second = other.post('/api/ui/simulations', json=params).get_json()
+            legacy = self.client.post('/api/jour/start', json={'mode': '1'}).get_json()
+            self.assertTrue(self.client.post(f"/api/jour/{legacy['job_id']}/stop", json={}).get_json()['ok'])
+
+            statuses = []
+            run_regular = tournaments.run_regular
+
+            def record_order(tid):
+                statuses.append(tuple(store.get('task', job['id'])['status'] for job in (first, second)))
+                run_regular(tid)
+
+            with patch.object(tournaments, 'run_regular', side_effect=record_order):
+                release.set()
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline and store.get('task', second['id'])['status'] in ('queued', 'running'):
+                    time.sleep(.05)
+            self.assertEqual(statuses, [('completed', 'queued')])
+            self.assertEqual(store.get('task', second['id'])['status'], 'completed')
+            finished = store.get('tournament', t['id'])
+            self.assertEqual(finished['phase'], 'playoffs', finished.get('message'))
+            self.assertEqual(finished['completed'], len(finished['schedule']))
+            replay = store.get('tournament_replay', finished['last_replay']['id'])
+            self.assertTrue(replay['lines'])
+
+    def test_task_service_ignores_owned_prelim_and_resumes_after_owner_exits(self):
+        from flask import Blueprint
+        from ui_tasks import Tasks, lock_job
+
+        manager, store, tasks = (self.ext[name] for name in ('management', 'store', 'tasks'))
+        jid = 'test-prelim-recovery'
+        folder = manager.snapshot_task(jid)
+        params = dict(mode='prelim', formats=['1v1'], n=1, workers=1, seed=17, season=50,
+                      settings={'TARGET_1V1_MATCHES': 1,
+                                'MAX_ROUNDS_PRELIM_BY_FORMAT': {'1v1': 1, '2v2': 1, '3v3': 1}})
+        job = dict(id=jid, owner=self.me, status='running', completed=0, params=params, logs=[], result=None,
+                   _resumable_prelim=True)
+        with lock_job(folder):
+            store.put('task', job)
+            Tasks(Blueprint('active_worker', __name__), tasks.c, manager, store)
+            self.assertEqual(store.get('task', jid), job)
+
+        Tasks(Blueprint('orphaned_worker', __name__), tasks.c, manager, store)
+        for _ in range(150):
+            result = self.client.get(f'/api/ui/simulations/{jid}').get_json()
+            if result['status'] not in ('queued', 'running'):
+                break
+            time.sleep(.1)
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(result['completed'], 1)
+        self.assertNotIn('_checkpoint', result)
+        self.assertNotIn('_resumable_prelim', result)
+
+    def test_manual_cake_actions_require_usable_stock(self):
+        room = self.create(team_a=['Y8', 'Y7'], team_b=['Y1'])
+        self.control(op='start')
+        self.control(op='pause')
+        units = room['snapshot']['units']
+        actor = next(u['uid'] for u in units if u['serial'] == 'Y8')
+        ally = next(u['uid'] for u in units if u['serial'] == 'Y7')
+        state = self.eng._get_state()
+        state['activeIndex'] = next(i for i, e in enumerate(self.eng._get_initiative()) if e['userId'] == actor)
+        self.eng._set_state(state)
+        actions = {'主动': 1, '附加': 2}
+        self.eng._set_actions({actor: actions})
+        char = self.eng.get_char(actor)
+        char.inventory = [{'item': '蛋糕HP', 'count': 0}, {'item': '蛋糕HP', 'count': 1, 'sourceTeam': 'X'}]
+        craft = dict(type='create', template='蛋糕MP', craftRoundsRemaining=0, sourceTeam='Y')
+        self.eng._set_effects([{**craft, 'sourceTeam': 'X'}, {**craft, 'craftRoundsRemaining': 1}])
+        url = f'/api/ui/rooms/{self.code}'
+        before = self.state()
+        self.assertEqual(before['snapshot']['turn']['cake_unavailable_reason'], '无可用的蛋糕')
+        options = self.client.post(url + '/options', json=dict(command='.a give', revision=before['revision']))
+        self.assertEqual(options.get_json()['targets'], [])
+        for command, target in (('.a eat', ''), ('.a give', ally)):
+            with self.subTest(command=command):
+                preview = self.client.post(url + '/preview', json=dict(command=command, target=target, revision=before['revision']))
+                submit = self.submit(command=command, target=target)
+                for response in (preview, submit):
+                    self.assertEqual(response.status_code, 400, response.get_json())
+                    self.assertEqual(response.get_json()['message'], '无可用的蛋糕')
+        self.assertEqual(self.state()['snapshot'], before['snapshot'])
+
+        char.inventory.append({'item': '蛋糕HP', 'count': 1})
+        self.eng._set_effects([craft])
+        ready = self.state()
+        self.assertEqual(ready['snapshot']['turn']['cake_unavailable_reason'], '')
+        options = self.client.post(url + '/options', json=dict(command='.a give', revision=ready['revision']))
+        self.assertIn(ally, options.get_json()['targets'])
+        preview = self.client.post(url + '/preview', json=dict(command='.a eat', revision=ready['revision']))
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+        self.assertEqual(self.state()['snapshot'], ready['snapshot'])
+        eaten = self.submit(command='.a eat')
+        self.assertEqual(eaten.status_code, 200, eaten.get_json())
+        self.assertEqual(len(char.inventory), 2)
+        self.assertEqual(eaten.get_json()['snapshot']['turn']['cake_unavailable_reason'], '')
+        given = self.submit(command='.a give', target=ally)
+        self.assertEqual(given.status_code, 200, given.get_json())
+        turn = given.get_json()['snapshot']['turn']
+        self.assertEqual(turn['actions']['附加'], 0)
+        self.assertEqual(turn['cake_unavailable_reason'], '无可用的蛋糕')
+        char.inventory.append({'item': '蛋糕HP', 'count': 1})
+        self.assertEqual(self.state()['snapshot']['turn']['cake_unavailable_reason'], '附加动作次数已用尽！')
 
     def test_cake_targets_exact_hidden_summon_member(self):
         self.create(team_a=['Y8','Y9'],team_b=['Y1'])
