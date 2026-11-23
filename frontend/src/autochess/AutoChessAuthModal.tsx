@@ -231,6 +231,26 @@ export function AutoChessAuthModal({
           </div>
         ) : (
           <div className="ac-auth-body">
+            {account.ranked && (
+              <div className="ac-auth-ranked-card">
+                <div className="ac-auth-ranked-head">
+                  <span className={`ac-tier-badge ac-tier-${account.ranked.rank_info.tier_id}`}>
+                    {account.ranked.rank_info.full_label}
+                  </span>
+                  <strong>{account.ranked.total_lp} 排位分</strong>
+                  <span className="muted" style={{ fontSize: '0.76rem' }}>
+                    {account.ranked.silver_floor_unlocked ? '已解锁白银永不掉青铜保护' : '距白银保护还需晋级白银'}
+                  </span>
+                </div>
+                <div className="ac-auth-ranked-meta">
+                  <span>排位 {account.ranked.wins}/{account.ranked.games} 胜 ({account.ranked.firsts}吃鸡)</span>
+                  <span>连胜 {account.ranked.win_streak}</span>
+                  <span>保段卡 {account.ranked.shield_cards}/{account.ranked.shield_card_cap}</span>
+                  <span>局外金币 {account.ranked.coins}</span>
+                </div>
+              </div>
+            )}
+
             <div className="ac-stats-grid">
               <div className="ac-stat-card">
                 <div className="ac-stat-label">累计战绩</div>

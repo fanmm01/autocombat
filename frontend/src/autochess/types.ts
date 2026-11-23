@@ -95,6 +95,7 @@ export interface AutoChessCommanderSummary {
   name: string;
   account_id?: string | null;
   is_human: boolean;
+  ai_style_label?: string;
   ready?: boolean;
   next_ready?: boolean;
   personality: string;
@@ -204,7 +205,9 @@ export interface AutoChessRoundReport {
 
 export interface AutoChessMatchState {
   id: string;
-  mode: 'lobby4' | 'pve12' | 'pvp_room';
+  mode: 'lobby4' | 'pve12' | 'pvp_room' | 'ranked';
+  ranked_tier?: string | null;
+  ranked_settlement?: AutoChessRankedSettlement | null;
   arena_preset: string;
   arena_name: string;
   round_num: number;
@@ -261,7 +264,8 @@ export interface AutoChessMatchState {
 
 export interface AutoChessMatchSummary {
   id: string;
-  mode: 'lobby4' | 'pve12';
+  mode: 'lobby4' | 'pve12' | 'ranked';
+  ranked_tier?: string | null;
   arena_preset: string;
   round_num: number;
   phase: string;
@@ -398,6 +402,14 @@ export interface AutoChessCatalog {
   terrains: Record<string, string | { name?: string; summary?: string }>;
   levels: Record<string, { max_pop: number; xp_to_next: number; odds: Record<string, number> }>;
   pool_counts: Record<string, number>;
+  pool_counts_8p?: Record<string, number>;
+  ranked_rules?: {
+    silver_floor_lp: number;
+    shield_card_cap: number;
+    win_streak_lp_bonus: Record<string, number>;
+    base_win_coins: Record<string, number>;
+    tiers: AutoChessRankedTierRule[];
+  };
   star_scaling?: Record<
     string,
     {
@@ -410,6 +422,110 @@ export interface AutoChessCatalog {
       summon_skill_bonus: number;
     }
   >;
+}
+
+export interface AutoChessRankedTierRule {
+  id: string;
+  name: string;
+  divisions: number | null;
+  division_labels: string[];
+  base_lp: number;
+  color: string;
+  lp_table: number[];
+  coin_mult: number;
+}
+
+export interface AutoChessRankInfo {
+  total_lp: number;
+  tier_id: 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond' | 'king' | string;
+  tier_name: string;
+  tier_color: string;
+  division_index: number;
+  division_label: string;
+  full_label: string;
+  division_lp: number;
+  next_division_lp: number;
+  king_level: number | null;
+  silver_floor_unlocked: boolean;
+}
+
+export interface AutoChessRankedHistoryItem {
+  match_id: string | null;
+  placement: number;
+  old_lp: number;
+  new_lp: number;
+  net_delta: number;
+  tier_label: string;
+  coins_earned: number;
+  shield_card_used: boolean;
+  shield_card_earned: number;
+  timestamp: number;
+}
+
+export interface AutoChessRankedProfile {
+  total_lp: number;
+  peak_lp: number;
+  silver_floor_unlocked: boolean;
+  win_streak: number;
+  best_win_streak: number;
+  shield_cards: number;
+  shield_card_cap: number;
+  games: number;
+  wins: number;
+  firsts: number;
+  coins: number;
+  history: AutoChessRankedHistoryItem[];
+  rank_info: AutoChessRankInfo;
+}
+
+export interface AutoChessRankedSettlement {
+  match_id: string | null;
+  placement: number;
+  won: boolean;
+  old_lp: number;
+  new_lp: number;
+  base_delta: number;
+  streak_bonus: number;
+  net_delta: number;
+  win_streak: number;
+  old_rank: AutoChessRankInfo;
+  new_rank: AutoChessRankInfo;
+  promoted: boolean;
+  demoted: boolean;
+  tier_changed: boolean;
+  silver_floor_triggered: boolean;
+  shield_card_used: boolean;
+  shield_card_earned: number;
+  shield_cards_after: number;
+  coins_earned: number;
+  coins_after: number;
+}
+
+export interface AutoChessLeaderboardEntry {
+  rank: number;
+  account_id: string;
+  username: string;
+  display_name: string;
+  total_lp: number;
+  peak_lp: number;
+  rank_info: AutoChessRankInfo;
+  games: number;
+  wins: number;
+  firsts: number;
+  win_rate: number;
+  win_streak: number;
+  shield_cards: number;
+  coins: number;
+  silver_floor_unlocked: boolean;
+}
+
+export interface AutoChessLeaderboardResponse {
+  entries: AutoChessLeaderboardEntry[];
+  total_players: number;
+  filtered_total: number;
+  tier_distribution: Record<string, number>;
+  my_rank: number | null;
+  my_entry: AutoChessLeaderboardEntry | null;
 }
 
 export interface AutoChessAccountStats {
@@ -425,6 +541,7 @@ export interface AutoChessAccount {
   display_name: string;
   token_overrides: Record<string, string>;
   stats: AutoChessAccountStats;
+  ranked?: AutoChessRankedProfile;
   created_at: number;
 }
 

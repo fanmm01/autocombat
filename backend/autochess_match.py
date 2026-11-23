@@ -8,18 +8,20 @@ import uuid
 from ai_battle import AIController, DisplayLevel
 from ai_tactics import decide_tactical_action, plan_formation
 from arena_presets import ARENA_PRESETS, build_arena_map, is_in_deploy_zone
-from autochess_ai import run_commander_prep
+from autochess_ai import generate_ranked_bots, run_commander_prep
 from autochess_catalog import (
     AUGMENTS,
     CHAR_DATA_BY_SERIAL,
     LEVEL_TABLE,
     POOL_COUNTS,
+    POOL_COUNTS_8P,
     PVE_WAVES,
     UNIT_CATALOG,
     apply_autochess_modifiers,
     apply_opening_shields,
     compute_active_synergies,
 )
+from autochess_ranked import RANK_TIER_BY_ID
 from battle_engine import FullBattleEngine, action_committed, parse_coord
 from grid_nav import terrain_type
 
@@ -88,9 +90,11 @@ class AutoChessMatch:
         human_players=None,
         fill_bots=True,
         prep_duration=30,
+        ranked_tier='bronze',
     ):
         self.id = match_id or f'ac_{uuid.uuid4().hex[:10]}'
-        self.mode = mode if mode in ('lobby4', 'pve12', 'pvp_room') else 'lobby4'
+        self.mode = mode if mode in ('lobby4', 'pve12', 'pvp_room', 'ranked') else 'lobby4'
+        self.ranked_tier = ranked_tier if ranked_tier in RANK_TIER_BY_ID else 'bronze'
         self.arena_preset = arena_preset if arena_preset in ARENA_PRESETS else 'autochess_standard'
         self.seed = int(seed if seed is not None else random.randint(1, 10**9))
         self._rng = random.Random(self.seed)
@@ -101,10 +105,12 @@ class AutoChessMatch:
         self.phase = 'prep'  # 'prep' | 'combat' | 'round_result' | 'finished'
         self.winner_id = None
         self.uid_seq = 1
+        self.pool_counts = dict(POOL_COUNTS_8P if self.mode == 'ranked' else POOL_COUNTS)
         self.pool = {
-            serial: POOL_COUNTS[meta['cost']]
+            serial: self.pool_counts[meta['cost']]
             for serial, meta in UNIT_CATALOG.items()
         }
+        self.ranked_settlement = None
         self.logs = []
         self.combat_frames = []
         self.last_round_report = None
@@ -119,10 +125,11 @@ class AutoChessMatch:
         for cid in self.commanders:
             self._roll_shop_for(cid, free=True)
         self._deal_starter_units()
-        self.logs.append(f'星序自走棋开启：模式={self.mode}，战场={ARENA_PRESETS[self.arena_preset]["name"]}')
+        tier_note = f'（段位={RANK_TIER_BY_ID[self.ranked_tier]["name"]}）' if self.mode == 'ranked' else ''
+        self.logs.append(f'星序自走棋开启：模式={self.mode}{tier_note}，战场={ARENA_PRESETS[self.arena_preset]["name"]}')
 
     def _init_commanders(self, player_name, human_players=None):
-        init_hp = 45 if self.mode == 'pve12' else 58
+        init_hp = 45 if self.mode == 'pve12' else (62 if self.mode == 'ranked' else 58)
         if self.mode == 'pvp_room' and human_players:
             for idx, hp_info in enumerate(human_players[:4], start=1):
                 cid = f'P{idx}'
@@ -153,7 +160,20 @@ class AutoChessMatch:
             return
 
         self.commanders['P1'] = self._new_commander('P1', player_name, is_human=True, hp=init_hp, personality='balanced')
-        if self.mode == 'lobby4':
+        if self.mode == 'ranked':
+            bots = generate_ranked_bots(self.ranked_tier, count=7, rng=self._rng)
+            for idx, bot in enumerate(bots, start=2):
+                cid = f'P{idx}'
+                self.commanders[cid] = self._new_commander(
+                    cid,
+                    bot['name'],
+                    is_human=False,
+                    hp=init_hp,
+                    personality=bot['personality'],
+                    ai_profile=bot['ai_profile'],
+                    ai_style_label=bot['ai_style_label'],
+                )
+        elif self.mode == 'lobby4':
             bots = [
                 ('P2', '苍星·守序者 (运营AI)', 'econ'),
                 ('P3', '绯月·跃迁者 (速升AI)', 'fast_lv'),
@@ -162,17 +182,32 @@ class AutoChessMatch:
             for bid, bname, pers in bots:
                 self.commanders[bid] = self._new_commander(bid, bname, is_human=False, hp=init_hp, personality=pers)
 
-    def _new_commander(self, cid, name, *, is_human, hp, personality, account_id=None, token_overrides=None):
+    def _new_commander(
+        self,
+        cid,
+        name,
+        *,
+        is_human,
+        hp,
+        personality,
+        account_id=None,
+        token_overrides=None,
+        ai_profile=None,
+        ai_style_label='',
+    ):
         return {
             'id': cid,
             'name': name,
             'account_id': account_id,
             'is_human': is_human,
             'personality': personality,
+            'ai_profile': copy.deepcopy(ai_profile) if ai_profile else None,
+            'ai_style_label': str(ai_style_label or ''),
             'ready': False,
             'next_ready': False,
             'token_overrides': dict(token_overrides or {}),
             'hp': hp,
+            'raw_hp': hp,
             'max_hp': hp,
             'gold': 6,
             'level': 1,
@@ -456,7 +491,7 @@ class AutoChessMatch:
         star = unit['star']
         refund = cost if star == 1 else max(cost, int(round(cost * (3 ** (star - 1)) * 0.7)))
         copies = 3 ** (star - 1)
-        cap = POOL_COUNTS[cost]
+        cap = self.pool_counts[cost]
         self.pool[serial] = min(cap, self.pool.get(serial, 0) + copies)
         cmd['units'] = [u for u in cmd['units'] if u['id'] != unit_id]
         cmd['gold'] += refund
@@ -733,6 +768,11 @@ class AutoChessMatch:
         merged_shields.update(y_shields)
         merged_shields.update(x_shields)
         apply_opening_shields(eng, merged_shields)
+        eng._autochess_team_tactics = {
+            'Y': left_cfg.get('tactics_profile'),
+            'X': right_cfg.get('tactics_profile'),
+        }
+        eng._tactics_rng = random.Random(int(seed) ^ 0x5A5A)
         return eng
 
     def _run_headless_bout(self, left_cfg, right_cfg, preset_id, seed):
@@ -1148,14 +1188,16 @@ class AutoChessMatch:
 
         live_bouts = []
         other_outcomes = []
-        if self.mode in ('lobby4', 'pvp_room'):
+        if self.mode in ('lobby4', 'pvp_room', 'ranked'):
             pairs = self._pair_lobby_opponents()
             for idx, (a_id, b_id, is_ghost) in enumerate(pairs):
                 left_cmd, right_cmd = self.commanders[a_id], self.commanders[b_id]
+                left_tac = (left_cmd.get('ai_profile') or {}).get('tactics_profile')
+                right_tac = (right_cmd.get('ai_profile') or {}).get('tactics_profile')
                 if left_cmd.get('is_human') or right_cmd.get('is_human'):
                     eng = self._build_battle_engine(
-                        {'units': copy.deepcopy(self.board_units(a_id)), 'augments': list(left_cmd['augments'])},
-                        {'units': copy.deepcopy(self.board_units(b_id)), 'augments': list(right_cmd['augments'])},
+                        {'units': copy.deepcopy(self.board_units(a_id)), 'augments': list(left_cmd['augments']), 'tactics_profile': left_tac},
+                        {'units': copy.deepcopy(self.board_units(b_id)), 'augments': list(right_cmd['augments']), 'tactics_profile': right_tac},
                         self.arena_preset,
                         self.seed + self.round_num * 1009 + idx * 97,
                     )
@@ -1183,8 +1225,8 @@ class AutoChessMatch:
                     })
                 else:
                     out = self._run_headless_bout(
-                        {'units': self.board_units(a_id), 'augments': left_cmd['augments']},
-                        {'units': self.board_units(b_id), 'augments': right_cmd['augments']},
+                        {'units': self.board_units(a_id), 'augments': left_cmd['augments'], 'tactics_profile': left_tac},
+                        {'units': self.board_units(b_id), 'augments': right_cmd['augments'], 'tactics_profile': right_tac},
                         self.arena_preset,
                         self.seed + self.round_num * 37 + idx * 53,
                     )
@@ -1309,7 +1351,7 @@ class AutoChessMatch:
         self.step_combat(steps=260)
         return True, '战斗结算完成'
 
-    def _apply_combat_hp_and_streak(self, cid, won, surviving_enemy_units, is_ghost_victim=False):
+    def _apply_combat_hp_and_streak(self, cid, won, surviving_enemy_units, is_ghost_victim=False, defer_eliminate=False):
         cmd = self.commanders[cid]
         if cmd.get('eliminated'):
             return 0
@@ -1322,8 +1364,10 @@ class AutoChessMatch:
         dmg = 2 + self.round_num // 2 + max(1, surviving_enemy_units)
         if self.mode == 'pve12':
             dmg = 3 + self.round_num // 2 + max(1, surviving_enemy_units)
-        cmd['hp'] = max(0, cmd['hp'] - dmg)
-        if cmd['hp'] <= 0:
+        raw_hp = cmd['hp'] - dmg
+        cmd['raw_hp'] = raw_hp
+        cmd['hp'] = max(0, raw_hp)
+        if cmd['hp'] <= 0 and not defer_eliminate:
             self._eliminate_commander(cid)
         return dmg
 
@@ -1338,7 +1382,7 @@ class AutoChessMatch:
         for u in cmd['units']:
             s = u['serial']
             cost = UNIT_CATALOG[s]['cost']
-            cap = POOL_COUNTS[cost]
+            cap = self.pool_counts[cost]
             self.pool[s] = min(cap, self.pool.get(s, 0) + (3 ** (u['star'] - 1)))
         cmd['units'] = []
         self.logs.append(f'💀 {cmd["name"]} 被淘汰（第 {cmd["placement"]} 名）')
@@ -1382,7 +1426,7 @@ class AutoChessMatch:
             is_ghost = b.get('is_ghost', False)
             left_won = (outcome['winner'] == 'Y')
 
-            a_dmg = self._apply_combat_hp_and_streak(a_id, left_won, outcome['surviving_x'])
+            a_dmg = self._apply_combat_hp_and_streak(a_id, left_won, outcome['surviving_x'], defer_eliminate=True)
             if left_won:
                 self.commanders[a_id]['gold'] += 1
             opp_label_a = b.get('right_name') or (
@@ -1409,7 +1453,7 @@ class AutoChessMatch:
             }
 
             if self.mode != 'pve12' and not is_ghost and b_id in self.commanders:
-                b_dmg = self._apply_combat_hp_and_streak(b_id, not left_won, outcome['surviving_y'])
+                b_dmg = self._apply_combat_hp_and_streak(b_id, not left_won, outcome['surviving_y'], defer_eliminate=True)
                 if not left_won:
                     self.commanders[b_id]['gold'] += 1
                 opp_label_b = self.commanders[a_id]['name']
@@ -1434,13 +1478,22 @@ class AutoChessMatch:
 
         for a_id, b_id, is_ghost, res in (self._live_matchup or {}).get('other_outcomes', []):
             a_won = (res['winner'] == 'Y')
-            self._apply_combat_hp_and_streak(a_id, a_won, res['surviving_x'])
+            self._apply_combat_hp_and_streak(a_id, a_won, res['surviving_x'], defer_eliminate=True)
             if not is_ghost:
-                self._apply_combat_hp_and_streak(b_id, not a_won, res['surviving_y'])
+                self._apply_combat_hp_and_streak(b_id, not a_won, res['surviving_y'], defer_eliminate=True)
                 if not a_won:
                     self.commanders[b_id]['gold'] += 1
             if a_won:
                 self.commanders[a_id]['gold'] += 1
+
+        # Fair simultaneous-elimination ordering: lowest raw_hp (heaviest overkill) eliminates first -> worst rank
+        newly_down = [
+            cid for cid, cmd in self.commanders.items()
+            if not cmd.get('eliminated') and cmd['hp'] <= 0
+        ]
+        newly_down.sort(key=lambda cid: (self.commanders[cid].get('raw_hp', 0), self.commanders[cid].get('wins', 0), cid))
+        for cid in newly_down:
+            self._eliminate_commander(cid)
 
         self.last_round_report = self.round_reports.get(self.player_id)
         self._last_round_snapshots = last_snapshots
@@ -1470,22 +1523,23 @@ class AutoChessMatch:
                     self.winner_id = self.player_id
                     self.logs.append('🏆 恭喜通关 12 波星序试炼！')
                     return
-        elif self.mode == 'lobby4':
+        elif self.mode in ('lobby4', 'ranked'):
             p1 = self.commanders[self.player_id]
-            if p1.get('eliminated'):
-                self.phase = 'finished'
-                self.winner_id = next(
-                    (c['id'] for c in self.commanders.values() if not c.get('eliminated')),
-                    None,
-                )
-                return
-            alive = [c for c in self.commanders.values() if not c.get('eliminated')]
-            if len(alive) <= 1:
+            alive = sorted(
+                [c for c in self.commanders.values() if not c.get('eliminated')],
+                key=lambda c: (-c['hp'], -c['wins'], c['id']),
+            )
+            if p1.get('eliminated') or len(alive) <= 1:
+                for rank, c in enumerate(alive, start=1):
+                    c['placement'] = rank
                 if alive:
-                    alive[0]['placement'] = 1
                     self.winner_id = alive[0]['id']
+                else:
+                    champ = min(self.commanders.values(), key=lambda c: c.get('placement') or 99, default=None)
+                    self.winner_id = champ['id'] if champ else None
                 self.phase = 'finished'
-                self.logs.append(f'🏆 决胜结束！冠军：{self.commanders[self.winner_id]["name"]}')
+                if self.winner_id and self.winner_id in self.commanders:
+                    self.logs.append(f'🏆 决胜结束！冠军：{self.commanders[self.winner_id]["name"]}')
                 return
         else:
             # pvp_room: continues while >=2 commanders alive AND at least 1 human alive (or 1 survivor left)
@@ -1507,6 +1561,31 @@ class AutoChessMatch:
                 return
 
         self.phase = 'round_result'
+
+    def surrender(self, cid):
+        if self.mode != 'ranked':
+            return False, '仅排位模式支持投降结算'
+        if self.phase == 'finished':
+            return False, '对局已结束'
+        cmd = self.commanders.get(cid)
+        if not cmd or cmd.get('eliminated'):
+            return False, '指挥官不存在或已被淘汰'
+        cmd['hp'] = 0
+        cmd['raw_hp'] = -999
+        self._eliminate_commander(cid)
+        alive = sorted(
+            [c for c in self.commanders.values() if not c.get('eliminated')],
+            key=lambda c: (-c['hp'], -c['wins'], c['id']),
+        )
+        for rank, c in enumerate(alive, start=1):
+            c['placement'] = rank
+        self.winner_id = alive[0]['id'] if alive else None
+        self._live_engine = None
+        self._live_matchup = None
+        self._live_bouts = []
+        self.phase = 'finished'
+        self.logs.append(f'🏳️ {cmd["name"]} 选择投降认负，最终排名第 {cmd["placement"]} 名')
+        return True, f'已投降结算，本局排名第 {cmd["placement"]} 名'
 
     def next_round(self):
         if self.phase != 'round_result':
@@ -1574,6 +1653,8 @@ class AutoChessMatch:
             return self.resolve_combat()
         if action == 'next_round':
             return self.next_round()
+        if action == 'surrender':
+            return self.surrender(cid)
         return False, f'未知动作: {action}'
 
     def to_public_dict(self, viewer_cid=None, spectate_cid=None):
@@ -1617,6 +1698,7 @@ class AutoChessMatch:
                 'name': c['name'],
                 'is_human': c['is_human'],
                 'personality': c['personality'],
+                'ai_style_label': c.get('ai_style_label', ''),
                 'ready': bool(c.get('ready', False)),
                 'next_ready': bool(c.get('next_ready', False)),
                 'hp': c['hp'],
@@ -1687,6 +1769,8 @@ class AutoChessMatch:
         return {
             'id': self.id,
             'mode': self.mode,
+            'ranked_tier': getattr(self, 'ranked_tier', None) if self.mode == 'ranked' else None,
+            'ranked_settlement': getattr(self, 'ranked_settlement', None),
             'arena_preset': self.arena_preset,
             'arena_name': ARENA_PRESETS[self.arena_preset]['name'],
             'round_num': self.round_num,
@@ -1737,6 +1821,9 @@ class AutoChessMatch:
         return {
             'id': self.id,
             'mode': self.mode,
+            'ranked_tier': getattr(self, 'ranked_tier', 'bronze'),
+            'ranked_settlement': copy.deepcopy(getattr(self, 'ranked_settlement', None)),
+            'pool_counts': {str(k): int(v) for k, v in getattr(self, 'pool_counts', POOL_COUNTS).items()},
             'arena_preset': self.arena_preset,
             'fill_bots': self.fill_bots,
             'prep_duration': self.prep_duration,
@@ -1758,6 +1845,15 @@ class AutoChessMatch:
         obj = cls.__new__(cls)
         obj.id = data['id']
         obj.mode = data.get('mode', 'lobby4')
+        obj.ranked_tier = data.get('ranked_tier', 'bronze')
+        obj.ranked_settlement = copy.deepcopy(data.get('ranked_settlement'))
+        raw_pc = data.get('pool_counts')
+        default_pc = POOL_COUNTS_8P if obj.mode == 'ranked' else POOL_COUNTS
+        obj.pool_counts = (
+            {int(k): int(v) for k, v in raw_pc.items()}
+            if isinstance(raw_pc, dict) and raw_pc
+            else dict(default_pc)
+        )
         obj.arena_preset = data.get('arena_preset', 'autochess_standard')
         obj.fill_bots = bool(data.get('fill_bots', True))
         obj.prep_duration = int(data.get('prep_duration', 30) or 30)

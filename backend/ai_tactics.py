@@ -9,6 +9,7 @@ imports from grid_nav, arena_presets, battle_engine only).
 
 import json
 import os
+import random
 
 from grid_nav import (
     parse_coord,
@@ -627,10 +628,25 @@ def _estimate_spell_damage(engine, uid, spell, echar_or_uid):
 def decide_tactical_action(engine, uid, weights=None):
     """Return (command, reason) for an AI unit in autochess_mode."""
     base = engine._resolve_uid(uid)
+    team_code = engine._battle_team_of(base)
+    t_profiles = getattr(engine, '_autochess_team_tactics', None)
+    tactics_profile = t_profiles.get(team_code) if isinstance(t_profiles, dict) else None
     if weights is None:
         tw = getattr(engine, '_autochess_team_weights', None) or {}
-        team_w = tw.get(engine._battle_team_of(base))
-        weights = team_w if isinstance(team_w, dict) else load_tactics_weights()
+        team_w = tw.get(team_code)
+        weights = dict(team_w) if isinstance(team_w, dict) else load_tactics_weights()
+    else:
+        weights = dict(weights)
+    if isinstance(tactics_profile, dict):
+        t_scale = float(tactics_profile.get('terrain_scale', 1.0) or 1.0)
+        f_scale = float(tactics_profile.get('focus_scale', 1.0) or 1.0)
+        s_scale = float(tactics_profile.get('skill_scale', 1.0) or 1.0)
+        for k in ('cover_bonus', 'leyline_bonus', 'hazard_penalty', 'threat_penalty'):
+            weights[k] = weights[k] * t_scale
+        for k in ('kill_bonus', 'low_hp_focus'):
+            weights[k] = weights[k] * f_scale
+        for k in ('dmg_weight', 'support_heal_weight', 'cc_weight', 'buff_weight', 'summon_weight'):
+            weights[k] = weights[k] * s_scale
     engine._set_autochess_pending_target(base, None)
     my_acts = engine._get_my_actions(base)
     if my_acts.get('主动', 0) <= 0:
@@ -847,7 +863,14 @@ def decide_tactical_action(engine, uid, weights=None):
 
     if candidates:
         candidates.sort(key=lambda item: (-item[0], item[1]))
-        _best_score, best_cmd, best_tgt, reason = candidates[0]
+        pick_idx = 0
+        sub_p = float(tactics_profile.get('suboptimal_prob', 0.0) or 0.0) if isinstance(tactics_profile, dict) else 0.0
+        if sub_p > 0.0 and len(candidates) >= 2:
+            rng = getattr(engine, '_tactics_rng', None) or random
+            if rng.random() < sub_p:
+                hi = min(len(candidates) - 1, 3)
+                pick_idx = rng.randint(1, hi)
+        _best_score, best_cmd, best_tgt, reason = candidates[pick_idx]
         if best_tgt:
             engine._set_autochess_pending_target(base, best_tgt)
         engine._last_ai_reason = reason

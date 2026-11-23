@@ -51,7 +51,15 @@ test('AutoChessApp has no classic shell or classic routes and exposes only one s
   assert.match(acAppSrc, /返回经典模式/);
 
   // AutoChess files never navigate into classic routes
-  for (const fname of ['AutoChessPage.tsx', 'AutoChessAuthModal.tsx', 'AutoChessTokenModal.tsx', 'AutoChessVfxLayer.tsx']) {
+  for (const fname of [
+    'AutoChessPage.tsx',
+    'AutoChessAuthModal.tsx',
+    'AutoChessTokenModal.tsx',
+    'AutoChessVfxLayer.tsx',
+    'AutoChessLeaderboardModal.tsx',
+    'AutoChessRankedSummaryModal.tsx',
+    'useMobileLandscape.ts',
+  ]) {
     const src = fs.readFileSync(path.join(ROOT, 'frontend/src/autochess', fname), 'utf8');
     assert.doesNotMatch(src, /\/ui\/(home|setup|battle|sim|library|editor|tournament|settings|story)/);
   }
@@ -67,6 +75,11 @@ test('Auto-Chess CSS supports portrait ordering, horizontal board scrolling, tok
   assert.match(css, /\.ac-unit-group\s*\{[^}]*transition:\s*transform/);
   assert.match(css, /\.ac-vfx-popup\b/);
   assert.match(css, /\.ac-room-wait-card\b/);
+  assert.match(css, /\.ac-ranked-hero\b/);
+  assert.match(css, /\.ac-standings-8p\b/);
+  assert.match(css, /\.ac-lb-modal\b/);
+  assert.match(css, /\.ac-shell\[data-ac-mobile-landscape="true"\]\s+\.ac-shop-body\b/);
+  assert.match(css, /\.ac-shell\[data-ac-mobile-landscape="true"\]\s+\.ac-landscape-rail-tabs\b/);
 });
 
 test('Auto-Chess wiki is completely isolated from main encyclopedia and uses 1.5s hover delay', () => {

@@ -52,6 +52,8 @@ class AutoChessUI:
             ('/tokens/<serial>', 'token_delete', 'DELETE'),
             ('/matches', 'match_list', 'GET'),
             ('/matches', 'match_create', 'POST'),
+            ('/ranked/leaderboard', 'ranked_leaderboard', 'GET'),
+            ('/ranked/matches', 'ranked_match_create', 'POST'),
             ('/matches/<mid>', 'match_get', 'GET'),
             ('/matches/<mid>', 'match_delete', 'DELETE'),
             ('/matches/<mid>/action', 'match_action', 'POST'),
@@ -83,10 +85,10 @@ class AutoChessUI:
         token = request.cookies.get(self.auth.cookie_name, '')
         return self.auth.authenticate(token)
 
-    def _require_account(self):
+    def _require_account(self, message='请先登录自走棋账号后再使用多人联机功能'):
         acc = self._current_account()
         if not acc:
-            raise AuthError('请先登录自走棋账号后再使用多人联机功能', 401)
+            raise AuthError(message, 401)
         return acc
 
     def _owner(self):
@@ -231,6 +233,7 @@ class AutoChessUI:
                 'id': match.id,
                 'owner': owner,
                 'mode': match.mode,
+                'ranked_tier': getattr(match, 'ranked_tier', None) if match.mode == 'ranked' else None,
                 'arena_preset': match.arena_preset,
                 'round_num': match.round_num,
                 'phase': match.phase,
@@ -246,6 +249,57 @@ class AutoChessUI:
             self.cond.notify_all()
             return doc
 
+    def ranked_leaderboard(self):
+        acc = self._current_account()
+        tier_filter = request.args.get('tier', 'all')
+        try:
+            limit = max(1, min(500, int(request.args.get('limit', 100) or 100)))
+        except (TypeError, ValueError):
+            limit = 100
+        board = self.auth.get_ranked_leaderboard(
+            viewer_account_id=acc['id'] if acc else None,
+            tier_filter=tier_filter,
+            limit=limit,
+        )
+        return jsonify(board)
+
+    def _create_or_resume_ranked_match(self, acc, payload):
+        owner = f"acc:{acc['id']}"
+        with self.lock:
+            for rec in self.store.list(_STORE_KIND):
+                if (
+                    rec.get('owner') == owner
+                    and rec.get('mode') == 'ranked'
+                    and rec.get('phase') != 'finished'
+                ):
+                    match, _ = self._load_match(rec['id'], owner)
+                    return match, True
+
+            arena = payload.get('arena_preset', 'autochess_standard')
+            seed = payload.get('seed')
+            tier_id = ((acc.get('ranked') or {}).get('rank_info') or {}).get('tier_id', 'bronze')
+            player_name = str(payload.get('player_name') or acc['display_name'])[:24]
+            match = AutoChessMatch(
+                mode='ranked',
+                ranked_tier=tier_id,
+                arena_preset=arena,
+                seed=seed,
+                player_name=player_name,
+            )
+            match.commanders[match.player_id]['account_id'] = acc['id']
+            match.commanders[match.player_id]['token_overrides'] = dict(acc.get('token_overrides') or {})
+            self._save_match(match, owner)
+            return match, False
+
+    def ranked_match_create(self):
+        try:
+            acc = self._require_account('请先登录自走棋账号后再参与排位模式')
+        except AuthError as exc:
+            return self._auth_err(exc)
+        payload = self.c['body']() or {}
+        match, resumed = self._create_or_resume_ranked_match(acc, payload)
+        return jsonify(match=match.to_public_dict(), resumed=resumed)
+
     def match_list(self):
         acc = self._current_account()
         if acc:
@@ -259,6 +313,7 @@ class AutoChessUI:
                 {
                     'id': rec['id'],
                     'mode': rec.get('mode', 'lobby4'),
+                    'ranked_tier': rec.get('ranked_tier'),
                     'arena_preset': rec.get('arena_preset', 'autochess_standard'),
                     'round_num': rec.get('round_num', 1),
                     'phase': rec.get('phase', 'prep'),
@@ -272,11 +327,18 @@ class AutoChessUI:
 
     def match_create(self):
         acc = self._current_account()
-        owner = f"acc:{acc['id']}" if acc else self._owner()
         payload = self.c['body']() or {}
         mode = payload.get('mode', 'lobby4')
         if mode == 'pvp_room':
             raise BadRequest('多人联机对局请通过开房间接口创建')
+        if mode == 'ranked':
+            try:
+                req_acc = self._require_account('请先登录自走棋账号后再参与排位模式')
+            except AuthError as exc:
+                return self._auth_err(exc)
+            match, resumed = self._create_or_resume_ranked_match(req_acc, payload)
+            return jsonify(match=match.to_public_dict(), resumed=resumed)
+        owner = f"acc:{acc['id']}" if acc else self._owner()
         arena = payload.get('arena_preset', 'autochess_standard')
         default_name = acc['display_name'] if acc else '指挥官'
         player_name = str(payload.get('player_name') or default_name)[:24]
@@ -295,7 +357,9 @@ class AutoChessUI:
 
     def match_delete(self, mid):
         owner = self._owner()
-        self._load_match(mid, owner)
+        match, rec = self._load_match(mid, owner)
+        if (match.mode == 'ranked' or rec.get('mode') == 'ranked') and match.phase != 'finished':
+            raise BadRequest('进行中的排位赛无法直接删除，请进入对局点击【投降结算】')
         with self.lock:
             self.matches.pop(mid, None)
             self.versions.pop(mid, None)
@@ -310,10 +374,11 @@ class AutoChessUI:
         action = str(payload.get('action') or '').strip()
         if not action:
             raise BadRequest('缺少 action 参数')
+        updated_acc = None
         with self.lock:
             match, rec = self._load_match(mid, owner)
             stats_recorded = bool(rec.get('stats_recorded', False))
-            if match.phase == 'prep' and time.time() >= match.prep_deadline:
+            if action != 'surrender' and match.phase == 'prep' and time.time() >= match.prep_deadline:
                 pending = match.commanders[match.player_id]['pending_augments']
                 if pending:
                     match.pick_augment(match.player_id, pending[0]['id'])
@@ -322,12 +387,25 @@ class AutoChessUI:
                 ok, msg = match.handle_action(match.player_id, action, payload)
             if acc and match.phase == 'finished' and not stats_recorded:
                 p1 = match.commanders.get(match.player_id, {})
-                placement = p1.get('placement') or (1 if match.winner_id == match.player_id else 4)
-                self.auth.record_match_result(acc['id'], placement=placement, mode=match.mode)
+                if match.mode == 'ranked':
+                    placement = p1.get('placement') or (1 if match.winner_id == match.player_id else 8)
+                    updated_acc, settlement = self.auth.record_ranked_result(
+                        acc['id'], placement=placement, match_id=match.id
+                    )
+                    if settlement:
+                        match.ranked_settlement = settlement
+                else:
+                    placement = p1.get('placement') or (1 if match.winner_id == match.player_id else 4)
+                    updated_acc = self.auth.record_match_result(acc['id'], placement=placement, mode=match.mode)
                 stats_recorded = True
             self._save_match(match, owner, created_at=rec.get('created_at'), stats_recorded=stats_recorded)
             pub = match.to_public_dict()
-        return jsonify(ok=bool(ok), message=str(msg), match=pub)
+        resp = {'ok': bool(ok), 'message': str(msg), 'match': pub}
+        if updated_acc is not None:
+            resp['account'] = updated_acc
+        if getattr(match, 'ranked_settlement', None) is not None:
+            resp['ranked_settlement'] = match.ranked_settlement
+        return jsonify(resp)
 
     def match_events(self, mid):
         owner = self._owner()

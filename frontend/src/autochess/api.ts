@@ -3,8 +3,10 @@ import type {
   AutoChessAccount,
   AutoChessAuthState,
   AutoChessCatalog,
+  AutoChessLeaderboardResponse,
   AutoChessMatchState,
   AutoChessMatchSummary,
+  AutoChessRankedSettlement,
   AutoChessRoomState,
   AutoChessRoomSummary,
 } from './types';
@@ -60,14 +62,43 @@ export async function sendAutoChessAction(
   action: string,
   payload: Record<string, unknown> = {},
   playerName?: string,
-): Promise<{ ok: boolean; message: string; match: AutoChessMatchState }> {
+): Promise<{
+  ok: boolean;
+  message: string;
+  match: AutoChessMatchState;
+  account?: AutoChessAccount;
+  ranked_settlement?: AutoChessRankedSettlement | null;
+}> {
   return withSession(
-    () => api<{ ok: boolean; message: string; match: AutoChessMatchState }>(`/autochess/matches/${id}/action`, {
-      action,
-      ...payload,
-    }),
+    () =>
+      api<{
+        ok: boolean;
+        message: string;
+        match: AutoChessMatchState;
+        account?: AutoChessAccount;
+        ranked_settlement?: AutoChessRankedSettlement | null;
+      }>(`/autochess/matches/${id}/action`, {
+        action,
+        ...payload,
+      }),
     playerName,
   );
+}
+
+// ── Ranked Mode & Leaderboard API ─────────────────────────────────────────
+
+export function createRankedMatch(params: {
+  arena_preset: string;
+}): Promise<{ match: AutoChessMatchState; resumed: boolean }> {
+  return api<{ match: AutoChessMatchState; resumed: boolean }>('/autochess/ranked/matches', params);
+}
+
+export function fetchRankedLeaderboard(
+  tier = 'all',
+  limit = 100,
+): Promise<AutoChessLeaderboardResponse> {
+  const qs = new URLSearchParams({ tier, limit: String(limit) });
+  return api<AutoChessLeaderboardResponse>(`/autochess/ranked/leaderboard?${qs.toString()}`);
 }
 
 // ── Guest Local Token Overrides ───────────────────────────────────────────

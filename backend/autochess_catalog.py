@@ -4,6 +4,7 @@ import copy
 import math
 
 from characters_data import ALL_CHARACTERS, load_character_to_engine
+from autochess_ranked import ranked_rules_summary
 
 AUTOCHESS_RANGE_OVERRIDES = {
     '火球术': 7,
@@ -22,6 +23,7 @@ CHAR_DATA_BY_SERIAL = {
 }
 
 POOL_COUNTS = {1: 18, 2: 15, 3: 12, 4: 9}
+POOL_COUNTS_8P = {1: 29, 2: 22, 3: 18, 4: 14}
 
 LEVEL_TABLE = {
     1: {'max_pop': 2, 'xp_to_next': 2, 'odds': {1: 75, 2: 25, 3: 0, 4: 0}},
@@ -772,6 +774,8 @@ def catalog_summary():
         'augments': AUGMENTS,
         'levels': LEVEL_TABLE,
         'pool_counts': POOL_COUNTS,
+        'pool_counts_8p': dict(POOL_COUNTS_8P),
+        'ranked_rules': ranked_rules_summary(),
         'pve_waves': PVE_WAVES,
         'star_scaling': STAR_SCALING,
         'range_overrides': AUTOCHESS_RANGE_OVERRIDES,

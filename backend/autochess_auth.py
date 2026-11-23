@@ -8,6 +8,12 @@ import threading
 import time
 
 from autochess_catalog import UNIT_CATALOG
+from autochess_ranked import (
+    build_leaderboard,
+    default_ranked_profile,
+    public_ranked_profile,
+    settle_ranked_match,
+)
 
 KIND_ACCOUNT = 'autochess_account'
 KIND_TOKEN = 'autochess_auth_token'
@@ -83,6 +89,7 @@ class AutoChessAuthService:
                 'top2': int(stats.get('top2', 0) or 0),
                 'pve_clears': int(stats.get('pve_clears', 0) or 0),
             },
+            'ranked': public_ranked_profile(rec.get('ranked')),
         }
 
     def _issue_token(self, account_id):
@@ -119,6 +126,7 @@ class AutoChessAuthService:
                 'created_at': time.time(),
                 'token_overrides': {},
                 'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
+                'ranked': default_ranked_profile(),
             }
             self.store.put(KIND_ACCOUNT, rec)
             tok = self._issue_token(acc_id)
@@ -231,3 +239,42 @@ class AutoChessAuthService:
             rec['stats'] = st
             self.store.put(KIND_ACCOUNT, rec)
             return self.public_account(rec)
+
+    def record_ranked_result(self, account_id, placement, match_id=None, rng=None):
+        """Idempotently settle an 8-player ranked match into account LP, shield cards, coins, and stats."""
+        if not account_id:
+            return None, None
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, account_id)
+            if not rec:
+                return None, None
+            raw_ranked = rec.get('ranked') or {}
+            settled_ids = raw_ranked.get('settled_match_ids') or []
+            if match_id and str(match_id) in settled_ids:
+                return self.public_account(rec), None
+
+            updated_ranked, settlement = settle_ranked_match(
+                raw_ranked, placement, match_id=match_id, rng=rng
+            )
+            rec['ranked'] = updated_ranked
+
+            st = dict(rec.get('stats') or {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0})
+            st['games'] = int(st.get('games', 0) or 0) + 1
+            if int(placement) == 1:
+                st['wins'] = int(st.get('wins', 0) or 0) + 1
+            if int(placement) <= 2:
+                st['top2'] = int(st.get('top2', 0) or 0) + 1
+            rec['stats'] = st
+
+            self.store.put(KIND_ACCOUNT, rec)
+            return self.public_account(rec), settlement
+
+    def get_ranked_leaderboard(self, viewer_account_id=None, tier_filter=None, limit=100):
+        """Return server-wide ranked leaderboard across all registered Auto-Chess accounts."""
+        accounts = self.store.list(KIND_ACCOUNT)
+        return build_leaderboard(
+            accounts,
+            viewer_account_id=viewer_account_id,
+            tier_filter=tier_filter,
+            limit=limit,
+        )

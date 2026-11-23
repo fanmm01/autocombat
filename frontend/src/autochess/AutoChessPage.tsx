@@ -16,9 +16,11 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Shield,
   Sparkles,
   Swords,
   Trash2,
+  Trophy,
   Unlock,
   Users,
   Wand2,
@@ -27,6 +29,7 @@ import {
 import {
   controlRoom,
   createAutoChessMatch,
+  createRankedMatch,
   createRoom,
   deleteAutoChessMatch,
   fetchAutoChessCatalog,
@@ -39,6 +42,7 @@ import {
   sendAutoChessAction,
   sendRoomAction,
 } from './api';
+import { AutoChessRankedSummaryModal } from './AutoChessRankedSummaryModal';
 import { AutoChessVfxLayer } from './AutoChessVfxLayer';
 import { AutoChessWikiModal } from './AutoChessWikiModal';
 import { AutoChessWikiPopover } from './AutoChessWikiPopover';
@@ -51,6 +55,7 @@ import {
   type AutoChessMatchState,
   type AutoChessMatchSummary,
   type AutoChessOwnedUnit,
+  type AutoChessRankedSettlement,
   type AutoChessRoomState,
   type AutoChessRoomSummary,
   type AutoChessUnitMeta,
@@ -85,9 +90,11 @@ interface AutoChessPageProps {
   playerName: string;
   account: AutoChessAccount | null;
   guestTokens: Record<string, string>;
+  onAccountUpdate?: (acc: AutoChessAccount | null) => void;
   onCatalogLoaded?: (cat: AutoChessCatalog) => void;
   onOpenAuth?: (mode?: 'login' | 'register', prompt?: string) => void;
   onOpenTokenEditor?: (serial?: string) => void;
+  onOpenLeaderboard?: () => void;
   onPlayerNameChange?: (name: string) => Promise<void> | void;
   wikiOpenNonce?: number;
   onError: (msg: string) => void;
@@ -97,9 +104,11 @@ export function AutoChessPage({
   playerName,
   account,
   guestTokens,
+  onAccountUpdate,
   onCatalogLoaded,
   onOpenAuth,
   onOpenTokenEditor,
+  onOpenLeaderboard,
   onPlayerNameChange,
   wikiOpenNonce = 0,
   onError,
@@ -109,6 +118,12 @@ export function AutoChessPage({
   const [match, setMatch] = useState<AutoChessMatchState | null>(null);
   const [mode, setMode] = useState<'lobby4' | 'pve12'>('lobby4');
   const [arenaPreset, setArenaPreset] = useState<string>('autochess_standard');
+  const [rankedArena, setRankedArena] = useState<string>('autochess_standard');
+  const [rankedSettlement, setRankedSettlement] = useState<AutoChessRankedSettlement | null>(null);
+  const [confirmSurrender, setConfirmSurrender] = useState(false);
+  const [leftRailTab, setLeftRailTab] = useState<'synergies' | 'standings' | 'logs'>('synergies');
+  const [lobbyMobileTab, setLobbyMobileTab] = useState<'ranked' | 'pve' | 'pvp'>('ranked');
+  const [showTelemetryMobile, setShowTelemetryMobile] = useState(false);
 
   // Multiplayer room state
   const [room, setRoom] = useState<AutoChessRoomState | null>(null);
@@ -329,6 +344,11 @@ export function AutoChessPage({
           res = await sendAutoChessAction(match.id, 'resolve_combat', {}, playerName);
         }
         setMatch(current => (current?.id === match.id ? res.match : current));
+        if (res.account) onAccountUpdate?.(res.account);
+        if (res.ranked_settlement) {
+          setRankedSettlement(res.ranked_settlement);
+        }
+        if (res.match.phase === 'finished') setConfirmSurrender(false);
         if (res.message && (!silent || !res.ok)) setNotice(res.message);
         if (res.match.phase !== 'combat' || match.phase !== 'combat') setAutoPlay(true);
       }
@@ -362,9 +382,34 @@ export function AutoChessPage({
       });
       setRoom(null);
       setMatch(created);
+      setRankedSettlement(null);
+      setConfirmSurrender(false);
       setAutoPlay(true);
       setSelectedId(null);
       setNotice('对局创建成功，请购买并布置你的魔法少女小队！');
+      await refreshLobby();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreateRanked = async () => {
+    if (!account) {
+      onOpenAuth?.('login', '请先登录自走棋账号后再参与 8 人排位模式');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await createRankedMatch({ arena_preset: rankedArena });
+      setRoom(null);
+      setMatch(res.match);
+      setRankedSettlement(null);
+      setConfirmSurrender(false);
+      setAutoPlay(true);
+      setSelectedId(null);
+      setNotice(res.resumed ? '已为你重连至当前进行中的 8 人排位赛！' : '8 人排位赛已开启，共有 7 位同段位策略 AI 与你角逐排名！');
       await refreshLobby();
     } catch (e) {
       onError((e as Error).message);
@@ -379,6 +424,8 @@ export function AutoChessPage({
       const loaded = await getAutoChessMatch(id, playerName);
       setRoom(null);
       setMatch(loaded);
+      setRankedSettlement(null);
+      setConfirmSurrender(false);
       setSelectedId(null);
       setAutoPlay(true);
     } catch (e) {
@@ -797,7 +844,7 @@ export function AutoChessPage({
   // ── Lobby Screen ─────────────────────────────────────────────────────────
   if (!activeMatch) {
     return (
-      <div className="page ac-page">
+      <div className="page ac-page ac-page-lobby">
         <div className="page-intro">
           <div>
             <div className="eyebrow">STARLIGHT AUTO-CHESS · SPATIAL EDITION</div>
@@ -857,9 +904,193 @@ export function AutoChessPage({
           </div>
         )}
 
-        <div className="ac-lobby-grid">
+        <div className="ac-landscape-lobby-tabs" role="tablist" aria-label="手机横屏大厅模式切换">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={lobbyMobileTab === 'ranked'}
+            className={lobbyMobileTab === 'ranked' ? 'active' : ''}
+            onClick={() => setLobbyMobileTab('ranked')}
+          >
+            🏆 8人排位
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={lobbyMobileTab === 'pve'}
+            className={lobbyMobileTab === 'pve' ? 'active' : ''}
+            onClick={() => setLobbyMobileTab('pve')}
+          >
+            ⚔️ 单人 / PvE
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={lobbyMobileTab === 'pvp'}
+            className={lobbyMobileTab === 'pvp' ? 'active' : ''}
+            onClick={() => setLobbyMobileTab('pvp')}
+          >
+            👥 多人联机
+          </button>
+        </div>
+
+        {/* Top Full-Width Ranked Mode Hero */}
+        {(() => {
+          const rankedProfile = account?.ranked;
+          const activeRankedSave = matches.find(m => m.mode === 'ranked' && m.phase !== 'finished');
+          const tierNames = [
+            { id: 'bronze', label: '青铜 3段 (+100~0)' },
+            { id: 'silver', label: '白银 4段 (+75~-25)' },
+            { id: 'gold', label: '黄金 5段 (+50~-40)' },
+            { id: 'platinum', label: '铂金 5段 (+50~-50)' },
+            { id: 'diamond', label: '钻石 5段 (+35~-55)' },
+            { id: 'king', label: '王者 无限 (+20~-60)' },
+          ];
+          return (
+            <section className={'panel ac-ranked-hero ac-lobby-tab-pane ' + (lobbyMobileTab === 'ranked' ? 'ac-lobby-tab-active' : '')}>
+              <div className="ac-section-head" style={{ marginBottom: 10 }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>
+                    <Trophy size={18} style={{ verticalAlign: '-3px', marginRight: 6, color: '#d97706' }} />
+                    8 人混战排位模式 · 全服段位天梯
+                  </h3>
+                  <small className="muted">
+                    7 位随机命名、每段位 12 套差异化策略 AI 混战 · 前 4 上分得金币，白银永不降青铜
+                  </small>
+                </div>
+                <span className={account ? 'ac-badge-unlocked' : 'ac-badge-locked'}>
+                  {account && rankedProfile ? rankedProfile.rank_info.full_label : '需账号登录'}
+                </span>
+              </div>
+
+              {!account || !rankedProfile ? (
+                <div className="ac-ranked-locked-box">
+                  <div className="ac-ranked-tiers-strip">
+                    {tierNames.map(t => (
+                      <span key={t.id} className={`ac-tier-badge ac-tier-${t.id}`}>
+                        {t.label}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                    登录后即可参与 8 人排位混战！每小段 100 分，连胜可额外加分并概率/必得<b>保段卡</b>，晋级白银后永久不会因战败降回青铜；前 4 胜利还可获得局外<b>金币</b>资源并参与全服积分排名。
+                  </p>
+                  <div className="ac-hud-group" style={{ marginTop: 10 }}>
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick={() => onOpenAuth?.('login', '请先登录自走棋账号后再参与排位赛')}
+                    >
+                      登录参与排位
+                    </button>
+                    <button type="button" className="button subtle" onClick={() => onOpenAuth?.('register')}>
+                      注册账号
+                    </button>
+                    <button type="button" className="button subtle" onClick={() => onOpenLeaderboard?.()}>
+                      <Trophy size={15} /> 全服排位排行榜
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="ac-ranked-hero-grid">
+                  <div className="ac-ranked-profile-card">
+                    <div className="ac-ranked-profile-top">
+                      <div>
+                        <span className={`ac-tier-badge ac-tier-${rankedProfile.rank_info.tier_id}`}>
+                          {rankedProfile.rank_info.full_label}
+                        </span>
+                        <strong className="ac-ranked-lp-num">{rankedProfile.total_lp} 积分</strong>
+                      </div>
+                      <span className="ac-ranked-coins-pill" title="局外金币（排位胜利奖励，暂未设消耗出口）">
+                        <Coins size={14} /> {rankedProfile.coins} 金币
+                      </span>
+                    </div>
+
+                    <div className="ac-lp-progress-wrap">
+                      <div className="ac-lp-progress-bar">
+                        <div
+                          className="ac-lp-progress-fill"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, rankedProfile.rank_info.division_lp))}%`,
+                            backgroundColor: rankedProfile.rank_info.tier_color,
+                          }}
+                        />
+                      </div>
+                      <div className="ac-lp-progress-labels">
+                        <span>本小段进度 {rankedProfile.rank_info.division_lp}/100</span>
+                        <span>
+                          {rankedProfile.silver_floor_unlocked
+                            ? '✅ 已激活白银永不降青铜保护'
+                            : '升至白银(300分)后永不降青铜'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="ac-ranked-mini-stats">
+                      <span>
+                        <Award size={13} /> 前4胜 {rankedProfile.wins}/{rankedProfile.games} 局 ({rankedProfile.firsts}吃鸡)
+                      </span>
+                      <span>
+                        <Sparkles size={13} /> 连胜 {rankedProfile.win_streak} (最高 {rankedProfile.best_win_streak})
+                      </span>
+                      <span>
+                        <Shield size={13} /> 保段卡 {rankedProfile.shield_cards}/{rankedProfile.shield_card_cap}
+                      </span>
+                    </div>
+
+                    {rankedProfile.history.length > 0 && (
+                      <div className="ac-ranked-history-row">
+                        <span className="muted" style={{ fontSize: '0.73rem' }}>近期战绩：</span>
+                        {rankedProfile.history.slice(-4).reverse().map((h, i) => (
+                          <span key={i} className={`ac-ranked-hist-chip ${h.placement <= 4 ? 'win' : 'loss'}`}>
+                            #{h.placement} {h.net_delta >= 0 ? `+${h.net_delta}` : h.net_delta}分
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="ac-ranked-launch-box">
+                    <label className="ac-field">
+                      <span>排位赛对称战场</span>
+                      <select value={rankedArena} onChange={e => setRankedArena(e.target.value)}>
+                        {(catalog?.arenas || []).map(ar => (
+                          <option key={ar.id} value={ar.id}>
+                            {ar.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="ac-ranked-launch-actions">
+                      <button
+                        type="button"
+                        className="button primary ac-ranked-start-btn"
+                        disabled={busy}
+                        onClick={() => void handleCreateRanked()}
+                      >
+                        <Swords size={16} />{' '}
+                        {activeRankedSave
+                          ? `继续排位赛 (第${activeRankedSave.round_num}回合 · HP ${activeRankedSave.hp})`
+                          : '开启 8 人排位赛'}
+                      </button>
+                      <button
+                        type="button"
+                        className="button subtle"
+                        onClick={() => onOpenLeaderboard?.()}
+                      >
+                        <Trophy size={15} /> 全服排行榜
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+          );
+        })()}
+
+        <div className={'ac-lobby-grid ' + (lobbyMobileTab !== 'ranked' ? 'ac-lobby-grid-mobile-active' : '')}>
           {/* Left Panel: Singleplayer / PvE (Available to Guests & Logged-in Accounts) */}
-          <section className="panel" style={{ padding: 16 }}>
+          <section className={'panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pve' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
             <div className="ac-section-head" style={{ marginBottom: 8 }}>
               <h3 style={{ margin: 0 }}>单人模式 · PvE 试炼与 AI 练习</h3>
               <span className="ac-badge-free">{account ? '账号云同步中' : '游客免登录可用'}</span>
@@ -920,18 +1151,26 @@ export function AutoChessPage({
                   {matches.map(m => (
                     <div key={m.id} className="ac-saved-item">
                       <div>
-                        <strong>{m.mode === 'lobby4' ? '4人 AI 大厅' : '12波 PvE 试炼'}</strong>
+                        <strong>
+                          {m.mode === 'ranked'
+                            ? '8人排位赛'
+                            : m.mode === 'lobby4'
+                            ? '4人 AI 大厅'
+                            : '12波 PvE 试炼'}
+                        </strong>
                         <div className="muted" style={{ fontSize: '0.78rem' }}>
                           第 {m.round_num} 回合 · HP {m.hp} · {m.phase === 'finished' ? '已结束' : '进行中'} · {m.arena_preset}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="button subtle" disabled={busy} onClick={() => void handleLoad(m.id)}>
-                          继续
+                          {m.phase === 'finished' ? '查看' : '继续'}
                         </button>
-                        <button className="button subtle" title="删除存档" disabled={busy} onClick={() => void handleDelete(m.id)}>
-                          <Trash2 size={14} />
-                        </button>
+                        {!(m.mode === 'ranked' && m.phase !== 'finished') && (
+                          <button className="button subtle" title="删除存档" disabled={busy} onClick={() => void handleDelete(m.id)}>
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -941,7 +1180,7 @@ export function AutoChessPage({
           </section>
 
           {/* Right Panel: Multiplayer Room Mode (Login Required) */}
-          <section className="panel ac-pvp-panel" style={{ padding: 16 }}>
+          <section className={'panel ac-pvp-panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pvp' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
             <div className="ac-section-head" style={{ marginBottom: 8 }}>
               <h3 style={{ margin: 0 }}>
                 <Users size={17} style={{ verticalAlign: '-3px', marginRight: 6 }} />
@@ -1304,7 +1543,7 @@ export function AutoChessPage({
     : null;
 
   return (
-    <div className="page ac-page">
+    <div className="page ac-page ac-page-playing">
       {/* Top HUD */}
       <section className="panel ac-hud">
         <div className="ac-hud-group">
@@ -1320,6 +1559,23 @@ export function AutoChessPage({
             ← 大厅/换局
           </button>
           {room && <span className="ac-stat-chip ac-room-chip">联机房 {room.code}</span>}
+          {activeMatch.mode === 'ranked' && (
+            <span className={`ac-tier-badge ac-tier-${activeMatch.ranked_tier || 'bronze'}`}>
+              8人排位 ·{' '}
+              {
+                (
+                  {
+                    bronze: '青铜局',
+                    silver: '白银局',
+                    gold: '黄金局',
+                    platinum: '铂金局',
+                    diamond: '钻石局',
+                    king: '王者局',
+                  } as Record<string, string>
+                )[activeMatch.ranked_tier || 'bronze'] || '排位局'
+              }
+            </span>
+          )}
           <span className="ac-stat-chip">
             <Compass size={14} /> 第 {activeMatch.round_num}
             {activeMatch.max_waves ? `/${activeMatch.max_waves}` : ''} 回合 ·{' '}
@@ -1357,6 +1613,37 @@ export function AutoChessPage({
           <button className="button subtle" onClick={() => setWikiTarget({ tab: 'rules' })}>
             <CircleHelp size={15} /> 规则说明
           </button>
+          {activeMatch.mode === 'ranked' && activeMatch.phase !== 'finished' && (
+            confirmSurrender ? (
+              <div className="ac-hud-group">
+                <button
+                  type="button"
+                  className="button subtle ac-surrender-confirm-btn"
+                  disabled={busy}
+                  onClick={() => void act('surrender')}
+                >
+                  确认投降结算
+                </button>
+                <button
+                  type="button"
+                  className="button subtle"
+                  disabled={busy}
+                  onClick={() => setConfirmSurrender(false)}
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="button subtle"
+                disabled={busy}
+                onClick={() => setConfirmSurrender(true)}
+              >
+                投降结算
+              </button>
+            )
+          )}
         </div>
       </section>
 
@@ -1384,7 +1671,37 @@ export function AutoChessPage({
       <div className="ac-workspace">
         {/* Left column: Synergies + Standings + Logs */}
         <aside className="ac-left-col">
-          <section className="panel" style={{ padding: 12 }}>
+          <div className="ac-landscape-rail-tabs" role="tablist" aria-label="手机横屏侧栏切换">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={leftRailTab === 'synergies'}
+              className={leftRailTab === 'synergies' ? 'active' : ''}
+              onClick={() => setLeftRailTab('synergies')}
+            >
+              羁绊
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={leftRailTab === 'standings'}
+              className={leftRailTab === 'standings' ? 'active' : ''}
+              onClick={() => setLeftRailTab('standings')}
+            >
+              战绩
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={leftRailTab === 'logs'}
+              className={leftRailTab === 'logs' ? 'active' : ''}
+              onClick={() => setLeftRailTab('logs')}
+            >
+              纪要
+            </button>
+          </div>
+
+          <section className={'panel ac-rail-panel ' + (leftRailTab === 'synergies' ? 'ac-rail-active' : '')} style={{ padding: 12 }}>
             <h4 style={{ margin: '0 0 8px' }}>羁绊共鸣 ({p.board.length} 棋子)</h4>
             <div className="ac-syn-list">
               {p.synergies.length === 0 ? (
@@ -1423,15 +1740,17 @@ export function AutoChessPage({
             )}
           </section>
 
-          <section className="panel" style={{ padding: 12 }}>
+          <section className={'panel ac-rail-panel ' + (leftRailTab === 'standings' ? 'ac-rail-active' : '')} style={{ padding: 12 }}>
             <h4 style={{ margin: '0 0 8px' }}>
               {activeMatch.mode === 'pvp_room'
                 ? '联机战绩榜 (点击观战)'
+                : activeMatch.mode === 'ranked'
+                ? '8人排位战绩榜'
                 : activeMatch.mode === 'lobby4'
                 ? '4人战绩榜'
                 : '指挥官状态'}
             </h4>
-            <div className="ac-standings">
+            <div className={'ac-standings ' + (activeMatch.commanders.length > 4 ? 'ac-standings-8p' : '')}>
               {activeMatch.commanders.map(c => {
                 const isMe = isPvpRoom ? c.id === room?.my_commander_id : c.is_human;
                 const canSpectate = isPvpRoom && activeMatch.phase !== 'prep' && !c.eliminated;
@@ -1459,6 +1778,9 @@ export function AutoChessPage({
                     <div className="ac-cmd-sub">
                       <span>
                         Lv.{c.level} ({c.board_count}/{c.max_pop}) · {c.gold}G
+                        {!c.is_human && c.ai_style_label && (c.eliminated || activeMatch.phase === 'finished')
+                          ? ` · ${c.ai_style_label}`
+                          : ''}
                       </span>
                       <span>
                         {c.wins}胜 {c.losses}负
@@ -1470,7 +1792,7 @@ export function AutoChessPage({
             </div>
           </section>
 
-          <section className="panel" style={{ padding: 12 }}>
+          <section className={'panel ac-rail-panel ' + (leftRailTab === 'logs' ? 'ac-rail-active' : '')} style={{ padding: 12 }}>
             <h4 style={{ margin: '0 0 6px' }}>对局纪要</h4>
             <div className="ac-logs">
               {[...activeMatch.logs].reverse().map((ln, idx) => (
@@ -1563,21 +1885,32 @@ export function AutoChessPage({
                   </>
                 )}
                 {activeMatch.phase === 'round_result' && (
-                  <button
-                    className={`button ${isPvpRoom && p.next_ready ? 'subtle' : 'primary'}`}
-                    disabled={busy}
-                    onClick={() =>
-                      isPvpRoom
-                        ? void act('ready_next', { ready: !p.next_ready })
-                        : void act('next_round')
-                    }
-                  >
-                    {isPvpRoom
-                      ? p.next_ready
-                        ? '已确认下一回合，等待其他玩家…'
-                        : `准备进入第 ${activeMatch.round_num + 1} 回合 →`
-                      : `跳过结算，进入第 ${activeMatch.round_num + 1} 回合 →`}
-                  </button>
+                  <>
+                    <button
+                      className={`button ${isPvpRoom && p.next_ready ? 'subtle' : 'primary'}`}
+                      disabled={busy}
+                      onClick={() =>
+                        isPvpRoom
+                          ? void act('ready_next', { ready: !p.next_ready })
+                          : void act('next_round')
+                      }
+                    >
+                      {isPvpRoom
+                        ? p.next_ready
+                          ? '已确认下一回合，等待其他玩家…'
+                          : `准备进入第 ${activeMatch.round_num + 1} 回合 →`
+                        : `跳过结算，进入第 ${activeMatch.round_num + 1} 回合 →`}
+                    </button>
+                    {activeMatch.last_round_report && (
+                      <button
+                        type="button"
+                        className="button subtle ac-landscape-tel-toggle"
+                        onClick={() => setShowTelemetryMobile(v => !v)}
+                      >
+                        {showTelemetryMobile ? '收起战报' : '本轮战报'}
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1893,7 +2226,13 @@ export function AutoChessPage({
           {/* Post-Round Telemetry & MVP */}
           {activeMatch.last_round_report &&
             (activeMatch.phase === 'round_result' || activeMatch.phase === 'finished') && (
-              <section className="panel" style={{ padding: 12 }}>
+              <section
+                className={
+                  'panel ac-telemetry-panel ' +
+                  (showTelemetryMobile ? 'ac-tel-mobile-open' : '')
+                }
+                style={{ padding: 12 }}
+              >
                 <div
                   style={{
                     display: 'flex',
@@ -1912,6 +2251,15 @@ export function AutoChessPage({
                             : `❌ 落败 (-${activeMatch.last_round_report.hp_damage} HP)`
                         } · 对阵 ${activeMatch.last_round_report.opponent_name} (${activeMatch.last_round_report.battle_rounds}轮)`}
                   </h4>
+                  {activeMatch.phase === 'finished' && activeMatch.mode === 'ranked' && activeMatch.ranked_settlement && (
+                    <button
+                      type="button"
+                      className="button primary compact-button"
+                      onClick={() => setRankedSettlement(activeMatch.ranked_settlement || null)}
+                    >
+                      <Trophy size={14} /> 查看排位结算明细
+                    </button>
+                  )}
                   {activeMatch.last_round_report.mvp && (
                     <span className="ac-stat-chip gold">
                       <Award size={14} /> MVP：{activeMatch.last_round_report.mvp.name}（伤害{' '}
@@ -1958,12 +2306,12 @@ export function AutoChessPage({
             )}
 
           {/* Bench */}
-          <section className="panel" style={{ padding: 12 }}>
+          <section className="panel ac-bench-panel" style={{ padding: 12 }}>
             <div className="ac-section-head" style={{ marginBottom: 6 }}>
               <strong>
                 备战席 ({p.bench.length}/{benchCapacity})
               </strong>
-              <span className="muted" style={{ fontSize: '0.78rem' }}>
+              <span className="muted ac-bench-hint" style={{ fontSize: '0.78rem' }}>
                 点击棋子后点击紫色部署区即可上阵；同类 3 枚自动合成高星
               </span>
             </div>
@@ -2017,43 +2365,44 @@ export function AutoChessPage({
           </section>
 
           {/* Shop (5 slots) */}
-          <section className="panel" style={{ padding: 12 }}>
-            <div className="ac-shop-controls">
-              <strong>星序招募商店</strong>
-              <div className="ac-hud-group">
-                <button
-                  className="button subtle"
-                  disabled={busy || activeMatch.phase !== 'prep' || p.xp_to_next <= 0 || p.gold < 4}
-                  onClick={() => void act('buy_xp')}
-                >
-                  购买经验 +4XP (4G)
-                </button>
-                <button
-                  className="button subtle"
-                  disabled={busy || activeMatch.phase !== 'prep' || (p.gold < 2 && p.free_rerolls <= 0)}
-                  onClick={() => void act('reroll')}
-                >
-                  <RefreshCw size={14} /> {p.free_rerolls > 0 ? `免费刷新 (${p.free_rerolls})` : '刷新商店 (2G)'}
-                </button>
-                <button
-                  className="button subtle"
-                  disabled={busy || activeMatch.phase !== 'prep'}
-                  onClick={() => void act('lock_shop')}
-                >
-                  {p.shop_locked ? (
-                    <>
-                      <Lock size={14} /> 已锁定
-                    </>
-                  ) : (
-                    <>
-                      <Unlock size={14} /> 锁定商店
-                    </>
-                  )}
-                </button>
+          <section className="panel ac-shop-panel" style={{ padding: 12 }}>
+            <div className="ac-shop-body">
+              <div className="ac-shop-controls">
+                <strong>星序招募商店</strong>
+                <div className="ac-hud-group">
+                  <button
+                    className="button subtle"
+                    disabled={busy || activeMatch.phase !== 'prep' || p.xp_to_next <= 0 || p.gold < 4}
+                    onClick={() => void act('buy_xp')}
+                  >
+                    购买经验 +4XP (4G)
+                  </button>
+                  <button
+                    className="button subtle"
+                    disabled={busy || activeMatch.phase !== 'prep' || (p.gold < 2 && p.free_rerolls <= 0)}
+                    onClick={() => void act('reroll')}
+                  >
+                    <RefreshCw size={14} /> {p.free_rerolls > 0 ? `免费刷新 (${p.free_rerolls})` : '刷新商店 (2G)'}
+                  </button>
+                  <button
+                    className="button subtle"
+                    disabled={busy || activeMatch.phase !== 'prep'}
+                    onClick={() => void act('lock_shop')}
+                  >
+                    {p.shop_locked ? (
+                      <>
+                        <Lock size={14} /> 已锁定
+                      </>
+                    ) : (
+                      <>
+                        <Unlock size={14} /> 锁定商店
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
 
-            <div className="ac-shop-row">
+              <div className="ac-shop-row">
               {p.shop.map((slot, idx) =>
                 slot ? (
                   <div
@@ -2099,6 +2448,7 @@ export function AutoChessPage({
                   </div>
                 ),
               )}
+              </div>
             </div>
           </section>
         </main>
@@ -2132,6 +2482,38 @@ export function AutoChessPage({
           </section>
         </div>
       )}
+
+      {activeMatch.phase === 'finished' && activeMatch.mode === 'ranked' && !activeMatch.last_round_report && activeMatch.ranked_settlement && (
+        <section className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+          <strong>🏆 排位赛已结算 · 第 {p.placement || 8} 名（{activeMatch.ranked_settlement.net_delta >= 0 ? '+' : ''}{activeMatch.ranked_settlement.net_delta} 积分）</strong>
+          <button
+            type="button"
+            className="button primary compact-button"
+            onClick={() => setRankedSettlement(activeMatch.ranked_settlement || null)}
+          >
+            <Trophy size={14} /> 查看排位结算明细
+          </button>
+        </section>
+      )}
+
+      <AutoChessRankedSummaryModal
+        settlement={rankedSettlement}
+        onClose={() => setRankedSettlement(null)}
+        onPlayAgain={() => {
+          setRankedSettlement(null);
+          void handleCreateRanked();
+        }}
+        onOpenLeaderboard={() => {
+          setRankedSettlement(null);
+          onOpenLeaderboard?.();
+        }}
+        onBackToLobby={() => {
+          setRankedSettlement(null);
+          setRoom(null);
+          setMatch(null);
+          void refreshLobby();
+        }}
+      />
 
       {wikiOverlays}
     </div>

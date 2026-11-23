@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Compass, Search, Shield, Sparkles, Star, Wind, X } from 'lucide-react';
+import { BookOpen, Compass, Search, Shield, Sparkles, Star, Trophy, Wind, X } from 'lucide-react';
 import {
   AUTOCHESS_ROLE_LABELS,
   resolveUnitWiki,
@@ -507,6 +507,50 @@ export function AutoChessWikiModal({
                   </tbody>
                 </table>
               </div>
+            </section>
+
+            <section className="ac-wiki-rule-card">
+              <h4><Trophy size={15} /> 4. 8 人排位模式、段位积分与局外金币</h4>
+              <p>
+                排位模式需登录自走棋账号后方可参与，每局共 8 名指挥官混战（1 名玩家 + 7 名随机命名且策略各异的同段位 AI），使用扩容版 8 人共享牌库（1–4 费分别为{' '}
+                <code>
+                  {catalog?.pool_counts_8p
+                    ? `${catalog.pool_counts_8p['1']}/${catalog.pool_counts_8p['2']}/${catalog.pool_counts_8p['3']}/${catalog.pool_counts_8p['4']}`
+                    : '29/22/18/14'}
+                </code>{' '}
+                张）。前 4 名记为排位胜利并积累连胜与局外「金币」（暂未设兑换出口），第 5–8 名记为战败；每小段需 <b>100 分</b>，晋级白银后永久解锁<b>不会跌回青铜</b>硬保底；3 连胜必得 1 张<b>保段卡</b>（上限 5 张），掉段时自动消耗抵扣全部扣分。
+              </p>
+              {catalog?.ranked_rules?.tiers && (
+                <div className="ac-wiki-table-wrap" style={{ marginTop: 8 }}>
+                  <table className="ac-wiki-table">
+                    <thead>
+                      <tr>
+                        <th>段位 (小段数)</th>
+                        <th>#1</th>
+                        <th>#2</th>
+                        <th>#3</th>
+                        <th>#4</th>
+                        <th>#5</th>
+                        <th>#6</th>
+                        <th>#7</th>
+                        <th>#8</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catalog.ranked_rules.tiers.map(t => (
+                        <tr key={t.id}>
+                          <td>
+                            <b>{t.name}</b> ({t.divisions ?? '无限'})
+                          </td>
+                          {t.lp_table.map((v, i) => (
+                            <td key={i}>{v > 0 ? `+${v}` : v}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           </div>
         )}
