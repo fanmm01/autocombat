@@ -68,7 +68,7 @@ def run_commander_prep(match, cid):
     if cmd.get('eliminated'):
         return
 
-    # 1. Pick pending augment if Round 4 / Round 8 offered choices
+    # 1. Pick pending augment when choices are available
     if cmd.get('pending_augments'):
         chosen = pick_augment_for_commander(cmd, cmd['pending_augments'])
         if chosen:

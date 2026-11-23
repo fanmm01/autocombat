@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, BookOpen, Diamond, Shield, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Diamond, Image as ImageIcon, Shield, UserCheck, UserPlus, X } from 'lucide-react';
 import { readPreferences, savePreferences } from '../settings';
 import { api } from '../types';
+import { getAuthMe, readGuestTokens } from './api';
+import { AutoChessAuthModal } from './AutoChessAuthModal';
 import { AutoChessPage } from './AutoChessPage';
+import { AutoChessTokenModal } from './AutoChessTokenModal';
+import type { AutoChessAccount, AutoChessCatalog } from './types';
 import './autochess.css';
 
 export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => void }) {
@@ -12,6 +16,15 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const [wikiOpenNonce, setWikiOpenNonce] = useState(0);
+
+  const [account, setAccount] = useState<AutoChessAccount | null>(null);
+  const [guestTokens, setGuestTokens] = useState<Record<string, string>>(() => readGuestTokens());
+  const [catalog, setCatalog] = useState<AutoChessCatalog | null>(null);
+  const [authModal, setAuthModal] = useState<{ open: boolean; mode: 'login' | 'register'; prompt?: string }>({
+    open: false,
+    mode: 'login',
+  });
+  const [tokenModal, setTokenModal] = useState<{ open: boolean; serial?: string }>({ open: false });
 
   useEffect(() => {
     document.documentElement.dataset.reduced = String(reduced);
@@ -26,6 +39,13 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
       })
       .catch(e => {
         if (active) setError((e as Error).message);
+      });
+    getAuthMe()
+      .then(res => {
+        if (active) setAccount(res.authenticated ? res.account : null);
+      })
+      .catch(() => {
+        if (active) setAccount(null);
       });
     return () => {
       active = false;
@@ -42,6 +62,8 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
     setName(cleaned);
     setConnected(true);
   };
+
+  const displayTitle = account ? account.display_name : name;
 
   return (
     <div className="ac-shell">
@@ -61,10 +83,27 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
             <i />
             <span>{connected ? '引擎已连接' : '连接恢复中'}</span>
           </span>
-          <span className="ac-topbar-user" title="当前指挥官">
-            <span aria-hidden="true">{name.slice(0, 1)}</span>
-            <em>{name}</em>
-          </span>
+
+          <button
+            type="button"
+            className="button subtle compact-button ac-topbar-auth-btn"
+            onClick={() => setAuthModal({ open: true, mode: 'login' })}
+            title={account ? `已登录 @${account.username}` : '登录或注册自走棋账号'}
+          >
+            {account ? <UserCheck size={15} /> : <UserPlus size={15} />}
+            <span>{account ? displayTitle : '登录 / 注册'}</span>
+          </button>
+
+          <button
+            type="button"
+            className="button subtle compact-button ac-topbar-token-btn"
+            onClick={() => setTokenModal({ open: true })}
+            title="自定义场上棋子的圆形头图或徽章"
+          >
+            <ImageIcon size={15} />
+            <span>棋子头图</span>
+          </button>
+
           <button
             type="button"
             className="button subtle compact-button ac-topbar-wiki-btn"
@@ -73,6 +112,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
             <BookOpen size={15} />
             <span>自走棋百科</span>
           </button>
+
           <button
             type="button"
             className="button subtle compact-button ac-mode-switch"
@@ -95,12 +135,40 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
           </div>
         )}
         <AutoChessPage
-          playerName={name}
+          playerName={displayTitle}
+          account={account}
+          guestTokens={guestTokens}
+          onCatalogLoaded={setCatalog}
+          onOpenAuth={(mode = 'login', prompt) => setAuthModal({ open: true, mode, prompt })}
+          onOpenTokenEditor={serial => setTokenModal({ open: true, serial })}
           onPlayerNameChange={updatePlayerName}
           wikiOpenNonce={wikiOpenNonce}
           onError={setError}
         />
       </main>
+
+      <AutoChessAuthModal
+        open={authModal.open}
+        account={account}
+        initialMode={authModal.mode}
+        promptMessage={authModal.prompt}
+        onClose={() => setAuthModal(prev => ({ ...prev, open: false }))}
+        onAuthenticated={nextAcc => {
+          setAccount(nextAcc);
+          if (nextAcc) setName(nextAcc.display_name || nextAcc.username);
+        }}
+      />
+
+      <AutoChessTokenModal
+        open={tokenModal.open}
+        catalog={catalog}
+        account={account}
+        guestTokens={guestTokens}
+        initialSerial={tokenModal.serial}
+        onClose={() => setTokenModal(prev => ({ ...prev, open: false }))}
+        onAccountUpdate={setAccount}
+        onGuestTokensUpdate={setGuestTokens}
+      />
     </div>
   );
 }

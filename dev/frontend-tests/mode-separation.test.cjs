@@ -50,17 +50,23 @@ test('AutoChessApp has no classic shell or classic routes and exposes only one s
   assert.equal(backClicks.length, 1);
   assert.match(acAppSrc, /返回经典模式/);
 
-  // AutoChessPage never navigates into classic routes
-  assert.doesNotMatch(acPageSrc, /\/ui\/(home|setup|battle|sim|library|editor|tournament|settings|story)/);
+  // AutoChess files never navigate into classic routes
+  for (const fname of ['AutoChessPage.tsx', 'AutoChessAuthModal.tsx', 'AutoChessTokenModal.tsx', 'AutoChessVfxLayer.tsx']) {
+    const src = fs.readFileSync(path.join(ROOT, 'frontend/src/autochess', fname), 'utf8');
+    assert.doesNotMatch(src, /\/ui\/(home|setup|battle|sim|library|editor|tournament|settings|story)/);
+  }
 });
 
-test('Auto-Chess CSS supports portrait ordering, horizontal board scrolling, and small screens', () => {
+test('Auto-Chess CSS supports portrait ordering, horizontal board scrolling, tokens, VFX, and small screens', () => {
   const css = fs.readFileSync(path.join(ROOT, 'frontend/src/autochess/autochess.css'), 'utf8');
   assert.match(css, /@media\s*\(max-width:\s*1080px\)[\s\S]*?\.ac-center-col\s*\{[^}]*order:\s*1/);
   assert.match(css, /\.ac-board-scroll\s*\{[^}]*overflow-x:\s*auto/);
   assert.match(css, /@media\s*\(max-width:\s*640px\)[\s\S]*?\.ac-board-svg\s*\{[^}]*--ac-cols/);
   assert.match(css, /@media\s*\(max-width:\s*420px\)/);
   assert.match(css, /@media\s*\(max-width:\s*360px\)/);
+  assert.match(css, /\.ac-unit-group\s*\{[^}]*transition:\s*transform/);
+  assert.match(css, /\.ac-vfx-popup\b/);
+  assert.match(css, /\.ac-room-wait-card\b/);
 });
 
 test('Auto-Chess wiki is completely isolated from main encyclopedia and uses 1.5s hover delay', () => {

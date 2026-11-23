@@ -7,6 +7,17 @@ export interface AutoChessUnitMeta {
   range: number;
   tag: string;
   blurb: string;
+  emblem?: string;
+  accent?: string;
+  emblem_url?: string;
+  default_token_url?: string;
+}
+
+export interface AutoChessEmblemOption {
+  emblem: string;
+  url: string;
+  label: string;
+  serial: string;
 }
 
 export interface AutoChessSynergyTier {
@@ -82,7 +93,10 @@ export interface AutoChessOwnedUnit {
 export interface AutoChessCommanderSummary {
   id: string;
   name: string;
+  account_id?: string | null;
   is_human: boolean;
+  ready?: boolean;
+  next_ready?: boolean;
   personality: string;
   hp: number;
   max_hp: number;
@@ -127,6 +141,30 @@ export interface AutoChessCombatSnapshot {
   units: AutoChessCombatUnit[];
 }
 
+export type AutoChessVfxKind = 'fire' | 'frost' | 'star' | 'blood' | 'heal' | 'summon' | 'slash';
+
+export interface AutoChessVfxPopup {
+  uid: string;
+  coord: string;
+  text: string;
+  kind: 'dmg' | 'heal' | 'shield' | 'summon' | 'miss';
+}
+
+export interface AutoChessVfxEvent {
+  type: 'move' | 'action';
+  uid?: string;
+  actor_uid?: string;
+  from_coord?: string;
+  to_coord?: string;
+  path?: string[];
+  flying?: boolean;
+  target_uids?: string[];
+  to_coords?: string[];
+  skill_name?: string;
+  vfx_kind?: AutoChessVfxKind;
+  popups?: AutoChessVfxPopup[];
+}
+
 export interface AutoChessCombatFrame {
   round: number;
   actor_uid: string | null;
@@ -135,6 +173,7 @@ export interface AutoChessCombatFrame {
   cmd: string;
   reason: string;
   lines: string[];
+  vfx_events?: AutoChessVfxEvent[];
   snapshot: AutoChessCombatSnapshot;
 }
 
@@ -165,7 +204,7 @@ export interface AutoChessRoundReport {
 
 export interface AutoChessMatchState {
   id: string;
-  mode: 'lobby4' | 'pve12';
+  mode: 'lobby4' | 'pve12' | 'pvp_room';
   arena_preset: string;
   arena_name: string;
   round_num: number;
@@ -173,6 +212,12 @@ export interface AutoChessMatchState {
   max_waves: number | null;
   phase: 'prep' | 'combat' | 'round_result' | 'finished';
   winner_id: string | null;
+  watching_cid?: string;
+  opponent_name?: string;
+  bout_token_overrides?: {
+    Y: Record<string, string>;
+    X: Record<string, string>;
+  };
   map: {
     width: number;
     height: number;
@@ -182,6 +227,10 @@ export interface AutoChessMatchState {
   player: {
     id: string;
     name: string;
+    account_id?: string | null;
+    ready?: boolean;
+    next_ready?: boolean;
+    token_overrides?: Record<string, string>;
     hp: number;
     max_hp: number;
     gold: number;
@@ -253,6 +302,10 @@ export interface AutoChessUnitWiki {
   range: number;
   tag: string;
   blurb: string;
+  emblem?: string;
+  accent?: string;
+  emblem_url?: string;
+  default_token_url?: string;
   mov: number;
   tactical_move: number;
   main_actions: number;
@@ -337,6 +390,7 @@ export function resolveUnitWiki(catalog: AutoChessCatalog | null, serial: string
 
 export interface AutoChessCatalog {
   units: AutoChessUnitMeta[];
+  available_emblems?: AutoChessEmblemOption[];
   wiki_units?: Record<string, AutoChessUnitWiki>;
   synergies: AutoChessSynergyDef[];
   augments: AutoChessAugment[];
@@ -356,4 +410,66 @@ export interface AutoChessCatalog {
       summon_skill_bonus: number;
     }
   >;
+}
+
+export interface AutoChessAccountStats {
+  games: number;
+  wins: number;
+  top2: number;
+  pve_clears: number;
+}
+
+export interface AutoChessAccount {
+  id: string;
+  username: string;
+  display_name: string;
+  token_overrides: Record<string, string>;
+  stats: AutoChessAccountStats;
+  created_at: number;
+}
+
+export interface AutoChessAuthState {
+  authenticated: boolean;
+  account: AutoChessAccount | null;
+}
+
+export interface AutoChessRoomMember {
+  account_id: string;
+  username: string;
+  display_name: string;
+  ready: boolean;
+  is_host: boolean;
+}
+
+export interface AutoChessRoomSummary {
+  code: string;
+  name: string;
+  status: 'waiting' | 'playing' | 'finished';
+  arena_preset: string;
+  max_players: number;
+  fill_bots: boolean;
+  prep_duration: number;
+  member_count: number;
+  host_name: string;
+  is_member: boolean;
+  updated_at: number;
+}
+
+export interface AutoChessRoomState {
+  code: string;
+  name: string;
+  status: 'waiting' | 'playing' | 'finished';
+  arena_preset: string;
+  max_players: number;
+  fill_bots: boolean;
+  prep_duration: number;
+  auto_step: boolean;
+  host_account_id: string;
+  my_account_id: string;
+  my_commander_id: string | null;
+  is_host: boolean;
+  members: AutoChessRoomMember[];
+  invite_urls: string[];
+  updated_at: number;
+  match: AutoChessMatchState | null;
 }

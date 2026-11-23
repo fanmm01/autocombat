@@ -31,6 +31,23 @@ class AutoChessModeTests(unittest.TestCase):
         cmd['xp'] = ac_cat.LEVEL_TABLE[5]['xp_to_next'] - 4
         self.assertTrue(match.buy_xp(cid))
         self.assertEqual(cmd['level'], 6)
+        self.assertEqual(match.max_pop(cid), 7)
+
+    def test_round_twelve_offers_third_augment(self):
+        match = AutoChessMatch(mode='pve12', seed=12)
+        cid = match.player_id
+        cmd = match.commanders[cid]
+        for round_num in range(2, 13):
+            match.phase = 'round_result'
+            self.assertTrue(match.next_round()[0])
+            choices = cmd['pending_augments']
+            if round_num in (4, 8, 12):
+                self.assertEqual(len(choices), 3)
+                self.assertTrue(all(a['id'] not in cmd['augments'] for a in choices))
+                self.assertTrue(match.pick_augment(cid, choices[0]['id'])[0])
+            else:
+                self.assertFalse(choices)
+        self.assertEqual(len(cmd['augments']), 3)
 
     def test_classic_mode_invariants_and_main_action_formula_preserved(self):
         self.assertEqual(cd.GLOBAL_RANGE_OVERRIDE, 1)
@@ -125,6 +142,10 @@ class AutoChessModeTests(unittest.TestCase):
         self.assertEqual(sresp.status_code, 200)
         cat = client.get('/api/ui/autochess/catalog').get_json()
         self.assertEqual(len(cat['units']), 17)
+        self.assertEqual(len(cat['available_emblems']), 17)
+        for u in cat['units']:
+            self.assertTrue(u.get('emblem_url', '').startswith('/ui/icons/'), u)
+            self.assertTrue(u.get('accent', '').startswith('#'), u)
         self.assertEqual(len(cat['synergies']), 8)
         self.assertEqual(len(cat['augments']), 15)
         self.assertEqual(len(cat['wiki_units']), 17)

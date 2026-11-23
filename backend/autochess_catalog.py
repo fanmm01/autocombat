@@ -29,7 +29,7 @@ LEVEL_TABLE = {
     3: {'max_pop': 4, 'xp_to_next': 10, 'odds': {1: 30, 2: 40, 3: 25, 4: 5}},
     4: {'max_pop': 5, 'xp_to_next': 16, 'odds': {1: 18, 2: 32, 3: 35, 4: 15}},
     5: {'max_pop': 6, 'xp_to_next': 24, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
-    6: {'max_pop': 6, 'xp_to_next': 0, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
+    6: {'max_pop': 7, 'xp_to_next': 0, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
 }
 
 STAR_SCALING = {
@@ -99,7 +99,7 @@ UNIT_CATALOG = {
         'tag': '空袭吸血', 'blurb': '飞行越障切入后排，攻击附带吸血续航。',
     },
     'Y6': {
-        'serial': 'Y6', 'name': '雪人v2', 'cost': 2, 'role': 'ranged',
+        'serial': 'Y6', 'name': '雪人', 'cost': 2, 'role': 'ranged',
         'traits': ['破空', '秘愈'], 'range': 7,
         'tag': '霜雪控场', 'blurb': '远程雪球与雪带限制敌方走位与节奏。',
     },
@@ -149,6 +149,36 @@ UNIT_CATALOG = {
         'tag': '血律宗师', 'blurb': '庞大魔力与血池体系加持的多面手主C。',
     },
 }
+
+UNIT_TOKEN_DEFAULTS = {
+    'Y1': ('flame', '#db775a'),
+    'Y2': ('meteor', '#b07958'),
+    'Y3': ('horn', '#5b9b91'),
+    'Y4': ('microphone', '#c88c45'),
+    'Y5': ('bat', '#c56785'),
+    'Y6': ('snow', '#6694bc'),
+    'Y7': ('flower', '#9a80b1'),
+    'Y8': ('cake', '#cb8b9e'),
+    'Y9': ('branch', '#658878'),
+    'Y10': ('hummingbird', '#c29b52'),
+    'Y11': ('scythe', '#688ab6'),
+    'Y12': ('portal', '#847fc0'),
+    'Y13': ('giant', '#a07b59'),
+    'Y14': ('cartridge', '#ab7fbd'),
+    'Y15': ('cloak', '#c26742'),
+    'Y16': ('quill', '#6686b6'),
+    'Y17': ('bloodmoon', '#ae566e'),
+}
+
+# Apply the mode-specific name on a copy of the shared character definition.
+CHAR_DATA_BY_SERIAL['Y6'] = dict(CHAR_DATA_BY_SERIAL['Y6'], name=UNIT_CATALOG['Y6']['name'])
+
+for _s, _meta in UNIT_CATALOG.items():
+    _em, _ac = UNIT_TOKEN_DEFAULTS.get(_s, ('star', '#847fc0'))
+    _meta['emblem'] = _em
+    _meta['accent'] = _ac
+    _meta['emblem_url'] = f'/ui/icons/{_em}.svg'
+    _meta['default_token_url'] = f'/ui/portraits/{_s}-avatar.webp'
 
 SYNERGIES = {
     '炎域': {
@@ -222,7 +252,7 @@ AUGMENTS = [
     {'id': 'aug_econ', 'name': '星辉投资', 'tier': '经济', 'desc': '立即获得 8 金币，且你的利息上限由 +5 提升至 +7。', 'instant_gold': 8, 'max_interest': 7},
     {'id': 'aug_xp', 'name': '秘典研习', 'tier': '经验', 'desc': '立即获得 6 点经验与 2 次免费商店刷新。', 'instant_xp': 6, 'free_rerolls': 2},
     {'id': 'aug_reroll', 'name': '黄金牌库', 'tier': '商店', 'desc': '立即获得 3 次免费刷新与 3 金币，刷新时更易搜到高费棋子。', 'instant_gold': 3, 'free_rerolls': 3},
-    {'id': 'aug_pop', 'name': '星核扩容', 'tier': '人口', 'desc': '你的最大上阵人口永久 +1（可突破 6 人口上限）。', 'pop_bonus': 1},
+    {'id': 'aug_pop', 'name': '星核扩容', 'tier': '人口', 'desc': '你的最大上阵人口永久 +1（6 级时最多可上阵 8 人）。', 'pop_bonus': 1},
     {'id': 'aug_bastion', 'name': '钢铁前线', 'tier': '防御', 'desc': '全队前排或掩体格减伤 +18%，开局获得 6 点护盾。', 'front_cover_dr_pct': 18, 'team_shield': 6},
     {'id': 'aug_execute', 'name': '绝地斩魄', 'tier': '输出', 'desc': '全队对体力低于 50% 的敌人伤害 +20%，低于 30% 时再 +20%。', 'low_hp_bonuses': [(0.5, 20), (0.3, 20)]},
     {'id': 'aug_blood', 'name': '血月盛宴', 'tier': '续航', 'desc': '所有友方单位获得 16% 全能汲取，溢出血量转为护盾。', 'bloodmoon_leech_pct': 16},
@@ -708,6 +738,10 @@ def build_unit_wiki(serial):
         'range': meta['range'],
         'tag': meta['tag'],
         'blurb': meta['blurb'],
+        'emblem': meta['emblem'],
+        'accent': meta['accent'],
+        'emblem_url': meta['emblem_url'],
+        'default_token_url': meta['default_token_url'],
         'mov': mov,
         'tactical_move': tactical_move,
         'main_actions': main_actions,
@@ -741,4 +775,13 @@ def catalog_summary():
         'pve_waves': PVE_WAVES,
         'star_scaling': STAR_SCALING,
         'range_overrides': AUTOCHESS_RANGE_OVERRIDES,
+        'available_emblems': [
+            {
+                'emblem': em,
+                'url': f'/ui/icons/{em}.svg',
+                'label': UNIT_CATALOG[s]['name'],
+                'serial': s,
+            }
+            for s, (em, _) in sorted(UNIT_TOKEN_DEFAULTS.items(), key=lambda kv: int(kv[0][1:]))
+        ],
     }

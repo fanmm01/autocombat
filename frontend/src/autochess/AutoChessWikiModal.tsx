@@ -432,7 +432,7 @@ export function AutoChessWikiModal({
               <Search size={14} />
               <input
                 aria-label="搜索星序祝福"
-                placeholder="筛选祝福名称、定位或效果（第 4 / 8 回合三选一）…"
+                placeholder="筛选祝福名称、定位或效果（第 4、8、12 回合三选一）…"
                 value={augFilter}
                 onChange={e => setAugFilter(e.target.value)}
               />
@@ -478,7 +478,7 @@ export function AutoChessWikiModal({
 
             <section className="ac-wiki-rule-card">
               <h4><Sparkles size={15} /> 3. 经济、升星、刷新概率与加时</h4>
-              <p>每 10 金币每轮 +1 利息（基础上限 +5G，星辉投资可提至 +7G），连胜/连败达 2/3/5+ 轮分别额外 +1/+2/+3 金币。同类同星 3 枚自动合成 1★ → 2★ → 3★；第 4、第 8 回合触发星序祝福 3 选 1；1v1 第 12 轮 / 多人第 15 轮起进入加时决战（每轮伤递增 +15%、治疗最低降至 25%）。</p>
+              <p>每 10 金币每轮 +1 利息（基础上限 +5G，星辉投资可提至 +7G），连胜/连败达 2/3/5+ 轮分别额外 +1/+2/+3 金币。同类同星 3 枚自动合成 1★ → 2★ → 3★；第 4、8、12 回合触发星序祝福 3 选 1；1v1 第 12 轮 / 多人第 15 轮起进入加时决战（每轮伤递增 +15%、治疗最低降至 25%）。</p>
               <div className="ac-wiki-table-wrap">
                 <table className="ac-wiki-table">
                   <thead>
