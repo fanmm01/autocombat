@@ -426,9 +426,12 @@ def register_ui(app, ns):
     @bp.get('/ui/')
     @bp.get('/ui/<path:path>')
     def serve(path='index.html'):
-        if path.startswith(('portraits/', 'icons/')):
-            return send_from_directory(ROOT / 'frontend' / 'public', path)
         dist = ROOT / 'frontend' / 'dist'
+        if path.startswith(('portraits/', 'icons/')):
+            try:
+                return send_from_directory(ROOT / 'frontend' / 'public', path)
+            except NotFound:
+                return send_from_directory(dist, path)
         if not (dist / 'index.html').exists():
             return Response('请先在 frontend 目录运行 npm install 和 npm run build。', status=503, content_type='text/plain; charset=utf-8')
         return send_from_directory(dist, path if (dist / path).is_file() else 'index.html')

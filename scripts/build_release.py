@@ -90,6 +90,9 @@ assert c.get('/api/ui/catalog').status_code == 200
 r = c.get('/ui/')
 assert r.status_code == 200 and b'<!doctype html>' in r.data
 r.close()
+with c.get('/ui/icons/flame.svg') as icon:
+    assert icon.status_code == 200 and icon.mimetype == 'image/svg+xml'
+    assert b'<svg' in icon.data
 assert b._PIL_AVAILABLE and b._FONT_PATH
 c.post('/api/ui/session', json={'name':'release-smoke'})
 assert c.get('/api/ui/allowlist').get_json()['allowlist'] == ['198.51.100.7']
