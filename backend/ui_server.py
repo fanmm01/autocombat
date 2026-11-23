@@ -864,6 +864,9 @@ def register_ui(app, ns):
     from ui_story import Stories
     stories = Stories(bp, locals(), store, management.runtime)
     app.extensions['combat_ui']['stories'] = stories
+    from ui_autochess import AutoChessUI
+    autochess = AutoChessUI(bp, locals(), store)
+    app.extensions['combat_ui']['autochess'] = autochess
     from ui_utilities import register_utilities
     register_utilities(bp, locals())
     app.register_blueprint(bp)

@@ -24,6 +24,7 @@ from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from collections import defaultdict
+from ai_tactics import decide_tactical_action
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
@@ -312,6 +313,9 @@ class AIController:
         """Use Q-table if available, fall back to rule-based."""
         if engine._get_my_actions(user_id).get('主动', 0) <= 0:
             return '.i end'
+        if getattr(engine, 'autochess_mode', False):
+            cmd, _reason = decide_tactical_action(engine, user_id)
+            return cmd
         cmd = self._decide_action(engine, user_id)
         failed = getattr(engine, '_ai_failed_commands', set())
         if cmd not in failed:

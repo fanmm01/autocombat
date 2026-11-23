@@ -13,6 +13,7 @@ Uses sys.modules trick to redirect battle_engine's lazy imports to characters_da
 import sys, os, json, uuid, threading, random, math, time, importlib, re
 from datetime import datetime
 from combat_settings import value as _battle_setting, pinned as _settings_pinned
+from ai_tactics import decide_tactical_action, choose_tactical_reaction
 
 # Ensure we can import from the autocombat directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1426,6 +1427,13 @@ def _resolve_ai_reaction_choice(engine, def_uid, can_dodge=True, can_counter=Tru
             return _random_rc.choices(choices_list, weights=weights_list, k=1)[0]
         # Fall through if no valid choices in override
 
+    if getattr(engine, 'autochess_mode', False):
+        return choose_tactical_reaction(
+            engine, None, def_uid,
+            can_dodge=can_dodge, can_counter=can_counter,
+            can_block=can_block, atk_rank=attack_rank,
+        )
+
     # Default: random between dodge and counter (existing behavior)
     opts = []
     if can_dodge: opts.append('dodge')
@@ -1460,6 +1468,10 @@ def _ai_decide_action(engine, uid: str, Q=None):
             if cmd is not None:
                 return (cmd, ak)
             # cmd is None → all actions unavailable this turn, fall through to Q-table
+
+    if getattr(engine, 'autochess_mode', False):
+        cmd, reason = decide_tactical_action(engine, uid)
+        return (cmd, f'AUTOCHESS:{reason}' if reason else 'AUTOCHESS')
 
     if not char or not spells:
         return ('.i end', None)
@@ -2216,7 +2228,10 @@ def _run_ai_turns(engine, player_uid: str = None, Q=None, start_round: int = 0,
                     parts = sub.split()
                     if len(parts) >= 2:
                         target_name = ' '.join(parts[1:])
-                        target_entry = next((e for e in il if e.get('name', '') == target_name), None)
+                        target_entry = next(
+                            (e for e in il if e.get('name', '') == target_name or e.get('userId') == target_name),
+                            None,
+                        )
                         if target_entry:
                             result_text, success = engine._eat_cake(uid, target_entry['userId'])
                             outputs.append(result_text)
@@ -2270,7 +2285,11 @@ def _run_ai_turns(engine, player_uid: str = None, Q=None, start_round: int = 0,
                     try:
                         # Resolve target via strategy (Q-table) or fallback to nearest
                         target_id = enemies[0]['userId']
-                        if action_key:
+                        if getattr(engine, 'autochess_mode', False):
+                            pt = engine._consume_autochess_pending_target(uid, allow_ally=False, allow_enemy=True)
+                            if pt and any(e['userId'] == pt for e in enemies):
+                                target_id = pt
+                        if action_key and not action_key.startswith('AUTOCHESS'):
                             # Check for .setaiact override action with target spec
                             if action_key.startswith('OVERRIDE:'):
                                 ov_action = action_key.split(':', 1)[1]  # e.g. "s0 RP", "s0 Y1", "s0"
@@ -2413,7 +2432,7 @@ def _run_ai_turns(engine, player_uid: str = None, Q=None, start_round: int = 0,
                                         break
                         else:
                             target_id = engine._smart_target(uid, spell)
-                    elif action_key:
+                    elif action_key and not action_key.startswith('AUTOCHESS'):
                         base_act_sk, target_strat_sk = parse_action(action_key)
                         if base_act_sk.startswith('SKILL_'):
                             enemies_sk = engine._enemy_target_entries(uid)

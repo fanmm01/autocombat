@@ -8,8 +8,11 @@ BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 FILES_IN_ORDER = [
     'skill_identity.py',
     'characters_data.py',
+    'grid_nav.py',
+    'arena_presets.py',
     'battle_engine.py',
     'ai_trainer.py',
+    'ai_tactics.py',
     'team_tables.py',
     'ai_battle.py',
     'battle_http_server.py',
@@ -17,8 +20,9 @@ FILES_IN_ORDER = [
 
 INTERNAL_MODULES = {
     'skill_identity',
+    'grid_nav', 'arena_presets',
     'battle_engine', 'characters_data', 'characters_data_pvp',
-    'ai_trainer', 'ai_trainer_pvp', 'ai_battle', 'team_tables',
+    'ai_trainer', 'ai_trainer_pvp', 'ai_tactics', 'ai_battle', 'team_tables',
 }
 
 def is_internal_import(line):

@@ -469,6 +469,71 @@ def print_contribution(contrib):
 
 
 def mode_single(argv, verbose=False):
+    autochess = '--autochess' in argv
+    arena_preset = 'autochess_standard'
+    clean_argv = []
+    skip_next = False
+    for idx, arg in enumerate(argv):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == '--autochess':
+            continue
+        if arg == '--arena' and idx + 1 < len(argv):
+            arena_preset = argv[idx + 1]
+            skip_next = True
+            continue
+        clean_argv.append(arg)
+    argv = clean_argv
+
+    if autochess:
+        team_a, team_b, N, _map_size, seed, _season = parse_single_args(argv)
+        if verbose:
+            N = 1
+        random.seed(seed)
+        import copy as _copy
+        from ai_battle import AIController, BattleEngine, DisplayLevel
+        from ai_tactics import plan_formation
+        from arena_presets import ARENA_PRESETS, build_arena_map
+        from autochess_catalog import CHAR_DATA_BY_SERIAL
+        from characters_data import load_character_to_engine
+
+        if arena_preset not in ARENA_PRESETS:
+            print(f'未知自走棋战场: {arena_preset}，可选: {sorted(ARENA_PRESETS)}', file=sys.stderr)
+            sys.exit(1)
+        md = build_arena_map(arena_preset)
+        wins_a = 0
+        total_rounds = 0
+        timeouts = 0
+        for g in range(N):
+            eng = BattleEngine(display_level=DisplayLevel.DEBUG if verbose else DisplayLevel.WINLOSS, delay=0, quiet=not verbose, max_rounds=22)
+            ai_map = {}
+            y_uids, x_uids = [], []
+            for i, cid in enumerate(team_a):
+                uid = f'Y{i}_{cid}'
+                cd = _copy.deepcopy(CHAR_DATA_BY_SERIAL[cid])
+                load_character_to_engine(eng, cd, uid)
+                y_uids.append(uid)
+                ai_map[uid] = AIController(uid, cd, 'Y')
+            for i, cid in enumerate(team_b):
+                uid = f'X{i}_{cid}'
+                cd = _copy.deepcopy(CHAR_DATA_BY_SERIAL[cid])
+                load_character_to_engine(eng, cd, uid)
+                x_uids.append(uid)
+                ai_map[uid] = AIController(uid, cd, 'X')
+            coords = {}
+            coords.update(plan_formation('Y', [{'uid': u, 'char': eng.characters[u]} for u in y_uids], md))
+            coords.update(plan_formation('X', [{'uid': u, 'char': eng.characters[u]} for u in x_uids], md))
+            eng.setup_battle(y_uids, x_uids, arena_preset=arena_preset, autochess_mode=True, initial_coords=coords)
+            r = eng.run_battle(ai_map)
+            if r.get('winner') == 'Y':
+                wins_a += 1
+            total_rounds += int(r.get('rounds', 0) or 0)
+            if r.get('timeout'):
+                timeouts += 1
+        print(f'[自走棋模拟] {"+".join(team_a)} vs {"+".join(team_b)} ({N}场 [{arena_preset}]): Y胜={wins_a}/{N} ({wins_a/N*100:.1f}%), 平均轮={total_rounds/N:.1f}, 超时={timeouts}')
+        return
+
     team_a, team_b, N, map_size, seed, season_status = parse_single_args(argv)
     if verbose:
         N = 1  # Force single battle in verbose mode

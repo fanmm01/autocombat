@@ -17,6 +17,18 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 import threading as _threading
 
+from grid_nav import (
+    grid_dist,
+    terrain_type,
+    is_footprint_valid,
+    compute_navigation,
+    reconstruct_path,
+    find_attack_position,
+    find_free_coord_near,
+    compute_displacement,
+)
+from arena_presets import build_arena_map, row_band
+
 # ═══════════════════════════════════════════════════════════════
 #  Debug logging to file (shared with battle_http_server.py)
 # ═══════════════════════════════════════════════════════════════
@@ -681,8 +693,32 @@ def action_committed(result):
 
 
 class CombatEngine:
-    def _get_attack_range(self, spell_effect=None, skill_name=None):
-        return _get_attack_range(spell_effect, skill_name, getattr(self, '_range_override_snapshot', None))
+    def _get_attack_range(self, spell_effect=None, skill_name=None, spell_name=None, uid=None):
+        if not getattr(self, 'autochess_mode', False):
+            return _get_attack_range(spell_effect, skill_name, getattr(self, '_range_override_snapshot', None))
+        overrides = getattr(self, '_autochess_range_overrides', None) or {}
+        rng = None
+        if uid is not None:
+            char = self.get_char(uid)
+            serial = getattr(char, 'serial', '') if char else ''
+            if serial and spell_name and (serial, spell_name) in overrides:
+                rng = overrides[(serial, spell_name)]
+            elif serial and skill_name and (serial, skill_name) in overrides:
+                rng = overrides[(serial, skill_name)]
+        if rng is None and spell_name and spell_name in overrides:
+            rng = overrides[spell_name]
+        if rng is None and skill_name and skill_name in overrides:
+            rng = overrides[skill_name]
+        if rng is None:
+            rng = _get_attack_range(spell_effect, skill_name, 0)
+            if rng >= 90 and not (spell_effect and spell_effect.get('全局射程')):
+                rng = 8 if spell_effect else 6
+        if uid is not None:
+            base = self._resolve_uid(uid)
+            bonus = getattr(self, '_autochess_range_bonus', {}).get(base, 0)
+            if bonus and rng > 2:
+                rng += bonus
+        return max(1, int(rng))
 
     def _get_summon_template(self, name):
         registry = getattr(self, '_summon_templates_snapshot', None)
@@ -722,6 +758,417 @@ class CombatEngine:
         if damage < rules['middle_below']:
             return rules['middle_damage']
         return int(damage * rules['high_multiplier'])
+
+    def _stat_bucket(self, uid):
+        base = self._resolve_uid(uid)
+        stats = getattr(self, '_battle_stats', None)
+        if stats is None:
+            stats = {}
+            self._battle_stats = stats
+        if base not in stats:
+            stats[base] = {
+                'damage_dealt': 0, 'damage_taken': 0, 'healing_done': 0,
+                'shield_absorbed': 0, 'kills': 0, 'tiles_moved': 0,
+            }
+        return stats[base]
+
+    def _autochess_cd_reduction(self, uid):
+        if not getattr(self, 'autochess_mode', False):
+            return 0
+        base = self._resolve_uid(uid)
+        um = (getattr(self, '_autochess_unit_mods', {}) or {}).get(base, {})
+        tm = (getattr(self, '_autochess_team_mods', {}) or {}).get(self._battle_team_of(base), {})
+        u_val = um.get('cd_reduction', um.get('cd_reduce', 0))
+        t_val = tm.get('cd_reduction', tm.get('cd_reduce', 0))
+        return int(u_val or 0) + int(t_val or 0)
+
+    def _autochess_effective_cd(self, uid, base_cd):
+        cd = int(base_cd or 0)
+        if cd <= 0 or not getattr(self, 'autochess_mode', False):
+            return cd
+        red = self._autochess_cd_reduction(uid)
+        return max(1, cd - red) if red > 0 else cd
+
+    def _autochess_summon_hp_mult(self, caster_id):
+        if not getattr(self, 'autochess_mode', False):
+            return 1.0
+        base = self._resolve_uid(caster_id)
+        um = (getattr(self, '_autochess_unit_mods', {}) or {}).get(base, {})
+        tm = (getattr(self, '_autochess_team_mods', {}) or {}).get(self._battle_team_of(base), {})
+        return float(um.get('summon_hp_mult', 1.0)) * float(tm.get('summon_hp_mult', 1.0))
+
+    def _autochess_summon_skill_bonus(self, caster_id):
+        if not getattr(self, 'autochess_mode', False):
+            return 0
+        base = self._resolve_uid(caster_id)
+        um = (getattr(self, '_autochess_unit_mods', {}) or {}).get(base, {})
+        tm = (getattr(self, '_autochess_team_mods', {}) or {}).get(self._battle_team_of(base), {})
+        return int(um.get('summon_skill_bonus', 0) or 0) + int(tm.get('summon_skill_bonus', 0) or 0)
+
+    def _autochess_zone_radius_bonus(self, caster_id):
+        if not getattr(self, 'autochess_mode', False):
+            return 0
+        base = self._resolve_uid(caster_id)
+        um = (getattr(self, '_autochess_unit_mods', {}) or {}).get(base, {})
+        tm = (getattr(self, '_autochess_team_mods', {}) or {}).get(self._battle_team_of(base), {})
+        return int(um.get('zone_radius_bonus', 0) or 0) + int(tm.get('zone_radius_bonus', 0) or 0)
+
+    def _mark_flying_dive(self, uid, atk_range):
+        if not getattr(self, 'autochess_mode', False) or atk_range is None or atk_range > 2:
+            return
+        if self._is_flying(uid):
+            dive = getattr(self, '_flying_dive_until', None)
+            if dive is None:
+                dive = {}
+                self._flying_dive_until = dive
+            dive[self._resolve_uid(uid)] = True
+
+    def _clear_flying_dive(self, uid):
+        dive = getattr(self, '_flying_dive_until', None)
+        if dive:
+            dive.pop(self._resolve_uid(uid), None)
+
+    def _apply_autochess_damage_mods(self, attacker_uid, defender_uid, dmg_val):
+        """Apply overtime, terrain cover, and situational Auto-Chess synergy/augment mods."""
+        if dmg_val <= 0 or not getattr(self, 'autochess_mode', False):
+            return max(0, int(dmg_val))
+        res = int(dmg_val)
+        il = self._get_initiative()
+        md = self._get_map() or {}
+        rnd = int((self._get_state() or {}).get('round', 1) or 1)
+        ot = int(getattr(self, 'overtime_start_round', 0) or 0)
+        if ot > 0 and rnd >= ot:
+            res = int(res * (1.0 + 0.15 * (rnd - ot + 1)))
+        atk_base = self._resolve_uid(attacker_uid) if attacker_uid else ''
+        def_base = self._resolve_uid(defender_uid) if defender_uid else ''
+        atk_entry = self._unit_il_entry(atk_base, il) if atk_base else None
+        def_entry = self._unit_il_entry(def_base, il) if def_base else None
+        atk_coord = (atk_entry or {}).get('coord', '')
+        def_coord = (def_entry or {}).get('coord', '')
+        def_terrain = terrain_type(md, def_coord) if def_coord else ''
+        if def_terrain == 'cover' and atk_coord and def_coord and grid_dist(atk_coord, def_coord) >= 3:
+            res = max(1, int(res * 0.85))
+        umods = getattr(self, '_autochess_unit_mods', {}) or {}
+        if atk_base and atk_base in umods and def_base:
+            am = umods[atk_base]
+            dmg_pct = float(am.get('dmg_pct', 0) or 0)
+            if dmg_pct:
+                res = max(1, int(res * (1.0 + dmg_pct / 100.0)))
+            flat_dmg = int(am.get('flat_dmg', 0) or 0)
+            if flat_dmg:
+                res = max(1, res + flat_dmg)
+            # Low-HP execution bonus: list of (threshold_ratio, pct_bonus)
+            low_bonuses = am.get('low_hp_bonuses') or ()
+            if low_bonuses:
+                d_hp = self._get_combat_hp(def_base) or 0
+                d_char = self.get_char(def_base)
+                d_max = (d_char.get_attr('体力上限', d_hp) if d_char else d_hp) or max(d_hp, 1)
+                ratio = d_hp / max(1, d_max)
+                pct = sum(b for thr, b in low_bonuses if ratio < thr)
+                if pct:
+                    res = max(1, int(res * (1.0 + pct / 100.0)))
+        if def_base and def_base in umods:
+            dm = umods[def_base]
+            front_cover_pct = int(dm.get('front_cover_dr_pct', 0) or 0)
+            if front_cover_pct and def_coord:
+                def_team = (def_entry or {}).get('team', 'Y')
+                if def_terrain == 'cover' or row_band(md, def_team, def_coord) == 'front':
+                    res = max(1, int(res * max(0.2, 1.0 - front_cover_pct / 100.0)))
+            flat_dr = int(dm.get('flat_dr', 0) or 0)
+            if flat_dr and res > 0:
+                res = max(1, res - flat_dr)
+        return max(0, res)
+
+    def _apply_autochess_heal_mods(self, amount):
+        if amount <= 0 or not getattr(self, 'autochess_mode', False):
+            return amount
+        rnd = int((self._get_state() or {}).get('round', 1) or 1)
+        ot = int(getattr(self, 'overtime_start_round', 0) or 0)
+        if ot > 0 and rnd >= ot:
+            mult = max(0.25, 1.0 - 0.15 * (rnd - ot + 1))
+            return max(1, int(amount * mult))
+        return amount
+
+    def _apply_autochess_post_hit(self, attacker_uid, defender_uid, actual_lost):
+        """Post-damage Auto-Chess trait hooks (e.g., Bloodmoon damage-to-heal/shield)."""
+        if actual_lost <= 0 or not attacker_uid or not getattr(self, 'autochess_mode', False):
+            return
+        atk_base = self._resolve_uid(attacker_uid)
+        def_base = self._resolve_uid(defender_uid)
+        if atk_base == def_base:
+            return
+        um = (getattr(self, '_autochess_unit_mods', {}) or {}).get(atk_base)
+        if not um:
+            return
+        conv_pct = int(um.get('bloodmoon_leech_pct', 0) or 0)
+        if conv_pct > 0 and (self._get_combat_hp(atk_base) or 0) > 0:
+            amt = max(1, int(actual_lost * conv_pct / 100.0))
+            char = self.get_char(atk_base)
+            cur_hp = self._get_combat_hp(atk_base) or 0
+            max_hp = char.get_attr('体力上限', cur_hp) if char else cur_hp
+            heal_part = min(amt, max(0, max_hp - cur_hp))
+            shield_part = amt - heal_part
+            if heal_part > 0:
+                self._apply_hp_heal_amount(atk_base, heal_part, allow_dying=False, healer_uid=atk_base)
+            if shield_part > 0:
+                effs = self._get_effects()
+                effs.append({
+                    'type': 'shield', 'value': shield_part, 'remainingRounds': 2,
+                    'sourceUserId': atk_base, 'targetUserId': atk_base,
+                    'spellName': '血月汲盾', 'spellIndex': 0, 'persistent': 0,
+                })
+                self._set_effects(effs)
+
+    def _settle_autochess_round_start(self):
+        """Settle terrain leyline MP regen and round-start Auto-Chess team/unit regen."""
+        if not getattr(self, 'autochess_mode', False):
+            return
+        md = self._get_map() or {}
+        il = self._get_initiative()
+        seen = set()
+        tmods = getattr(self, '_autochess_team_mods', {}) or {}
+        rnd = int((self._get_state() or {}).get('round', 1) or 1)
+        ot = int(getattr(self, 'overtime_start_round', 0) or 0)
+        if ot > 0 and rnd == ot and not getattr(self, 'fast_mode', False):
+            self._pending_battle_events.append(f'⚡ 进入加时决战（第{rnd}轮起）：全场伤害与治疗修正生效！')
+        for entry in il:
+            base = self._resolve_uid(entry.get('userId', ''))
+            if not base or base in seen:
+                continue
+            seen.add(base)
+            if (self._get_combat_hp(base) or 0) <= 0:
+                continue
+            coord = entry.get('coord', '')
+            mp_gain = 0
+            if coord and terrain_type(md, coord) == 'leyline':
+                mp_gain += 1
+            tm = tmods.get(entry.get('team', 'Y'), {})
+            mp_gain += int(tm.get('round_mp_regen', 0) or 0)
+            if mp_gain > 0:
+                gained = self._restore_resource(base, mp_gain, 'mp')
+                if gained > 0 and not getattr(self, 'fast_mode', False):
+                    self._pending_battle_events.append(f'  {entry.get("name", base)} 魔能涌动 +{gained} MP')
+
+    def _choose_autochess_reaction(self, atk_uid, def_uid, can_dodge, can_counter, can_block,
+                                   atk_rank, dmg_dice, restim_mode=None):
+        """Choose EV-optimal reaction ('dodge', 'counter', 'block', or None) in autochess_mode."""
+        avail = []
+        if can_dodge:
+            avail.append('dodge')
+        if can_counter:
+            avail.append('counter')
+        if can_block:
+            avail.append('block')
+        if not avail:
+            return None
+        dchar = self.get_char(def_uid)
+        dodge_val = self._apply_buff_skill_mod(def_uid, dchar.get_attr('闪避', 25), '闪避')
+        bmn, bmv = dchar.get_best_melee()
+        bmv = self._apply_buff_skill_mod(def_uid, bmv, bmn)
+        block_name, block_val = self._get_block_skill(def_uid)
+        if block_name:
+            block_val = self._apply_buff_skill_mod(def_uid, block_val, block_name)
+        def_entry = self._unit_il_entry(def_uid, self._get_initiative()) or {}
+        block_hp = def_entry.get('shield_block_hp', 0)
+        redir = self._get_block_redirect_target(def_uid)
+        if redir:
+            r_entry = self._unit_il_entry(redir, self._get_initiative()) or {}
+            block_hp = max(block_hp, r_entry.get('shield_block_hp', 0) + (self._get_combat_hp(redir) or 0))
+        cur_hp = max(1, self._get_combat_hp(def_uid) or 10)
+        exp_dmg = max(1.0, float(avg_damage(dmg_dice) or 3.5))
+        threat = min(2.0, exp_dmg / cur_hp)
+        if restim_mode is None:
+            restim_mode = getattr(self, 'restim_mode', 0)
+        # Never inspect atk_rank when hidden-roll mode (restim_mode == 1) is enabled.
+        rank_hint = 1 if restim_mode == 1 else int(atk_rank or 1)
+        scores = {}
+        if 'dodge' in avail:
+            p_succ = max(0.05, min(0.95, dodge_val / 100.0))
+            scores['dodge'] = p_succ * (40.0 + 35.0 * threat) - (1.0 - p_succ) * 8.0
+        if 'counter' in avail:
+            p_succ = max(0.05, min(0.95, bmv / 100.0))
+            cdmg = self._counter_damage_dice(def_uid, bmn)
+            c_exp = max(1.0, float(avg_damage(cdmg) or 3.5))
+            survive_bonus = 18.0 if cur_hp > exp_dmg * 1.3 else -12.0 * threat
+            rank_adj = 12.0 if rank_hint <= 1 else (-14.0 if rank_hint >= 3 else 0.0)
+            scores['counter'] = p_succ * (30.0 + c_exp * 2.2) + survive_bonus + rank_adj
+        if 'block' in avail:
+            p_succ = max(0.05, min(0.95, (block_val or 50) / 100.0))
+            absorb_ratio = min(1.0, block_hp / exp_dmg) if block_hp > 0 else 0.3
+            scores['block'] = p_succ * (38.0 * absorb_ratio + 28.0 * threat) + (8.0 if rank_hint >= 2 else 0.0)
+        return max(scores, key=scores.get)
+
+    def _can_reach_attack_range(self, uid, target_id, atk_range):
+        """Read-only spatial reachability check without mutating board coordinates."""
+        il = self._get_initiative()
+        my_entry = self._unit_il_entry(uid, il)
+        t_entry = self._unit_il_entry(target_id, il)
+        if not my_entry or not t_entry:
+            return False
+        my_coord = my_entry.get('coord', '')
+        t_coord = t_entry.get('coord', '')
+        mp, tp = parse_coord(my_coord), parse_coord(t_coord)
+        if not mp or not tp:
+            return False
+        if max(abs(mp[0] - tp[0]), abs(mp[1] - tp[1])) <= atk_range:
+            return True
+        if not self._can_move(uid):
+            return False
+        if not getattr(self, 'autochess_mode', False):
+            return True
+        budget = self._remaining_move_budget(uid)
+        if budget <= 0:
+            return False
+        md = self._get_map()
+        base = self._resolve_uid(uid)
+        group = self._get_summon_group(uid)
+        map_uid = group.get('representative_uid', uid) if group else base
+        reached, _, _, _ = find_attack_position(
+            md, my_coord, t_coord, atk_range, budget,
+            flying=self._is_flying(uid),
+            team=my_entry.get('team', 'Y'),
+            unit_teams=self._unit_teams_map(),
+            ignore_uids={uid, base, map_uid},
+            size=self._unit_size(uid),
+            hazard_coords=self._unit_hazard_coords(uid),
+            preferred_coords=self._unit_preferred_coords(uid, md),
+        )
+        return bool(reached)
+
+    def _setup_battle_board(self, team_a, team_b, map_size=None, arena_preset=None,
+                            autochess_mode=None, overtime_start_round=None,
+                            initial_coords=None, unit_stances=None, track_stats=False,
+                            group_prefix='battle'):
+        """Initialize shared battle state, arena map, and team placement."""
+        if autochess_mode is not None:
+            self.autochess_mode = bool(autochess_mode)
+        if arena_preset is not None:
+            self.arena_preset = arena_preset
+        if overtime_start_round is not None:
+            self.overtime_start_round = int(overtime_start_round)
+        elif self.autochess_mode and not getattr(self, 'overtime_start_round', 0):
+            self.overtime_start_round = 12 if (len(team_a) == 1 and len(team_b) == 1) else 15
+        if unit_stances is not None:
+            self._unit_stances = dict(unit_stances)
+        self._track_stats = bool(track_stats or self.autochess_mode)
+        self._battle_stats = {}
+        self._flying_dive_until = {}
+        self._autochess_pending_target = None
+        self._last_ai_reason = ''
+        if self.autochess_mode and not getattr(self, '_autochess_range_overrides', None):
+            self._autochess_range_overrides = {
+                '火球术': 7,
+                '星闪攻击': 8,
+                '发送雪球': 7,
+                '制造雪带': 5,
+                '火焰附魔': 2,
+                '万众瞩目的乌托邦': 8,
+                '月光王座全额率输出': 12,
+            }
+        if map_size is None:
+            from combat_settings import value as battle_setting
+            map_size = battle_setting("DEFAULT_MAP_SIZE")
+        self._pending_battle_events = []
+        self._zone_tick_results = []
+        self._inspiration_pending = set()
+        self._inspiration_settled = set()
+        self._ai_failed_commands = set()
+        gid_num = random.randint(10000, 99999) if group_prefix == 'fast' else random.randint(1000, 9999)
+        self.group_id = f"{group_prefix}_{gid_num}"
+        self.set_json(f"frost_round_{self.group_id}", None)
+        # ── 新战斗重置召唤账本 / 分组 / unique 记录（必须在被动施放之前）──
+        self._summon_groups = {}
+        self._summon_members = {}
+        self._summon_total_spawned = {}
+        self._revive_use_ledger = set()
+        self._summoned_once = {}
+        self._summoned_templates = {}
+        self._graveyard = {}
+        self._reset_blood_battle_state(team_a + team_b)
+        if arena_preset or self.autochess_mode:
+            map_data = build_arena_map(arena_preset or getattr(self, 'arena_preset', None) or 'autochess_standard')
+            w, h = map_data['width'], map_data['height']
+            self._set_map(map_data)
+        else:
+            w, h = map(int, map_size.split("x"))
+            self._set_map({"width": w, "height": h, "entryRow": math.ceil(h / 2), "obstacles": {}, "occupants": {}})
+        init_list = []
+        map_data = self._get_map()
+        coords_map = dict(initial_coords or {})
+
+        def _default_coord(team_code, idx, count, uid):
+            c = coords_map.get(uid)
+            if c and parse_coord(c) and c not in map_data['occupants'] and terrain_type(map_data, c) != 'wall':
+                return c
+            if arena_preset or self.autochess_mode:
+                cols = sorted((map_data.get('deploy_cols') or {}).get(team_code) or ([1] if team_code == 'Y' else [w - 2]))
+                anchor_col = cols[-1] if team_code == 'Y' else cols[0]
+                row = max(0, min(h - 1, math.ceil(h / 2) + idx - count // 2))
+                cand = format_coord(anchor_col, row)
+                if cand and cand not in map_data['occupants'] and terrain_type(map_data, cand) != 'wall':
+                    return cand
+                for col in (reversed(cols) if team_code == 'Y' else cols):
+                    for r in range(h):
+                        alt = format_coord(col, r)
+                        if alt and alt not in map_data['occupants'] and terrain_type(map_data, alt) != 'wall':
+                            return alt
+            row = min(h - 1, math.ceil(h / 2) + idx - count // 2)
+            return format_coord(1 if team_code == 'Y' else w - 2, row)
+
+        for team_code, members in (('Y', team_a), ('X', team_b)):
+            for i, uid in enumerate(members):
+                char = self.get_char(uid)
+                coord = _default_coord(team_code, i, len(members), uid)
+                dex_val = char.get_attr("敏捷", 50)
+                init_roll, _ = roll_d100("")
+                init_rank = success_rank(init_roll, dex_val)
+                init_list.append({
+                    "userId": uid, "baseUserId": uid, "name": char.name, "actionIdx": 0,
+                    "team": team_code, "dex": dex_val, "initRoll": init_roll, "initRank": init_rank, "coord": coord,
+                })
+                map_data["occupants"][coord] = uid
+
+        self._set_map(map_data)
+        init_list.sort(key=lambda e: (-e["initRank"], -e["dex"], e["initRoll"]))
+        self._set_initiative(init_list)
+        self._team_roster = [(uid, 'Y') for uid in team_a] + [(uid, 'X') for uid in team_b]
+        all_chars = team_a + team_b
+        for uid in all_chars:
+            char = self.get_char(uid)
+            self._init_combat_hp(uid, char.get_attr("体力", 10))
+        return all_chars, map_data, init_list
+
+    def _set_autochess_pending_target(self, caster_id, target_id):
+        if not getattr(self, 'autochess_mode', False) or not target_id:
+            self._autochess_pending_target = None
+            return
+        self._autochess_pending_target = {
+            'caster': self._resolve_uid(caster_id),
+            'target': target_id,
+        }
+
+    def _consume_autochess_pending_target(self, caster_id, allow_ally=False, allow_enemy=True):
+        if not getattr(self, 'autochess_mode', False):
+            return None
+        pending = getattr(self, '_autochess_pending_target', None)
+        if not pending or pending.get('caster') != self._resolve_uid(caster_id):
+            return None
+        self._autochess_pending_target = None
+        tgt = pending.get('target')
+        if not tgt:
+            return None
+        my_team = self._battle_team_of(caster_id)
+        tgt_team = self._battle_team_of(tgt)
+        same_team = (tgt_team == my_team)
+        if same_team and not allow_ally:
+            return None
+        if not same_team and not allow_enemy:
+            return None
+        if (self._get_combat_hp(tgt) or 0) <= 0 and not (same_team and self._is_dying(tgt)):
+            return None
+        if not same_team and self._is_untargetable(tgt):
+            return None
+        return tgt
 
     def _is_y16(self, uid):
         return self.get_char(uid).serial == 'Y16'
@@ -944,6 +1391,20 @@ class CombatEngine:
         self._summon_groups = {}   # {rep_base_uid: {members, template_name, ownerId}}
         self._summon_members = {}  # {sid: {userId, name, display_name, team, coord, skills, ...}}
         self._summon_total_spawned = {}  # {(owner_base, template_name): 本场累计成功创建数}
+        # Auto-Chess mode state (all opt-in; False preserves classic mode 100%)
+        self.autochess_mode = False
+        self.arena_preset = None
+        self.overtime_start_round = 0
+        self._unit_stances = {}
+        self._battle_stats = {}
+        self._flying_dive_until = {}
+        self._autochess_range_overrides = {}
+        self._autochess_range_bonus = {}
+        self._autochess_move_bonus = {}
+        self._autochess_team_mods = {}
+        self._autochess_unit_mods = {}
+        self._autochess_pending_target = None
+        self._last_ai_reason = ''
 
     def _drain_battle_events(self):
         events = self._pending_battle_events
@@ -1025,10 +1486,11 @@ class CombatEngine:
         effects = [e for e in self._get_effects() if not (
             e.get('type') == 'cooldown' and e.get('sourceUserId') == uid
             and e.get('spellIndex') in (1, 2, 3))]
+        cd_val = self._autochess_effective_cd(uid, self._passive_rules(uid, 'cartridge')['cooldown'])
         for index in (1, 2, 3):
             effects.append(dict(type='cooldown', sourceUserId=uid, targetUserId=uid,
                                 spellIndex=index, spellName='卡带切换',
-                                remainingRounds=self._passive_rules(uid, 'cartridge')['cooldown'], persistent=0))
+                                remainingRounds=cd_val, persistent=0))
         self._set_effects(effects)
 
     @staticmethod
@@ -1131,6 +1593,174 @@ class CombatEngine:
         eff = spell['effects'][0]
         return (_resolve_db(eff['伤害骰'], _get_db_str(char)), eff.get('射程', 2))
 
+    def _unit_size(self, uid):
+        entry = self._unit_il_entry(uid, self._get_initiative())
+        if entry and entry.get('isSummon'):
+            tmpl = self._get_summon_template(entry.get('name', '')) or {}
+            if tmpl.get('size_2x2'):
+                return 2
+        return 1
+
+    def _remaining_move_budget(self, uid):
+        entry = self._unit_il_entry(uid, self._get_initiative())
+        if not entry:
+            return 0
+        base = self._resolve_uid(uid)
+        used = entry.get('_move_used', 0)
+        if not entry.get('isSummon'):
+            used = max((e.get('_move_used', 0) for e in self._get_initiative()
+                        if self._resolve_uid(e['userId']) == base), default=used)
+        return max(0, self._get_move_power(uid) - used)
+
+    def _unit_teams_map(self):
+        teams = {}
+        for e in self._get_initiative():
+            team = e.get('team', 'Y')
+            u = e.get('userId')
+            b = self._resolve_uid(u)
+            teams[u] = team
+            teams[b] = team
+        for sid, data in getattr(self, '_summon_members', {}).items():
+            teams[sid] = data.get('team', 'Y')
+        return teams
+
+    def _unit_hazard_coords(self, uid):
+        """Return coords covered by enemy damaging/debuffing zones (read-only)."""
+        md = self._get_map() or {}
+        w = int(md.get('width', 0) or 0)
+        h = int(md.get('height', 0) or 0)
+        if w <= 0 or h <= 0:
+            return set()
+        il = self._get_initiative()
+        my_team = self._battle_team_of(uid)
+        hazards = set()
+        for eff in self._get_effects():
+            if eff.get('type') != 'zone' or eff.get('remainingRounds', 0) == 0:
+                continue
+            src = eff.get('sourceUserId', '')
+            src_team = eff.get('sourceTeam') or (self._battle_team_of(src) if src else '')
+            if src_team == my_team:
+                continue
+            is_bad = bool(
+                eff.get('tickDmg') or eff.get('frostStacks')
+                or eff.get('attributeDebuff') or eff.get('on_enter_mp_drain_pct')
+                or eff.get('on_enter_attr_debuff')
+            )
+            if not is_bad:
+                continue
+            cp = parse_coord(self._zone_caster_coord(eff, il) or '')
+            r = int(eff.get('radius', 0) or 0)
+            if not cp or r <= 0:
+                continue
+            for col in range(max(0, cp[0] - r), min(w, cp[0] + r + 1)):
+                for row in range(max(0, cp[1] - r), min(h, cp[1] + r + 1)):
+                    c = format_coord(col, row)
+                    if c:
+                        hazards.add(c)
+        return hazards
+
+    def _unit_preferred_coords(self, uid, md=None):
+        """Return terrain cover / leyline / friendly heal zone coords for tie-breaking."""
+        md = md or self._get_map() or {}
+        preferred = {c for c, t in (md.get('terrain') or {}).items() if t in ('cover', 'leyline')}
+        my_team = self._battle_team_of(uid)
+        il = self._get_initiative()
+        w = int(md.get('width', 0) or 0)
+        h = int(md.get('height', 0) or 0)
+        for eff in self._get_effects():
+            if eff.get('type') != 'zone' or eff.get('remainingRounds', 0) == 0:
+                continue
+            src = eff.get('sourceUserId', '')
+            src_team = eff.get('sourceTeam') or (self._battle_team_of(src) if src else '')
+            if src_team != my_team or not (eff.get('tickHealHp') or eff.get('tickHealMp')):
+                continue
+            cp = parse_coord(self._zone_caster_coord(eff, il) or '')
+            r = int(eff.get('radius', 0) or 0)
+            if not cp or r <= 0:
+                continue
+            for col in range(max(0, cp[0] - r), min(w, cp[0] + r + 1)):
+                for row in range(max(0, cp[1] - r), min(h, cp[1] + r + 1)):
+                    c = format_coord(col, row)
+                    if c:
+                        preferred.add(c)
+        return preferred
+
+    def _commit_unit_position(self, uid, new_coord, *, path=None, move_cost=0, reason='move'):
+        """Atomically update map occupancy, initiative/summon coords, movement cost, and zone enters."""
+        entry = self._unit_il_entry(uid, self._get_initiative())
+        md = self._get_map()
+        new_coord = str(new_coord or '').strip().upper()
+        point = parse_coord(new_coord)
+        if not entry or not md or not point:
+            return False
+        base = self._resolve_uid(uid)
+        group = self._get_summon_group(uid)
+        map_uid = group.get('representative_uid', uid) if group else base
+        size = self._unit_size(uid)
+        ignore_ids = {uid, base, map_uid}
+        if not is_footprint_valid(md, new_coord, size=size, ignore_uids=ignore_ids):
+            return False
+        if move_cost > 0:
+            if self._consume_move_power(uid, move_cost) != move_cost:
+                return False
+
+        def _sync_coords(coord_val, update_map=True):
+            if update_map:
+                occs = md.setdefault('occupants', {})
+                for k in [k for k, v in occs.items() if v in ignore_ids or self._resolve_uid(v) == base]:
+                    del occs[k]
+                for dc in range(size):
+                    for dr in range(size):
+                        fc = format_coord(point[0] + dc, point[1] + dr) if coord_val == new_coord else coord_val
+                        if fc:
+                            occs[fc] = map_uid
+                self._set_map(md)
+            if entry.get('isSummon'):
+                self._set_summon_entry_fields(map_uid, coord=coord_val)
+                if group:
+                    for member in group['members']:
+                        if member in self._summon_members:
+                            self._summon_members[member]['coord'] = coord_val
+            else:
+                il_cur = self._get_initiative()
+                for slot in il_cur:
+                    if self._resolve_uid(slot['userId']) == base:
+                        slot['coord'] = coord_val
+                self._set_initiative(il_cur)
+
+        if path and len(path) > 2 and getattr(self, 'autochess_mode', False):
+            # Trigger zone enter checks for intermediate tiles crossed during pathing
+            for step in path[1:-1]:
+                _sync_coords(step, update_map=False)
+                self._settle_zone_enters()
+
+        _sync_coords(new_coord, update_map=True)
+        self._settle_zone_enters()
+        if move_cost > 0 and (getattr(self, 'autochess_mode', False) or getattr(self, '_track_stats', False)):
+            self._stat_bucket(base)['tiles_moved'] += move_cost
+        return True
+
+    def _displace_unit(self, uid, ref_coord, steps, kind='push'):
+        """Push or pull uid relative to ref_coord using grid_nav displacement."""
+        entry = self._unit_il_entry(uid, self._get_initiative())
+        md = self._get_map()
+        if not entry or not md:
+            return ''
+        start = entry.get('coord', '')
+        base = self._resolve_uid(uid)
+        group = self._get_summon_group(uid)
+        map_uid = group.get('representative_uid', uid) if group else base
+        path = compute_displacement(
+            md, start, ref_coord, steps, kind=kind,
+            flying=self._is_flying(uid), ignore_uids={uid, base, map_uid},
+        )
+        if not path:
+            return ''
+        dest = path[-1]
+        if self._commit_unit_position(uid, dest, path=[start] + path, move_cost=0, reason=kind):
+            return dest
+        return ''
+
     def _move_explicit(self, uid, coord):
         """Validate before committing position, occupancy and movement cost together."""
         reject = lambda message: ActionExecutionResult(message, False, 'invalid_move', '附加')
@@ -1147,6 +1777,32 @@ class CombatEngine:
         old = entry.get('coord', '')
         if not parse_coord(old) or coord == old:
             return reject('移动目标与当前位置相同或起点无效')
+        if getattr(self, 'autochess_mode', False):
+            budget = self._remaining_move_budget(uid)
+            base = self._resolve_uid(uid)
+            group = self._get_summon_group(uid)
+            map_uid = group.get('representative_uid', uid) if group else base
+            my_team = entry.get('team', 'Y')
+            nav = compute_navigation(
+                md, old, budget,
+                flying=self._is_flying(uid),
+                team=my_team,
+                unit_teams=self._unit_teams_map(),
+                ignore_uids={uid, base, map_uid},
+                size=self._unit_size(uid),
+            )
+            if coord not in nav['reachable']:
+                if md.get('obstacles', {}).get(coord) or terrain_type(md, coord) == 'wall':
+                    return reject('移动目标是障碍物')
+                occupant = md.get('occupants', {}).get(coord)
+                if occupant and self._resolve_uid(occupant) != base:
+                    return reject('移动目标已被占用')
+                return reject('路径不可达或剩余移动力不足')
+            cost, _ = nav['reachable'][coord]
+            path = reconstruct_path(nav['parents'], old, coord)
+            if not self._commit_unit_position(uid, coord, path=path, move_cost=cost, reason='move'):
+                return reject('剩余移动力不足或目标格无效')
+            return ActionExecutionResult(f'{self.get_char(uid).name} 移动至 {coord}', slot='附加')
         occupant = md.get('occupants', {}).get(coord)
         base = self._resolve_uid(uid)
         if occupant and self._resolve_uid(occupant) != base:
@@ -1181,18 +1837,33 @@ class CombatEngine:
         return ActionExecutionResult(f'{self.get_char(uid).name} 移动至 {coord}', slot='附加')
 
     def _next_move_coord(self, uid):
-        """Pick a legal one-step approach without mutating movement state."""
+        """Pick a legal approach step without mutating movement state."""
         entry = self._unit_il_entry(uid, self._get_initiative())
         md = self._get_map()
         if not entry or not md or not self._can_move(uid):
             return None
-        if self._get_move_power(uid) - entry.get('_move_used', 0) < 1:
+        if self._remaining_move_budget(uid) < 1:
             return None
         point = parse_coord(entry.get('coord', ''))
         enemies = [e for e in self._enemy_target_entries(uid) if parse_coord(e.get('coord', ''))]
         if not point or not enemies:
             return None
         target = min(enemies, key=lambda e: chebyshev_dist(entry['coord'], e['coord']))
+        if getattr(self, 'autochess_mode', False):
+            base = self._resolve_uid(uid)
+            group = self._get_summon_group(uid)
+            map_uid = group.get('representative_uid', uid) if group else base
+            reached, dest, _cost, _path = find_attack_position(
+                md, entry['coord'], target['coord'], 2, self._remaining_move_budget(uid),
+                flying=self._is_flying(uid),
+                team=entry.get('team', 'Y'),
+                unit_teams=self._unit_teams_map(),
+                ignore_uids={uid, base, map_uid},
+                size=self._unit_size(uid),
+                hazard_coords=self._unit_hazard_coords(uid),
+                preferred_coords=self._unit_preferred_coords(uid, md),
+            )
+            return dest if dest and dest != entry['coord'] else None
         tp = parse_coord(target['coord'])
         dc = (tp[0] > point[0]) - (tp[0] < point[0])
         dr = (tp[1] > point[1]) - (tp[1] < point[1])
@@ -2235,6 +2906,22 @@ class CombatEngine:
         s[base] = new_hp
         self.set_json(self._combat_hp_key(), s)
 
+        if old_hp is not None and new_hp < old_hp and (getattr(self, 'autochess_mode', False) or getattr(self, '_track_stats', False)):
+            actual_lost_stat = old_hp - new_hp
+            self._stat_bucket(base)['damage_taken'] += actual_lost_stat
+            if damage_source:
+                src_base = self._resolve_uid(damage_source)
+                if src_base != base:
+                    self._stat_bucket(src_base)['damage_dealt'] += actual_lost_stat
+                    if old_hp > 0 and new_hp <= 0:
+                        self._stat_bucket(src_base)['kills'] += 1
+                    if not getattr(self, '_in_post_hit', False):
+                        self._in_post_hit = True
+                        try:
+                            self._apply_autochess_post_hit(src_base, base, actual_lost_stat)
+                        finally:
+                            self._in_post_hit = False
+
         if old_hp is not None and new_hp < old_hp and source_dmg > 0:
             if self._is_y14(base):
                 self._y14_event(base, 'damage_taken')
@@ -2844,6 +3531,25 @@ class CombatEngine:
     def _get_move_power(self, uid):
         """获取角色的移动力(每回合可移动距离)。MOV默认=行动力。"""
         char = self.get_char(uid)
+        if getattr(self, 'autochess_mode', False):
+            eff_mov = self._get_effective_mov(uid, include_zone=True)
+            if char and char.get_attr('分离行动力移动力', 0):
+                tiles = max(0, self._apply_attr_mods(uid, char.get_attr('移动力', 4), 'MOV'))
+            elif eff_mov <= 0:
+                tiles = 0
+            else:
+                tiles = min(8, max(2, math.ceil(eff_mov / 2)))
+            base = self._resolve_uid(uid)
+            bonus_info = getattr(self, '_autochess_move_bonus', {}).get(base)
+            if bonus_info and tiles > 0:
+                cur_round = (self._get_state() or {}).get('round', 1)
+                if isinstance(bonus_info, tuple):
+                    b_val, max_rnd = bonus_info
+                    if cur_round <= max_rnd:
+                        tiles += b_val
+                else:
+                    tiles += int(bonus_info)
+            return max(0, tiles)
         base = char.get_attr('行动力', 8)
         if char.get_attr('分离行动力移动力', 0):
             base = char.get_attr('移动力', base)
@@ -3089,6 +3795,28 @@ class CombatEngine:
         # ── 只有需要接近时才检查禁锢/击晕 ──
         if not self._can_move(uid):
             return (False, my_coord)
+        if getattr(self, 'autochess_mode', False):
+            budget = self._remaining_move_budget(uid)
+            if budget <= 0:
+                return (False, my_coord)
+            md = self._get_map()
+            base = self._resolve_uid(uid)
+            group = self._get_summon_group(uid)
+            map_uid = group.get('representative_uid', uid) if group else base
+            reached, dest, move_cost, path = find_attack_position(
+                md, my_coord, t_coord, atk_range, budget,
+                flying=self._is_flying(uid),
+                team=my_entry.get('team', 'Y'),
+                unit_teams=self._unit_teams_map(),
+                ignore_uids={uid, base, map_uid},
+                size=self._unit_size(uid),
+                hazard_coords=self._unit_hazard_coords(uid),
+                preferred_coords=self._unit_preferred_coords(uid, md),
+            )
+            if dest and dest != my_coord and move_cost > 0:
+                if not self._commit_unit_position(uid, dest, path=path, move_cost=move_cost, reason='approach'):
+                    return (False, my_coord)
+            return (bool(reached), my_coord)
         move_needed = dist - atk_range
         actual_move = self._consume_move_power(uid, move_needed)
         if actual_move <= 0:
@@ -3122,6 +3850,8 @@ class CombatEngine:
     def _return_to_anchor(self, uid):
         """回合结束时，消耗剩余移动力尝试退回锚点坐标。
         移动力在前压和退回之间共享——前压用得越多，退回越少。"""
+        if getattr(self, 'autochess_mode', False):
+            return  # 自走棋模式回合结束保留场上阵型站位，不弹回锚点
         il = self._get_initiative()
         my_entry = next((e for e in il if e['userId'] == uid), None)
         if not my_entry: return
@@ -3312,8 +4042,13 @@ class CombatEngine:
     def _find_free_coord_near(self, caster_id):
         il = self._get_initiative()
         caster_entry = self._unit_il_entry(caster_id, il)
-        base = parse_coord((caster_entry or {}).get('coord', '')) or (1, 1)
+        origin = (caster_entry or {}).get('coord', '')
         md = self._get_map() or {}
+        if getattr(self, 'autochess_mode', False):
+            found = find_free_coord_near(md, origin or 'B1', size=1)
+            if found:
+                return found
+        base = parse_coord(origin) or (1, 1)
         occupied = md.get('occupants', {})
         for radius in range(0, 10):
             for dx in range(-radius, radius + 1):
@@ -3323,7 +4058,7 @@ class CombatEngine:
                     c = format_coord(base[0] + dx, base[1] + dy)
                     if c not in occupied:
                         return c
-        return format_coord(base)
+        return format_coord(*base)
 
     def _restore_graveyard_unit(self, caster_id, grave_entry, eff):
         """Preflight, then restore one unit without resetting resources/actions."""
@@ -4058,6 +4793,8 @@ class CombatEngine:
             else: msgs.append(f"护盾【{e.get('spellName','')}】吸收 {a} 点伤害（剩余 {e['value']}）")
             if remaining <= 0: break
         self._set_effects(effects)
+        if absorbed > 0 and (getattr(self, 'autochess_mode', False) or getattr(self, '_track_stats', False)):
+            self._stat_bucket(resolved)['shield_absorbed'] += absorbed
         return (remaining, absorbed, msgs)
 
     def hp_diff(self, team):
@@ -4379,6 +5116,9 @@ class CombatEngine:
             return tgt
 
         if has_dmg or has_zone_dmg or has_enemy_debuff:
+            pending_tgt = self._consume_autochess_pending_target(caster_id, allow_ally=False, allow_enemy=True)
+            if pending_tgt:
+                return pending_tgt
             # Try weight-based target selection first
             weighted_tgt = self._get_weighted_target(caster_id)
             if weighted_tgt:
@@ -4393,6 +5133,10 @@ class CombatEngine:
                       f"NO ENEMIES! all teams: {all_teams}")
             # 无合法敌人 → None（由 _execute_spell 拦截并提示，不扣 MP）
             return enemies[0]['userId'] if enemies else None
+        if has_heal:
+            pending_ally = self._consume_autochess_pending_target(caster_id, allow_ally=True, allow_enemy=False)
+            if pending_ally:
+                return pending_ally
         return caster_id
 
     def process_command(self, uid, cmd):
@@ -4603,6 +5347,7 @@ class CombatEngine:
                 if tick_text and not getattr(self, 'fast_mode', False):
                     self._pending_battle_events.extend(tick_text.splitlines())
                 self._apply_zone_effects()
+                self._settle_autochess_round_start()
                 self._reconcile_summon_groups()
                 self._sync_all_initiative_slots()
                 self._reset_round_actions()
@@ -4614,6 +5359,7 @@ class CombatEngine:
             if not il:
                 break
             cur = il[state['activeIndex']]
+            self._clear_flying_dive(cur['userId'])
             hp = self._get_combat_hp(cur['userId'])
             if hp is None or hp > 0:
                 break
@@ -5202,13 +5948,13 @@ class CombatEngine:
             result.append(uid)
         return result
 
-    def _apply_hp_heal_amount(self, target_id, amount, *, allow_dying=True):
+    def _apply_hp_heal_amount(self, target_id, amount, *, allow_dying=True, healer_uid=None):
         """Apply HP healing through one path for spells, zones, and items.
 
         A zero-HP dying unit is not treated as a default-HP unit. Healing first
         removes excess dying damage; only leftover healing revives the unit.
         """
-        amount = max(0, int(amount or 0))
+        amount = self._apply_autochess_heal_mods(max(0, int(amount or 0)))
         if amount <= 0:
             return {'applied': 0, 'absorbed_excess': 0, 'rescued': False, 'dead': False}
         current = self._get_combat_hp(target_id)
@@ -5219,6 +5965,8 @@ class CombatEngine:
             return {'applied': 0, 'absorbed_excess': 0, 'rescued': False, 'dead': True}
         target = self.get_char(target_id)
         max_hp = target.get_attr('体力上限', max(current, 1)) if target else max(current, 1)
+        track = getattr(self, 'autochess_mode', False) or getattr(self, '_track_stats', False)
+        stat_actor = healer_uid or target_id
         if dying is not None:
             excess = max(0, int(dying.get('excessDamage', 0) or 0))
             absorbed = min(amount, excess)
@@ -5231,14 +5979,20 @@ class CombatEngine:
                 effects = [e for e in self._get_effects() if e is not dying]
                 self._set_effects(effects)
                 self._charge_heal_overflow(target_id, remaining - new_hp)
+                if track:
+                    self._stat_bucket(stat_actor)['healing_done'] += new_hp + absorbed
                 return {'applied': new_hp, 'absorbed_excess': absorbed,
                         'rescued': True, 'dead': False}
             self._set_effects(self._get_effects())
+            if track and absorbed > 0:
+                self._stat_bucket(stat_actor)['healing_done'] += absorbed
             return {'applied': 0, 'absorbed_excess': absorbed,
                     'rescued': False, 'dead': False}
         new_hp = min(max_hp, current + amount)
         self._set_combat_hp(target_id, new_hp)
         self._charge_heal_overflow(target_id, amount - (new_hp - current))
+        if track and new_hp > current:
+            self._stat_bucket(stat_actor)['healing_done'] += (new_hp - current)
         return {'applied': new_hp - current, 'absorbed_excess': 0,
                 'rescued': False, 'dead': False}
 
@@ -5330,7 +6084,7 @@ class CombatEngine:
             mp_heal += self._get_buff_heal_flat(tid, 'mp')
             tchar = self.get_char(tid); tname = tchar.name if tchar else tid
             if hp_heal > 0:
-                outcome = self._apply_hp_heal_amount(tid, hp_heal)
+                outcome = self._apply_hp_heal_amount(tid, hp_heal, healer_uid=caster_id)
                 if outcome['rescued']:
                     # Continue with the latest effect list after dying was removed.
                     pass
@@ -5688,7 +6442,7 @@ class CombatEngine:
                     and str(e.get('客体', 0)).upper() in ('4', '5', '24', '45', 'R', 'RP')]
         _orig_coord = ''
         if dmg_effs:
-            atk_range = self._get_attack_range(spell_effect=dmg_effs[0])
+            atk_range = self._get_attack_range(spell_effect=dmg_effs[0], spell_name=spell.get('name'), uid=caster_id)
             can_atk, _orig_coord = self._move_to_attack_range(caster_id, target_id, atk_range)
             if not can_atk:
                 return ActionExecutionResult(f'{char.name} 无法接近目标！（射程={atk_range}）', False, 'spell_rejected')
@@ -5961,6 +6715,7 @@ class CombatEngine:
             char._once_consumed = set(getattr(char, '_once_consumed', set()) or ()) | {once_name}
             cooldown = max([int(spell.get('cooldown_rounds', 0) or 0)] +
                            [int(e.get('cooldown_rounds', 0) or 0) for e in spell.get('effects', [])])
+            cooldown = self._autochess_effective_cd(caster_id, cooldown)
             if cooldown > 0:
                 cooldowns = self._get_effects()
                 cooldowns.append({'type': 'cooldown', 'remainingRounds': cooldown,
@@ -6148,7 +6903,7 @@ class CombatEngine:
         else:
             out += f'  召唤 {count} 个【{tmpl or "使魔"}】\n'
         # Generic cooldown support (C1)
-        cooldown = eff.get('cooldown_rounds', 0)
+        cooldown = self._autochess_effective_cd(caster_id, eff.get('cooldown_rounds', 0))
         if cooldown > 0:
             effects = self._get_effects()
             effects.append({'type': 'cooldown', 'remainingRounds': cooldown,
@@ -6276,6 +7031,8 @@ class CombatEngine:
 
         elif ct == 8:  # Zone
             radius = eff.get('作用半径',0); dur = eff.get('持续回合',1)
+            if radius > 0:
+                radius += self._autochess_zone_radius_bonus(caster_id)
             tick_dmg = eff.get('每回合伤害骰',''); tick_heal_hp = eff.get('回复hp','')
             tick_heal_mp = eff.get('回复mp',''); cf = eff.get('领域中心跟随',0)
             of = eff.get('客体',35); ad = eff.get('属性削减','')
@@ -6334,7 +7091,7 @@ class CombatEngine:
             if eff.get('来源存活绑定') and is_passive_spell:
                 zone_entry['sourcePassive'] = True
             effects.append(zone_entry)
-            cooldown = int(eff.get('cooldown_rounds', 0) or 0)
+            cooldown = self._autochess_effective_cd(caster_id, int(eff.get('cooldown_rounds', 0) or 0))
             if cooldown:
                 effects.append(dict(type='cooldown', sourceUserId=caster_id, targetUserId=caster_id,
                     spellIndex=spell['index'], spellName=spell['name'], remainingRounds=cooldown,
@@ -6561,6 +7318,9 @@ class CombatEngine:
                 dmg_val = self._cloak_damage(target_id, dmg_val)
                 out += f'  火鼠裘减免：最终伤害 {dmg_val}\n'
                 break
+        dmg_val = self._apply_autochess_damage_mods(caster_id, target_id, dmg_val)
+        if damage_effect is not None:
+            self._mark_flying_dive(caster_id, self._get_attack_range(spell_effect=damage_effect, spell_name=spell_name, uid=caster_id))
         eff_dmg, absorbed, _ = self._absorb_damage_with_shield(target_id, dmg_val)
         old_target_hp = self._hp_safe(target_id, 0)
         cur_hp = old_target_hp
@@ -6613,6 +7373,8 @@ class CombatEngine:
             mhp = char.get_attr('体力上限', chp)
             self._set_combat_hp(caster_id, min(chp + heal, mhp))
             actual_heal = max(0, (self._get_combat_hp(caster_id) or 0) - chp)
+            if actual_heal > 0 and (getattr(self, 'autochess_mode', False) or getattr(self, '_track_stats', False)):
+                self._stat_bucket(caster_id)['healing_done'] += actual_heal
             if spell and spell.get('blood_kind') == 'slash':
                 self._y17_note(caster_id, 'slash_healing', actual_heal)
             self._charge_heal_overflow(caster_id, heal - actual_heal)
@@ -7962,7 +8724,7 @@ class CombatEngine:
                 if kind == 'hp':
                     amount = int(amount * self._get_buff_heal_pct(uid, 'hp'))
                     amount += self._get_buff_heal_flat(uid, 'hp')
-                    outcome = self._apply_hp_heal_amount(uid, amount, allow_dying=allow_dying)
+                    outcome = self._apply_hp_heal_amount(uid, amount, allow_dying=allow_dying, healer_uid=eff.get('sourceUserId'))
                     actual, absorbed = outcome['applied'], outcome['absorbed_excess']
                 else:
                     amount = int(amount * self._get_buff_heal_pct(uid, 'mp'))
@@ -8140,57 +8902,15 @@ class FullBattleEngine(CombatEngine):
     def _react_bw(self, val):
         self._ai_react_block_w = val
 
-    def setup_battle(self, team_a, team_b, map_size=None, season_status=None):
-        if map_size is None:
-            from combat_settings import value as battle_setting
-            map_size = battle_setting("DEFAULT_MAP_SIZE")
-        self._pending_battle_events = []
-        self._zone_tick_results = []
-        self._inspiration_pending = set()
-        self._inspiration_settled = set()
-        self._ai_failed_commands = set()
-        w, h = map(int, map_size.split("x"))
-        self.group_id = f"battle_{random.randint(1000,9999)}"
-        self.set_json(f"frost_round_{self.group_id}", None)
-        # ── 新战斗重置召唤账本 / 分组 / unique 记录（必须在被动施放之前）──
-        self._summon_groups = {}
-        self._summon_members = {}
-        self._summon_total_spawned = {}
-        self._revive_use_ledger = set()
-        self._summoned_once = {}
-        self._summoned_templates = {}
-        self._graveyard = {}
-        self._reset_blood_battle_state(team_a + team_b)
-        self._set_map({"width":w, "height":h, "entryRow":math.ceil(h/2), "obstacles":{}, "occupants":{}})
-        all_chars = team_a + team_b; init_list = []; map_data = self._get_map()
-        # Y team (left side) — single initiative entry per character
-        for i, uid in enumerate(team_a):
-            char = self.get_char(uid)
-            row = min(h-1, math.ceil(h/2) + i - len(team_a)//2)
-            coord = format_coord(1, row)
-            dex_val = char.get_attr("敏捷",50)
-            init_roll, _ = roll_d100("")
-            init_rank = success_rank(init_roll, dex_val)
-            init_list.append({"userId":uid, "baseUserId":uid, "name":char.name, "actionIdx":0,
-                              "team":"Y", "dex":dex_val, "initRoll":init_roll, "initRank":init_rank, "coord":coord})
-            map_data["occupants"][coord] = uid
-        # X team (right side) — single initiative entry per character
-        for i, uid in enumerate(team_b):
-            char = self.get_char(uid)
-            row = min(h-1, math.ceil(h/2) + i - len(team_b)//2)
-            coord = format_coord(w-2, row)
-            dex_val = char.get_attr("敏捷",50)
-            init_roll, _ = roll_d100("")
-            init_rank = success_rank(init_roll, dex_val)
-            init_list.append({"userId":uid, "baseUserId":uid, "name":char.name, "actionIdx":0,
-                              "team":"X", "dex":dex_val, "initRoll":init_roll, "initRank":init_rank, "coord":coord})
-            map_data["occupants"][coord] = uid
-        self._set_map(map_data); init_list.sort(key=lambda e: (-e["initRank"], -e["dex"], e["initRoll"]))
-        self._set_initiative(init_list)
-        # Save original team roster for timeout HP ratio
-        self._team_roster = [(uid, 'Y') for uid in team_a] + [(uid, 'X') for uid in team_b]
-        for uid in all_chars:
-            char = self.get_char(uid); self._init_combat_hp(uid, char.get_attr("体力",10))
+    def setup_battle(self, team_a, team_b, map_size=None, season_status=None, *,
+                     arena_preset=None, autochess_mode=None, overtime_start_round=None,
+                     initial_coords=None, unit_stances=None, track_stats=False):
+        all_chars, _map_data, _init_list = self._setup_battle_board(
+            team_a, team_b, map_size=map_size, arena_preset=arena_preset,
+            autochess_mode=autochess_mode, overtime_start_round=overtime_start_round,
+            initial_coords=initial_coords, unit_stances=unit_stances,
+            track_stats=track_stats, group_prefix='battle',
+        )
         # 主动作数基于有效MOV公式计算（被动尚未施放，先按基础值初始化）
         self._set_actions({uid: {"主动": self._calc_main_actions(uid), "附加": 3} for uid in all_chars})
         # Roll 状态 for each character before battle
@@ -8287,7 +9007,7 @@ class FullBattleEngine(CombatEngine):
         aname = achar.name; dname = dchar.name; lines = []
         # ── 射程移动 ──
         profile = self._y14_attack_profile(atk_uid)
-        atk_range = profile[1] if profile else self._get_attack_range(skill_name=skill_name)
+        atk_range = profile[1] if profile else self._get_attack_range(skill_name=skill_name, uid=atk_uid)
         can_atk, _orig_coord = self._move_to_attack_range(atk_uid, def_uid, atk_range)
         if not can_atk:
             lines.append(f'{aname} 无法接近目标！（射程={atk_range}）')
@@ -8297,6 +9017,7 @@ class FullBattleEngine(CombatEngine):
         if not can_melee:
             lines.append(f'{aname} 无法近战飞行目标 {dname}！')
             return (def_uid, atk_uid, lines)
+        self._mark_flying_dive(atk_uid, atk_range)
         self._y17_weapon_used(atk_uid)
         if fly_penalty:
             # 飞行近战惩罚骰并入统一净额结算（不再与命令后缀拼成 'pb'）
@@ -8392,6 +9113,10 @@ class FullBattleEngine(CombatEngine):
         if not self._can_react(def_uid):
             lines.append(f'  {dname} 击晕中，无法反应！')
             react_choice = None
+        elif getattr(self, 'autochess_mode', False):
+            react_choice = self._choose_autochess_reaction(
+                atk_uid, def_uid, True, True, can_block, atk_rank, dmg_dice
+            ) or ('dodge' if dodge_val >= bmv else 'counter')
         else:
             # ── 三维反应选择 (dodge / counter / block) ──
             defender = self._unit_il_entry(def_uid, self._get_initiative()) or {}
@@ -8471,6 +9196,7 @@ class FullBattleEngine(CombatEngine):
                     # AUX 1,3,19: apply damage multipliers before shield
                     adv = int(adv * self._get_buff_dmg_mult(atk_uid, def_uid) * self._get_buff_dmg_dice_mult(atk_uid))
                     adv += self._get_buff_dmg_flat(def_uid); adv = max(0, adv)  # AUX code 2: before shield
+                    adv = self._apply_autochess_damage_mods(atk_uid, def_uid, adv)
                     asr = self._absorb_damage_with_shield(def_uid, adv); aeff = asr[0]
                     if asr[1] > 0: lines.append(f"  护盾吸收(atk): {asr[1]}点")
                     achp = self._get_combat_hp(def_uid) or 10
@@ -8500,6 +9226,7 @@ class FullBattleEngine(CombatEngine):
                         # AUX 1,3,19: apply damage multipliers before shield
                         ddmg = int(ddmg * self._get_buff_dmg_mult(def_uid, atk_uid) * self._get_buff_dmg_dice_mult(def_uid))
                         ddmg += self._get_buff_dmg_flat(atk_uid); ddmg = max(0, ddmg)  # AUX code 2: before shield
+                        ddmg = self._apply_autochess_damage_mods(def_uid, atk_uid, ddmg)
                         dsr = self._absorb_damage_with_shield(atk_uid, ddmg); deff = dsr[0]
                         if dsr[1] > 0: lines.append(f"  护盾吸收(def): {dsr[1]}点")
                         dchp = self._get_combat_hp(atk_uid) or 10
@@ -8555,6 +9282,7 @@ class FullBattleEngine(CombatEngine):
                     else: blk_dmg, blk_detail = roll_dice_detailed(dmg_dice)
                 blk_dmg = int(blk_dmg * self._get_buff_dmg_mult(atk_uid, def_uid) * self._get_buff_dmg_dice_mult(atk_uid))
                 blk_dmg += self._get_buff_dmg_flat(def_uid); blk_dmg = max(0, blk_dmg)  # AUX code 2: before shield
+                blk_dmg = self._apply_autochess_damage_mods(atk_uid, def_uid, blk_dmg)
                 # 法术护盾吸收
                 blk_sr = self._absorb_damage_with_shield(def_uid, blk_dmg); blk_eff = blk_sr[0]
                 if blk_sr[1] > 0: lines.append(f"  护盾吸收: {blk_sr[1]}点")
@@ -8636,6 +9364,7 @@ class FullBattleEngine(CombatEngine):
         # AUX 1,3,19: apply damage multipliers before shield
         dmg_val = int(dmg_val * self._get_buff_dmg_mult(winner_uid, loser_uid) * self._get_buff_dmg_dice_mult(winner_uid))
         dmg_val += self._get_buff_dmg_flat(loser_uid); dmg_val = max(0, dmg_val)  # AUX code 2: before shield
+        dmg_val = self._apply_autochess_damage_mods(winner_uid, loser_uid, dmg_val)
         # Check for damageModifier effects (e.g. 火鼠裘)
         for e in self._get_effects():
             if e.get('type') == 'damageModifier' and e.get('targetUserId') == loser_uid \
@@ -8896,6 +9625,23 @@ class FullBattleEngine(CombatEngine):
                 return (True, False, [])
             return (False, False, [])
 
+        if getattr(self, 'autochess_mode', False):
+            choice = self._choose_autochess_reaction(
+                caster_id, target_id, can_dodge, can_counter, can_block, atk_rank, dmg_dice
+            )
+            if choice == 'dodge':
+                return self._resolve_spell_dodge(caster_id, target_id, eff, spell,
+                                                  dmg_dice, dodge_val, atk_rank)
+            if choice == 'counter':
+                return self._resolve_spell_counter(caster_id, target_id, eff, spell,
+                                                    dmg_dice, bmn, bmv, atk_rank)
+            if choice == 'block':
+                return self._resolve_spell_block(caster_id, target_id, eff, spell,
+                                                  dmg_dice, block_name, block_val, block_hp, atk_rank)
+            if atk_rank <= 0:
+                return (True, False, [])
+            return (False, False, [])
+
         # AI three-way weighted choice
         defender = self._unit_il_entry(target_id, self._get_initiative()) or {}
         ai_dw = self._ai_react_dodge_w.get(target_id, defender.get('react_dodge_w', 50))
@@ -9025,6 +9771,7 @@ class FullBattleEngine(CombatEngine):
             else:
                 dmg_val, dmg_detail = self._normal_damage_roll(target_id, cdmg)
 
+            dmg_val = self._apply_autochess_damage_mods(target_id, target_uid, dmg_val)
             sr_abs = self._absorb_damage_with_shield(target_uid, dmg_val)
             eff_dmg = sr_abs[0]
             if sr_abs[1] > 0: lines.append(f"  护盾吸收({label}): {sr_abs[1]}点")
@@ -9100,7 +9847,7 @@ class FullBattleEngine(CombatEngine):
             # 格挡成功：法术伤害由盾牌承受
             lines.append(f"  {dchar.name} 用盾牌完全格挡了法术！")
             # 计算法术伤害、护盾吸收、盾牌HP消耗
-            dmg_val = roll_dice(dmg_dice)
+            dmg_val = self._apply_autochess_damage_mods(caster_id, target_id, roll_dice(dmg_dice))
             blk_sr = self._absorb_damage_with_shield(target_id, dmg_val)
             blk_eff = blk_sr[0]
             if blk_sr[1] > 0: lines.append(f"  护盾吸收: {blk_sr[1]}点")
@@ -9236,9 +9983,24 @@ class FullBattleEngine(CombatEngine):
             _engine_debug_log(f"_basic_attack: {char.name}({uid}) team={me.get('team','?')} "
                   f"NO ENEMIES! all teams: {all_teams}")
             return "No enemies"
-        t = enemies[0]; tid = t["userId"]
         # Weapon-aware skill selection (for characters with weapon switching)
         bn, bv = self._get_attack_skill(uid, char)
+        if getattr(self, 'autochess_mode', False):
+            pt = self._consume_autochess_pending_target(uid, allow_ally=False, allow_enemy=True)
+            tid = next((e['userId'] for e in enemies if e['userId'] == pt), None) if pt else None
+            if not tid:
+                profile = self._y14_attack_profile(uid)
+                atk_range = profile[1] if profile else self._get_attack_range(skill_name=bn, uid=uid)
+                for e in enemies:
+                    can_melee, _ = ((True, False) if self._y17_ranged(uid) or (self._is_y14(uid) and
+                                     getattr(char, 'phase', 2) == 1) else self._can_melee(uid, e['userId']))
+                    if can_melee and self._can_reach_attack_range(uid, e['userId'], atk_range):
+                        tid = e['userId']
+                        break
+            if not tid:
+                tid = enemies[0]['userId']
+        else:
+            tid = enemies[0]["userId"]
         dd = self._get_damage_dice(uid, bn); p = char.get_attr("伤害贯穿",1); l = char.get_attr("致死骰",1) or 0
         _, _, lines = self._coc7_attack(uid, tid, bn, bv, dd, p, l)
         return "\n".join(lines)
@@ -9293,6 +10055,8 @@ class FullBattleEngine(CombatEngine):
         hp = tmpl.get("HP",10); dex = tmpl.get("DEX",50)
         if tmpl.get('clone_of_owner'):
             dex = self.get_char(caster_id).get_attr('敏捷')
+        if getattr(self, 'autochess_mode', False):
+            hp = max(1, int(round(hp * self._autochess_summon_hp_mult(caster_id))))
         skills_raw = tmpl.get("skills",["斗殴:50 1d4"])
         parsed = []
         for sk_raw in skills_raw:
@@ -9318,6 +10082,14 @@ class FullBattleEngine(CombatEngine):
                                "skill_type":"attack","zone_heal_hp":"","zone_radius":0,"zone_duration":0,
                                "mp_cost":0,"cooldown_rounds":0})
         parsed = [dict(sk, mp_cost=_summon_skill_mp_cost(sk)) for sk in parsed]
+        if getattr(self, 'autochess_mode', False):
+            sk_bonus = self._autochess_summon_skill_bonus(caster_id)
+            if sk_bonus:
+                parsed = [
+                    dict(sk, val=int(sk.get('val', 50)) + sk_bonus)
+                    if sk.get('skill_type', 'attack') == 'attack' else sk
+                    for sk in parsed
+                ]
         owner_base = self._resolve_uid(caster_id)
         self._reconcile_summon_groups()
         existing_rep = self._find_summon_group_by(owner_base, template_name)
@@ -9342,7 +10114,12 @@ class FullBattleEngine(CombatEngine):
                              and 0 <= row and row + size <= md.get('height', 99)
                              and all(format_coord(col + dc, row + dr) not in md.get('occupants', {})
                                      and format_coord(col + dc, row + dr) not in md.get('obstacles', {})
+                                     and (not getattr(self, 'autochess_mode', False)
+                                          or terrain_type(md, format_coord(col + dc, row + dr)) != 'wall')
                                      for dc in range(size) for dr in range(size))), None)
+                if spot is None and getattr(self, 'autochess_mode', False):
+                    fb_coord = find_free_coord_near(md, ce['coord'], size=size)
+                    spot = parse_coord(fb_coord) if fb_coord else None
                 if spot is None:
                     return None
                 coord = format_coord(*spot)
@@ -9771,6 +10548,8 @@ class FullBattleEngine(CombatEngine):
         atk_flying = self._is_flying(atk_uid)
         def_flying = self._is_flying(def_uid)
         if not atk_flying and def_flying:
+            if getattr(self, 'autochess_mode', False) and (getattr(self, '_flying_dive_until', {}) or {}).get(self._resolve_uid(def_uid)):
+                return True, False
             if FLYING_MELEE_RULE >= 2:
                 return False, False
             elif FLYING_MELEE_RULE == 1:
@@ -9930,7 +10709,12 @@ class FullBattleEngine(CombatEngine):
             merged['displayName'] = display_name
             merged['ignore_unreactable_block'] = result_tmpl.get('ignore_unreactable_block', 0)
             merged["_merged"] = True
-            self._set_combat_hp(merged["userId"], result_tmpl.get("HP", 200))
+            trinity_hp = result_tmpl.get("HP", 200)
+            if getattr(self, 'autochess_mode', False):
+                trinity_hp = max(1, int(round(trinity_hp * self._autochess_summon_hp_mult(owner_id))))
+                char.set_attr('体力上限', trinity_hp)
+                char.set_attr('体力', trinity_hp)
+            self._set_combat_hp(merged["userId"], trinity_hp)
             merged["dex"] = result_tmpl.get("DEX", 50)
             merged['initRank'] = success_rank(merged.get('initRoll', 50), merged['dex'])
             merged["flying"] = result_tmpl.get("flying", False)
@@ -9959,6 +10743,14 @@ class FullBattleEngine(CombatEngine):
                     parsed.append({"name":nv[0],"val":int(nv[1]) if len(nv)>1 else 50,"dice":parts[1] if len(parts)>1 else "1d4",
                                    "hits":1,"on_whiff_aoe_dmg":"","on_whiff_mp_cost":0})
             parsed = [dict(sk, mp_cost=_summon_skill_mp_cost(sk)) for sk in parsed]
+            if getattr(self, 'autochess_mode', False):
+                sk_bonus = self._autochess_summon_skill_bonus(owner_id)
+                if sk_bonus:
+                    parsed = [
+                        dict(sk, val=int(sk.get('val', 50)) + sk_bonus)
+                        if sk.get('skill_type', 'attack') == 'attack' else sk
+                        for sk in parsed
+                    ]
             merged["skills"] = parsed
             if parsed:
                 merged["skill_name"] = parsed[0]["name"]
@@ -10015,54 +10807,15 @@ class FastBattleEngine(FullBattleEngine):
         # Note: max_rounds=20, _ai_react_*_w dicts, _summoned_once, _summon_counters
         # are all initialized by FullBattleEngine.__init__(fast_mode=True)
 
-    def setup_battle(self, team_a, team_b, map_size=None, season_status=None):
-        if map_size is None:
-            from combat_settings import value as battle_setting
-            map_size = battle_setting("DEFAULT_MAP_SIZE")
-        self._pending_battle_events = []
-        self._zone_tick_results = []
-        self._inspiration_pending = set()
-        self._inspiration_settled = set()
-        self._ai_failed_commands = set()
-        w, h = map(int, map_size.split("x"))
-        self.group_id = f"fast_{random.randint(10000,99999)}"
-        self.set_json(f"frost_round_{self.group_id}", None)
-        # ── 新战斗重置召唤账本 / 分组 / unique 记录 ──
-        self._summon_groups = {}
-        self._summon_members = {}
-        self._summon_total_spawned = {}
-        self._revive_use_ledger = set()
-        self._summoned_once = {}
-        self._summoned_templates = {}
-        self._graveyard = {}
-        self._reset_blood_battle_state(team_a + team_b)
-        self._set_map({"width":w, "height":h, "entryRow":math.ceil(h/2), "obstacles":{}, "occupants":{}})
-        all_chars = team_a + team_b; init_list = []; map_data = self._get_map()
-        for i, uid in enumerate(team_a):
-            char = self.get_char(uid)
-            row = min(h-1, math.ceil(h/2) + i - len(team_a)//2)
-            coord = format_coord(1, row)
-            dex_val = char.get_attr("敏捷",50)
-            init_roll, _ = roll_d100("")
-            init_rank = success_rank(init_roll, dex_val)
-            init_list.append({"userId":uid, "baseUserId":uid, "name":char.name, "actionIdx":0,
-                              "team":"Y", "dex":dex_val, "initRoll":init_roll, "initRank":init_rank, "coord":coord})
-            map_data["occupants"][coord] = uid
-        for i, uid in enumerate(team_b):
-            char = self.get_char(uid)
-            row = min(h-1, math.ceil(h/2) + i - len(team_b)//2)
-            coord = format_coord(w-2, row)
-            dex_val = char.get_attr("敏捷",50)
-            init_roll, _ = roll_d100("")
-            init_rank = success_rank(init_roll, dex_val)
-            init_list.append({"userId":uid, "baseUserId":uid, "name":char.name, "actionIdx":0,
-                              "team":"X", "dex":dex_val, "initRoll":init_roll, "initRank":init_rank, "coord":coord})
-            map_data["occupants"][coord] = uid
-        self._set_map(map_data); init_list.sort(key=lambda e: (-e["initRank"], -e["dex"], e["initRoll"]))
-        self._set_initiative(init_list)
-        self._team_roster = [(uid, 'Y') for uid in team_a] + [(uid, 'X') for uid in team_b]
-        for uid in all_chars:
-            char = self.get_char(uid); self._init_combat_hp(uid, char.get_attr("体力",10))
+    def setup_battle(self, team_a, team_b, map_size=None, season_status=None, *,
+                     arena_preset=None, autochess_mode=None, overtime_start_round=None,
+                     initial_coords=None, unit_stances=None, track_stats=False):
+        all_chars, _map_data, _init_list = self._setup_battle_board(
+            team_a, team_b, map_size=map_size, arena_preset=arena_preset,
+            autochess_mode=autochess_mode, overtime_start_round=overtime_start_round,
+            initial_coords=initial_coords, unit_stances=unit_stances,
+            track_stats=track_stats, group_prefix='fast',
+        )
         self._set_actions({uid: {"主动": self._calc_main_actions(uid), "附加": 3} for uid in all_chars})
         for uid in all_chars:
             self.get_char(uid).set_attr('状态', season_status_roll(season_status, uid))
@@ -10208,6 +10961,8 @@ class FastBattleEngine(FullBattleEngine):
         atk_flying = self._is_flying(atk_uid)
         def_flying = self._is_flying(def_uid)
         if not atk_flying and def_flying:
+            if getattr(self, 'autochess_mode', False) and (getattr(self, '_flying_dive_until', {}) or {}).get(self._resolve_uid(def_uid)):
+                return True, False
             if FLYING_MELEE_RULE >= 2:
                 return False, False
             elif FLYING_MELEE_RULE == 1:
@@ -10224,7 +10979,7 @@ class FastBattleEngine(FullBattleEngine):
         bp_suffix = ''
         # ── 射程移动 ──
         profile = self._y14_attack_profile(atk_uid)
-        atk_range = profile[1] if profile else self._get_attack_range(skill_name=skill_name)
+        atk_range = profile[1] if profile else self._get_attack_range(skill_name=skill_name, uid=atk_uid)
         can_atk, _orig_coord = self._move_to_attack_range(atk_uid, def_uid, atk_range)
         if not can_atk:
             return (def_uid, atk_uid, 0, f"射程不足 (range={atk_range})")
@@ -10232,6 +10987,7 @@ class FastBattleEngine(FullBattleEngine):
                                  getattr(achar, 'phase', 2) == 1) else self._can_melee(atk_uid, def_uid))
         if not can_melee:
             return (def_uid, atk_uid, 0, f"无法近战飞行目标")
+        self._mark_flying_dive(atk_uid, atk_range)
         self._y17_weapon_used(atk_uid)
         if fly_penalty:
             bp_suffix = 'p'  # 飞行近战惩罚骰
@@ -10279,20 +11035,25 @@ class FastBattleEngine(FullBattleEngine):
         # ── 击晕禁止所有反应 ──
         if not self._can_react(def_uid):
             return (def_uid, atk_uid, 0, f"击晕中，无法反应")
-        # Reaction: use stored character weights (trainable, three-way)
-        defender = self._unit_il_entry(def_uid, self._get_initiative()) or {}
-        dw = self._react_dw.get(def_uid, defender.get('react_dodge_w', 50))
-        cw = self._react_cw.get(def_uid, defender.get('react_counter_w', 50))
-        dw, cw = self._y17_reaction_weights(def_uid, dw, cw, dodge_val, bmv, atk_rank)
-        bw = self._react_bw.get(def_uid, defender.get('react_block_w', 0)) if can_block else 0
-        total_w = dw + cw + bw
-        if total_w > 0:
-            r = random.random() * total_w
-            if r < dw: react_choice = 'dodge'
-            elif r < dw + cw: react_choice = 'counter'
-            else: react_choice = 'block'
+        if getattr(self, 'autochess_mode', False):
+            react_choice = self._choose_autochess_reaction(
+                atk_uid, def_uid, True, True, can_block, atk_rank, dmg_dice
+            ) or ('dodge' if dodge_val >= bmv else 'counter')
         else:
-            react_choice = 'dodge' if dodge_val >= bmv else 'counter'
+            # Reaction: use stored character weights (trainable, three-way)
+            defender = self._unit_il_entry(def_uid, self._get_initiative()) or {}
+            dw = self._react_dw.get(def_uid, defender.get('react_dodge_w', 50))
+            cw = self._react_cw.get(def_uid, defender.get('react_counter_w', 50))
+            dw, cw = self._y17_reaction_weights(def_uid, dw, cw, dodge_val, bmv, atk_rank)
+            bw = self._react_bw.get(def_uid, defender.get('react_block_w', 0)) if can_block else 0
+            total_w = dw + cw + bw
+            if total_w > 0:
+                r = random.random() * total_w
+                if r < dw: react_choice = 'dodge'
+                elif r < dw + cw: react_choice = 'counter'
+                else: react_choice = 'block'
+            else:
+                react_choice = 'dodge' if dodge_val >= bmv else 'counter'
 
         if react_choice == 'dodge':
             rr, rd_detail = roll_d100(def_bp_dodge); react_rank = success_rank(rr, dodge_val)
@@ -10338,6 +11099,7 @@ class FastBattleEngine(FullBattleEngine):
                 else: blk_dmg = roll_dice(dmg_dice)
                 blk_dmg = int(blk_dmg * self._get_buff_dmg_mult(atk_uid, def_uid) * self._get_buff_dmg_dice_mult(atk_uid))
                 blk_dmg += self._get_buff_dmg_flat(def_uid); blk_dmg = max(0, blk_dmg)  # AUX code 2: before shield
+                blk_dmg = self._apply_autochess_damage_mods(atk_uid, def_uid, blk_dmg)
                 blk_eff, _, _ = self._absorb_damage_with_shield(def_uid, blk_dmg)
                 # ── block_redirect: 伤害由召唤物承担 ──
                 _block_redirect = self._get_block_redirect_target(def_uid)
@@ -10393,6 +11155,7 @@ class FastBattleEngine(FullBattleEngine):
         # AUX 1,3,19: apply damage multipliers before shield
         dmg_val = int(dmg_val * self._get_buff_dmg_mult(winner_uid, loser_uid) * self._get_buff_dmg_dice_mult(winner_uid))
         dmg_val += self._get_buff_dmg_flat(loser_uid); dmg_val = max(0, dmg_val)  # AUX code 2: before shield
+        dmg_val = self._apply_autochess_damage_mods(winner_uid, loser_uid, dmg_val)
         # Check for damageModifier effects (e.g. 火鼠裘)
         for e in self._get_effects():
             if e.get('type') == 'damageModifier' and e.get('targetUserId') == loser_uid \
@@ -10438,24 +11201,40 @@ class FastBattleEngine(FullBattleEngine):
         # ── 射程过滤 + 移动 ──
         bn_tmp, bv_tmp = char.get_best_melee()
         profile = self._y14_attack_profile(uid)
-        atk_range = profile[1] if profile else self._get_attack_range(skill_name=bn_tmp)
-        reachable = []
-        for e in enemies:
-            # _can_melee 返回 (can_melee, fly_penalty) 元组，必须解包——
-            # 直接判真值会把 (False, False) 当成可用，使飞行过滤失效。
-            can_melee, _fly_penalty = ((True, False) if self._is_y14(uid) and
-                                       getattr(char, 'phase', 2) == 1 else self._can_melee(uid, e["userId"]))
-            if can_melee:
-                can, orig = self._move_to_attack_range(uid, e["userId"], atk_range)
-                if can:
-                    reachable.append((e, orig))
-        if not reachable:
-            return ""
-        target, _orig_coord = reachable[0]
-        if tid and any(e["userId"]==tid for e, _ in reachable):
-            for e, oc in reachable:
-                if e["userId"]==tid: target, _orig_coord = e, oc; break
-        tid = target["userId"]
+        atk_range = profile[1] if profile else self._get_attack_range(skill_name=bn_tmp, uid=uid)
+        if getattr(self, 'autochess_mode', False):
+            cand_enemies = []
+            for e in enemies:
+                can_melee, _fly_penalty = ((True, False) if self._is_y14(uid) and
+                                           getattr(char, 'phase', 2) == 1 else self._can_melee(uid, e["userId"]))
+                if can_melee and self._can_reach_attack_range(uid, e["userId"], atk_range):
+                    cand_enemies.append(e)
+            if not cand_enemies:
+                return ""
+            target = next((e for e in cand_enemies if tid and e["userId"] == tid), cand_enemies[0])
+            tid = target["userId"]
+            can_atk, _orig_coord = self._move_to_attack_range(uid, tid, atk_range)
+            if not can_atk:
+                return ""
+        else:
+            reachable = []
+            for e in enemies:
+                # _can_melee 返回 (can_melee, fly_penalty) 元组，必须解包——
+                # 直接判真值会把 (False, False) 当成可用，使飞行过滤失效。
+                can_melee, _fly_penalty = ((True, False) if self._is_y14(uid) and
+                                           getattr(char, 'phase', 2) == 1 else self._can_melee(uid, e["userId"]))
+                if can_melee:
+                    can, orig = self._move_to_attack_range(uid, e["userId"], atk_range)
+                    if can:
+                        reachable.append((e, orig))
+            if not reachable:
+                return ""
+            target, _orig_coord = reachable[0]
+            if tid and any(e["userId"]==tid for e, _ in reachable):
+                for e, oc in reachable:
+                    if e["userId"]==tid: target, _orig_coord = e, oc; break
+            tid = target["userId"]
+        self._mark_flying_dive(uid, atk_range)
         bn, bv = char.get_best_melee(); bv = self._apply_buff_skill_mod(uid, bv, bn)
         # 奖惩骰参与普通攻击命中判定（原先只掷裸随机数）
         atk_bp = _calc_net_bp(self._get_active_buffs(uid), '', bn)
@@ -10471,6 +11250,7 @@ class FastBattleEngine(FullBattleEngine):
         # AUX 1,3,19: apply damage multipliers before shield
         dmg_val = int(dmg_val * self._get_buff_dmg_mult(uid, tid) * self._get_buff_dmg_dice_mult(uid))
         dmg_val += self._get_buff_dmg_flat(tid); dmg_val = max(0, dmg_val)  # AUX code 2: before shields
+        dmg_val = self._apply_autochess_damage_mods(uid, tid, dmg_val)
         # Check for damageModifier effects (e.g. 火鼠裘)
         for e in self._get_effects():
             if e.get('type') == 'damageModifier' and e.get('targetUserId') == tid \
