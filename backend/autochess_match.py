@@ -23,7 +23,6 @@ from autochess_catalog import (
 from battle_engine import FullBattleEngine, action_committed, parse_coord
 from grid_nav import terrain_type
 
-BENCH_CAPACITY = 10
 
 
 class _HeadlessEngineProxy(FullBattleEngine):
@@ -154,9 +153,18 @@ class AutoChessMatch:
             key=lambda u: u['bench_idx'] if u['bench_idx'] is not None else 99,
         )
 
+    def bench_capacity(self, cid):
+        cmd = self.commanders[cid]
+        level = cmd['level']
+        base = 10 if level >= 5 else 8 if level >= 3 else 6
+        return base + (2 if 'aug_reserves' in cmd['augments'] else 0)
+
     def _free_bench_slot(self, cid):
         used = {u['bench_idx'] for u in self.bench_units(cid)}
-        for idx in range(BENCH_CAPACITY):
+        capacity = self.bench_capacity(cid)
+        if len(used) >= capacity:
+            return None
+        for idx in range(capacity):
             if idx not in used:
                 return idx
         return None
@@ -286,7 +294,7 @@ class AutoChessMatch:
             board_coord = self._free_board_coord(cid)
             auto_deploy = board_coord is not None
         if not auto_deploy and bench_slot is None and not will_merge:
-            return False, f'备战席已满（{BENCH_CAPACITY}/{BENCH_CAPACITY}）且上阵人口已满'
+            return False, f'备战席已满（{len(self.bench_units(cid))}/{self.bench_capacity(cid)}）且上阵人口已满'
 
         cmd['gold'] -= cost
         self.pool[serial] -= 1
@@ -348,7 +356,7 @@ class AutoChessMatch:
         if self.phase != 'prep':
             return False
         cmd = self.commanders[cid]
-        if cmd['level'] >= 5:
+        if cmd['level'] >= max(LEVEL_TABLE):
             return False
         if cmd['gold'] < 4:
             return False
@@ -359,13 +367,13 @@ class AutoChessMatch:
     def _grant_xp(self, cid, amount):
         cmd = self.commanders[cid]
         cmd['xp'] += int(amount)
-        while cmd['level'] < 5:
+        while cmd['level'] < max(LEVEL_TABLE):
             need = LEVEL_TABLE[cmd['level']]['xp_to_next']
             if need <= 0 or cmd['xp'] < need:
                 break
             cmd['xp'] -= need
             cmd['level'] += 1
-        if cmd['level'] >= 5:
+        if cmd['level'] >= max(LEVEL_TABLE):
             cmd['xp'] = 0
 
     def deploy_unit(self, cid, unit_id, coord=None):
@@ -1192,7 +1200,7 @@ class AutoChessMatch:
                 'shop_locked': p1['shop_locked'],
                 'shop': shop_view,
                 'board': [dict(u, **UNIT_CATALOG[u['serial']]) for u in p1_board],
-                'bench_capacity': BENCH_CAPACITY,
+                'bench_capacity': self.bench_capacity(self.player_id),
                 'bench': [dict(u, **UNIT_CATALOG[u['serial']]) for u in self.bench_units(self.player_id)],
                 'synergies': list(p1_synergies.values()),
                 'augments': [next((a for a in AUGMENTS if a['id'] == aid), {'id': aid, 'name': aid}) for aid in p1['augments']],

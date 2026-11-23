@@ -10,6 +10,28 @@ import combat_defaults
 
 
 class AutoChessModeTests(unittest.TestCase):
+    def test_bench_capacity_by_level_and_augment(self):
+        match = AutoChessMatch(seed=19)
+        cid = match.player_id
+        cmd = match.commanders[cid]
+        for level, slots in enumerate((6, 6, 8, 8, 10, 10), start=1):
+            cmd['level'] = level
+            cmd['augments'] = []
+            self.assertEqual(match.bench_capacity(cid), slots)
+            cmd['pending_augments'] = [next(a for a in ac_cat.AUGMENTS if a['id'] == 'aug_reserves')]
+            self.assertTrue(match.pick_augment(cid, 'aug_reserves')[0])
+            restored = AutoChessMatch.from_dict(match.to_dict())
+            self.assertEqual(restored.to_public_dict()['player']['bench_capacity'], slots + 2)
+            match.round_num = 8
+            match._offer_augments_if_due()
+            self.assertNotIn('aug_reserves', [a['id'] for a in cmd['pending_augments']])
+
+        cmd['level'] = 5
+        cmd['gold'] = 4
+        cmd['xp'] = ac_cat.LEVEL_TABLE[5]['xp_to_next'] - 4
+        self.assertTrue(match.buy_xp(cid))
+        self.assertEqual(cmd['level'], 6)
+
     def test_classic_mode_invariants_and_main_action_formula_preserved(self):
         self.assertEqual(cd.GLOBAL_RANGE_OVERRIDE, 1)
         self.assertEqual(combat_defaults.DEFAULTS['DEFAULT_MAP_SIZE'], '10x10')
@@ -104,7 +126,15 @@ class AutoChessModeTests(unittest.TestCase):
         cat = client.get('/api/ui/autochess/catalog').get_json()
         self.assertEqual(len(cat['units']), 17)
         self.assertEqual(len(cat['synergies']), 8)
-        self.assertEqual(len(cat['augments']), 14)
+        self.assertEqual(len(cat['augments']), 15)
+        self.assertEqual(len(cat['wiki_units']), 17)
+        self.assertNotIn('Y60', cat['wiki_units'])
+        self.assertIn('2', cat['wiki_units']['Y1']['star_stats'])
+        self.assertEqual(cat['wiki_units']['Y14']['skills'][0]['cooldown'], 3)
+        for serial, w in cat['wiki_units'].items():
+            for sp in w['skills']:
+                if sp['range'] is not None:
+                    self.assertLess(sp['range'], 90, (serial, sp))
 
         cr = client.post('/api/ui/autochess/matches', json={'mode': 'pve12', 'arena_preset': 'autochess_citadel'})
         self.assertEqual(cr.status_code, 200)

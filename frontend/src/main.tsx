@@ -9,14 +9,14 @@ import { withEncyclopedia, type CatalogCharacter } from './encyclopedia';
 import { EncyclopediaSkill } from './EncyclopediaSkill';
 import { EncyclopediaProse } from './EncyclopediaProse';
 import { CharacterPreview, CardInfo, DefinitionPanel, HelpPage, KnowledgeProvider, TermText } from './KnowledgeUI';
-import { pageFromPath, pageUrl } from './navigation';
+import { isAutoChessPage, pageFromPath, pageUrl } from './navigation';
 import './expansion.css';
 import { CombatControls, BonusSelect } from './CombatControls';
 import { CellSkillPicker } from './CellSkillPicker';
 import { AutoReactionControls, DataEditor, SimulationPanel, TournamentPanel } from './Expansion';
 import { SettingsPage } from './SettingsPage';
 import { StoryApp } from './story/StoryApp';
-import { AutoChessPage } from './autochess/AutoChessPage';
+import { AutoChessApp } from './autochess/AutoChessApp';
 import { RuntimeSettings, readPreferences, savePreferences, type SettingsResponse, type SettingsValues, type Preferences } from './settings';
 
 const accents = ['#db775a', '#8a78c5', '#5b9b91', '#c88c45', '#c56785', '#6694bc', '#9a80b1', '#cb8b9e', '#658878', '#c29b52', '#688ab6', '#847fc0'];
@@ -62,13 +62,22 @@ function CharacterStats({ character }: { character: Character }) {
   </table><p>体力、魔力为满值；攻击次数按每轮主动作数计算。不含技能、被动与状态加成。</p></section>;
 }
 function coordPoint(coord: string) { const m = /^([A-Z])(\d+)$/.exec(coord); return m ? [m[1].charCodeAt(0)-65, Number(m[2])-1] : [-1,-1]; }
-function App() {
+function ClassicApp({
+  onSwitchToAutoChess,
+  canLeaveRef,
+}: {
+  onSwitchToAutoChess: () => void;
+  canLeaveRef: { current: () => boolean };
+}) {
   const [catalog, setCatalog] = useState<Character[]>([]);
   const [presets, setPresets] = useState<Effect[]>([]);
   const updateRoom = (r: Room) => setRoom(old => old?.code === r.code && r.revision >= old.revision ? r : old);
   const reloadCatalog = () => { api<CatalogResponse>('/catalog').then(x=>{setCatalog(hydrateCatalog(x));const valid=new Set(x.characters.map(c=>c.serial));setTeamA(old=>old.filter(s=>valid.has(s)));setTeamB(old=>old.filter(s=>valid.has(s)));}); api<{presets:Effect[]}>('/presets').then(x=>setPresets(x.presets)); };
   useEffect(()=>{ api<{presets:Effect[]}>('/presets').then(x=>setPresets(x.presets)).catch(()=>{}); },[]);
-  const [page, setPage] = useState(() => pageFromPath(location.pathname));
+  const [page, setPage] = useState<string>(() => {
+    const initial = pageFromPath(location.pathname);
+    return isAutoChessPage(initial) ? 'home' : initial;
+  });
   const [name, setName] = useState(readPreferences().name);
   const [defaults, setDefaults] = useState<SettingsValues | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
@@ -144,6 +153,7 @@ function App() {
   const restored = useRef(false);
   const legacyInvite=useRef(/^\/ui\/?$/.test(location.pathname)&&new URLSearchParams(location.search).has('room'));
   const navigate = (next: string, replace = false, anchor = '') => {
+    if(isAutoChessPage(next)) return;
     if(next===page&&!detailSerial)return;
     if (page !== next && page === 'settings' && settingsDirty && !confirm('放弃未保存的设置修改？')) return;
     pageScroll.current[page]=window.scrollY;
@@ -153,12 +163,21 @@ function App() {
     setSettingsDirty(false);setPage(next);
     if(!anchor)requestAnimationFrame(()=>window.scrollTo(0,pageScroll.current[next]||0));
   };
+  canLeaveRef.current = () => !(page === 'settings' && settingsDirty) || confirm('放弃未保存的设置修改？');
+  const handleSwitchToAutoChess = () => {
+    if (!canLeaveRef.current()) return;
+    setSettingsDirty(false);
+    onSwitchToAutoChess();
+  };
   useEffect(()=>{
     const normalized=pageFromPath(location.pathname);
-    window.history.replaceState({...window.history.state,navigationIndex:navigationIndex.current,scroll:window.scrollY},'',pageUrl(normalized,location.search)+location.hash);
+    if (!isAutoChessPage(normalized)) {
+      window.history.replaceState({...window.history.state,navigationIndex:navigationIndex.current,scroll:window.scrollY},'',pageUrl(normalized,location.search)+location.hash);
+    }
     const pop=(event:PopStateEvent)=>{
       if(undoPop.current){undoPop.current=false;return;}
       const next=pageFromPath(location.pathname),current=routeRef.current;
+      if(isAutoChessPage(next)) return;
       if(next!==current.page&&current.page==='settings'&&current.settingsDirty&&!confirm('放弃未保存的设置修改？')) {
         const delta=navigationIndex.current-(event.state?.navigationIndex ?? navigationIndex.current);
         if(delta){undoPop.current=true;window.history.go(delta);}else window.history.pushState({navigationIndex:navigationIndex.current},'',current.url);return;
@@ -322,16 +341,16 @@ function App() {
   }
 
   return <RuntimeSettings.Provider value={defaults || {}}><KnowledgeProvider catalog={catalog} serial={detail?.serial} openCharacter={setDetail} openTerm={openTerm}><div className={'app-shell'+(page==='story/play'?' story-playing':page==='story/editor'?' story-authoring':'')}>
-    <aside className="sidebar"><button className="brand-mark" aria-label="星序首页" onClick={()=>navigate('home')}><Sparkles size={29} strokeWidth={1.4}/></button><div className="nav-stack">{[{id:'home',label:'战术大厅',icon:Home},{id:'autochess',label:'自走棋',icon:Diamond},{id:'story',label:'剧情模式',icon:BookOpen},{id:'setup',label:'自由对战',icon:Swords},{id:'battle',label:'当前房间',icon:Users},{id:'sim',label:'模拟实验室',icon:BarChart3},{id:'library',label:'角色图鉴',icon:BookOpen},{id:'editor',label:'角色管理',icon:Settings2},{id:'tournament',label:'锦标赛',icon:Star},{id:'settings',label:'设置',icon:Settings2}].map(n=><button key={n.id} title={n.label} aria-label={n.label} className={'nav-item '+(page===n.id?'active':'')} onClick={()=>n.id==='battle'&&!room?setDialog('join'):n.id==='setup'?prepare('local'):(setFilter(''),navigate(n.id))}><n.icon size={21} strokeWidth={1.6}/><span>{n.label}</span></button>)}</div><div className="sidebar-bottom"><IconButton title="帮助" onClick={()=>navigate('help/mechanics')}><CircleHelp size={21}/></IconButton><div className="user-avatar">{name.slice(0,1)}</div></div></aside>
+    <aside className="sidebar"><button className="brand-mark" aria-label="星序首页" onClick={()=>navigate('home')}><Sparkles size={29} strokeWidth={1.4}/></button><div className="nav-stack">{[{id:'home',label:'战术大厅',icon:Home},{id:'story',label:'剧情模式',icon:BookOpen},{id:'setup',label:'自由对战',icon:Swords},{id:'battle',label:'当前房间',icon:Users},{id:'sim',label:'模拟实验室',icon:BarChart3},{id:'library',label:'角色图鉴',icon:BookOpen},{id:'editor',label:'角色管理',icon:Settings2},{id:'tournament',label:'锦标赛',icon:Star},{id:'settings',label:'设置',icon:Settings2}].map(n=><button key={n.id} title={n.label} aria-label={n.label} className={'nav-item '+(page===n.id?'active':'')} onClick={()=>n.id==='battle'&&!room?setDialog('join'):n.id==='setup'?prepare('local'):(setFilter(''),navigate(n.id))}><n.icon size={21} strokeWidth={1.6}/><span>{n.label}</span></button>)}</div><div className="sidebar-bottom"><IconButton title="帮助" onClick={()=>navigate('help/mechanics')}><CircleHelp size={21}/></IconButton><div className="user-avatar">{name.slice(0,1)}</div></div></aside>
     <main className="main-shell">
       <header className="topbar">
-        <div className="breadcrumb"><span>星序 <small>ASTRAL TACTICS</small></span><ChevronRight size={14}/><strong>{{home:'战术大厅',setup:'作战准备',battle:'战术室',sim:'模拟实验室',library:'角色图鉴',editor:'角色管理',tournament:'锦标赛',settings:'设置',story:'章节选择','story/play':'剧情模式','story/editor':'故事创作室','help/mechanics':'机制说明','help/characters':'角色卡帮助'}[page]}</strong></div>
-        <div className="topbar-actions"><span className={'connection '+(connected?'online':'')}><i/>{connected?'引擎已连接':'连接恢复中'}</span><span className="topbar-divider"/><button className="profile" onClick={()=>navigate('settings')}><span>{name.slice(0,1)}</span>{name}<ChevronDown size={13}/></button></div>
+        <div className="breadcrumb"><span>星序 <small>ASTRAL TACTICS</small></span><ChevronRight size={14}/><strong>{({home:'战术大厅',setup:'作战准备',battle:'战术室',sim:'模拟实验室',library:'角色图鉴',editor:'角色管理',tournament:'锦标赛',settings:'设置',story:'章节选择','story/play':'剧情模式','story/editor':'故事创作室','help/mechanics':'机制说明','help/characters':'角色卡帮助'} as Record<string, string>)[page] || '战术大厅'}</strong></div>
+        <div className="topbar-actions"><span className={'connection '+(connected?'online':'')}><i/>{connected?'引擎已连接':'连接恢复中'}</span><span className="topbar-divider"/><button className="profile" onClick={()=>navigate('settings')}><span>{name.slice(0,1)}</span>{name}<ChevronDown size={13}/></button><button type="button" className="button subtle compact-button classic-ac-switch" onClick={handleSwitchToAutoChess}><Diamond size={15}/><span>自走棋模式</span></button></div>
       </header>
     {error&&<div className="error-banner" role="alert"><Shield size={17}/><span>{error}</span><button onClick={()=>setError('')} aria-label="关闭错误"><X size={16}/></button></div>}
     {!catalog.length || !defaults?<div className="loading-state"><LoaderCircle size={28} className="spin"/><h2>正在连接星序引擎</h2><p>请确认 Python 后端已启动</p><button className="button" onClick={()=>location.reload()}>重新连接</button></div>:<>
     {page==='home'&&<div className="page home-page"><div className="page-intro"><div><div className="eyebrow">{pageCopy.home.intro.eyebrow}</div><h1>{pageCopy.home.intro.welcome}{name}<span className="heading-star">✧</span></h1><p>{pageCopy.home.intro.description}</p></div><span className="date-badge"><Sun size={16}/> {pageCopy.home.intro.badge}</span></div><section className="home-hero"><div className="hero-copy"><Tag><span className="tiny-spark">✧</span> {pageCopy.home.hero.tag}</Tag><h2>{pageCopy.home.hero.title[0]}<br/>{pageCopy.home.hero.title[1]}<span>{pageCopy.home.hero.punctuation}</span></h2><p>{pageCopy.home.hero.description[0]}<br/>{pageCopy.home.hero.description[1]}</p><button className="button primary" onClick={()=>navigate('tournament')}>{pageCopy.home.hero.button} <ArrowRight size={17}/></button><small><Diamond size={11}/> {pageCopy.home.hero.features}</small></div><div className="hero-art" aria-hidden="true"><div className="orbital orbit-one"/><div className="orbital orbit-two"/><span className="hero-star star-one">✦</span><span className="hero-star star-two">✧</span><span className="hero-star star-three">✦</span><div className="hero-card hero-card-back"><Sigil character={ch('Y7')}/><strong>{pageCopy.home.hero.backCard.name}</strong><small>{pageCopy.home.hero.backCard.caption}</small></div><div className="hero-card hero-card-front"><div className="hero-card-label"><span>VIII</span><Sparkles size={15}/></div><Sigil character={ch('Y8')}/><strong>{pageCopy.home.hero.frontCard.name}</strong><small>{pageCopy.home.hero.frontCard.caption}</small><div className="hero-card-stars">✧ &nbsp; ✧ &nbsp; ✧</div></div><span className="art-caption">{pageCopy.home.hero.caption}</span></div></section>
-      <div className="mode-grid">{[{en:'AUTO-CHESS',title:'星序自走棋',desc:'商店抽卡、利息升星、8羁绊与对称地形战术排阵（完整保留经典模式）。',icon:Diamond,color:'peach',click:()=>navigate('autochess')},{...pageCopy.home.modes.story,icon:BookOpen,color:'violet',click:()=>navigate('story')},{...pageCopy.home.modes.local,icon:Swords,color:'violet',click:()=>prepare('local')},{...pageCopy.home.modes.lan,icon:Users,color:'peach',click:()=>prepare('lan')},{...pageCopy.home.modes.watch,icon:Eye,color:'sage',click:()=>prepare('watch')}].map(m=><button key={m.en} className={'mode-card '+m.color} onClick={m.click}><span className="mode-icon"><m.icon size={24} strokeWidth={1.5}/></span><div><small>{m.en}</small><h3>{m.title}</h3><p>{m.desc}</p></div><ArrowRight size={18}/></button>)}</div>
+      <div className="mode-grid">{[{...pageCopy.home.modes.story,icon:BookOpen,color:'violet',click:()=>navigate('story')},{...pageCopy.home.modes.local,icon:Swords,color:'violet',click:()=>prepare('local')},{...pageCopy.home.modes.lan,icon:Users,color:'peach',click:()=>prepare('lan')},{...pageCopy.home.modes.watch,icon:Eye,color:'sage',click:()=>prepare('watch')}].map(m=><button key={m.en} className={'mode-card '+m.color} onClick={m.click}><span className="mode-icon"><m.icon size={24} strokeWidth={1.5}/></span><div><small>{m.en}</small><h3>{m.title}</h3><p>{m.desc}</p></div><ArrowRight size={18}/></button>)}</div>
       <section className="roster-section"><div className="section-heading"><div><span className="eyebrow">{pageCopy.home.roster.eyebrow}</span><h2>{pageCopy.home.roster.title} <span className="count">{catalog.length}</span></h2></div><button className="text-button" onClick={()=>navigate('library')}>{pageCopy.home.roster.button} <ArrowRight size={16}/></button></div><div className="character-grid home-roster">{['Y1','Y4','Y7','Y8','Y9','Y12'].map(s=>ch(s)).filter(Boolean).map(c=><CharacterCard key={c!.serial} character={c!} onClick={()=>setDetail(c!)}/>)}</div></section><footer className="page-footer"><span><Sparkles size={13}/> {pageCopy.home.footer.tagline}</span><button onClick={()=>setDialog('join')}>{pageCopy.home.footer.join} <ArrowRight size={13}/></button></footer></div>}
 
     {page==='setup'&&<div className="page setup-page"><div className="page-intro"><div><div className="eyebrow">{pageCopy.setup.eyebrow}</div><h1>{pageCopy.setup.title}</h1><p>{pageCopy.setup.description}</p></div><button className="button subtle" onClick={()=>setDialog('join')}><Link size={16}/>加入房间</button></div><div className="setup-toolbar"><div className="segmented">{[['local','本地对战',Swords],['lan','局域网房间',Users],['watch','AI 观战',Eye]].map(([id,label,Icon])=><button key={id as string} className={mode===id?'active':''} onClick={()=>setMode(id as string)}>{typeof Icon!=='string'&&<Icon size={16}/>} {label as string}</button>)}</div><label>地图尺寸 <select value={mapSize} onChange={e=>setMapSize(e.target.value)}>{Array.from(new Set([mapSize,...[8,10,12,16].map(n=>`${n}x${n}`)])).map(size=><option key={size}>{size}</option>)}</select></label></div><TeamEditor/><div className="setup-submit"><div><Sparkles size={18}/><p>{mode==='watch'?'双方将由 AI 控制。开始后可暂停、单步推进和调整速度。':mode==='lan'?'创建后可分配角色给好友，所有玩家准备后开始。':'默认由你操作双方。勾选角色旁的 AI 可开启混合对战。'}</p></div><button className="button primary" disabled={busy||!teamA.length||!teamB.length} onClick={create}>{busy?<LoaderCircle className="spin" size={16}/>:<Swords size={17}/>}创建{mode==='lan'?'房间':'演习'}<ArrowRight size={16}/></button></div></div>}
@@ -359,7 +378,6 @@ function App() {
     {page==='settings'&&<SettingsPage preferences={{name,reduced}} onPreferences={updatePreferences} onSaved={setDefaults} onDirty={setSettingsDirty} catalog={catalog} onError={setError}/>}
     {page.startsWith('help/')&&<HelpPage tab={page.split('/')[1]} catalog={catalog} navigate={navigate} anchor={location.hash.slice(1)}/>}
     {page==='battle'&&!room&&<div className="page"><h1>尚未加入战术室</h1><p className="muted">输入房间码加入已有房间，或创建一场自由对战。</p><div className="modal-actions"><button className="button" onClick={()=>setDialog('join')}>输入房间码</button><button className="button primary" onClick={()=>prepare('local')}>自由对战</button></div></div>}
-    {page==='autochess'&&<AutoChessPage playerName={name} onError={setError}/>}
     {page==='tournament'&&<TournamentPanel catalog={catalog} onError={setError} onWatch={r=>acceptRoom(r)} onSettings={()=>{navigate('settings');location.hash='playoff-settings';}}/>}
     </>}
     </main>
@@ -400,8 +418,48 @@ function App() {
 
     {dialog==='leave'&&<Modal title="离开本次演习？" onClose={()=>setDialog('')}><p>房主离开会暂停 AI 推进；其他玩家离开后，其角色交由房主接管。服务运行期间可通过原房间码重新加入。</p><div className="modal-actions"><button className="button" onClick={()=>setDialog('')}>留在这里</button><button className="button primary" onClick={leave}>离开房间 <ArrowRight size={16}/></button></div></Modal>}
     {dialog==='invite'&&<Modal title="邀请好友" onClose={()=>setDialog('')}><p>请选择好友能够访问的局域网地址。多网卡或 VPN 环境下，请选择与好友处于同一网络的地址。</p><div className="invite-links">{room?.invite_urls?.map(url=><label key={url}><input readOnly aria-label="局域网邀请地址" value={url}/><button className="icon-button" title="复制地址" onClick={async()=>{try{await navigator.clipboard.writeText(url);notice('邀请链接已复制');}catch{notice('请选中地址并手动复制');}}}><Copy size={15}/></button></label>)}</div><label className="field">房间码<input readOnly value={room?.code||''}/></label></Modal>}
-    {dialog==='help'&&<Modal title="棋盘操作与规则速览" onClose={()=>setDialog('')} wide><div style={{display:'grid',gap:10,fontSize:'0.92rem',lineHeight:1.6}}><p><strong>坐标与移动：</strong>横向以字母 A–P（可扩展至 Z）标记列，纵向以数字标记行。点击棋盘空格或控制面板可移动，主动作与附加动作在右侧面板独立显示。</p><p><strong>D100 攻防与反应：</strong>攻击成功率按 CoC7 大成功 / 极难 / 困难 / 普通划分等级；受到攻击或可反应法术时，防守方可选择闪避、反击或格挡（需持盾且护盾池 &gt; 0）。</p><p><strong>经典模式 vs 星序自走棋：</strong>自由对战与锦标赛完整保持经典 10×10 与原有射程规则；若想体验对称多地形战场、真实射程与商店抽卡升星，请从左侧进入「自走棋」。</p><div className="modal-actions"><button className="button" onClick={()=>{setDialog('');navigate('help/mechanics');}}>打开完整机制百科</button><button className="button primary" onClick={()=>setDialog('')}>知道了</button></div></div></Modal>}
+    {dialog==='help'&&<Modal title="棋盘操作与规则速览" onClose={()=>setDialog('')} wide><div style={{display:'grid',gap:10,fontSize:'0.92rem',lineHeight:1.6}}><p><strong>坐标与移动：</strong>横向以字母 A–P（可扩展至 Z）标记列，纵向以数字标记行。点击棋盘空格或控制面板可移动，主动作与附加动作在右侧面板独立显示。</p><p><strong>D100 攻防与反应：</strong>攻击成功率按 CoC7 大成功 / 极难 / 困难 / 普通划分等级；受到攻击或可反应法术时，防守方可选择闪避、反击或格挡（需持盾且护盾池 &gt; 0）。</p><p><strong>经典模式与独立自走棋：</strong>自由对战、剧情与锦标赛完整保持经典 10×10 与原有射程规则；若想体验独立的星序自走棋（对称地形、真实射程、商店抽卡升星），可通过顶栏唯一「自走棋模式」按钮切换。</p><div className="modal-actions"><button className="button" onClick={()=>{setDialog('');navigate('help/mechanics');}}>打开完整机制百科</button><button className="button primary" onClick={()=>setDialog('')}>知道了</button></div></div></Modal>}
   </div></KnowledgeProvider></RuntimeSettings.Provider>;
 }
 
-createRoot(document.getElementById('root')!).render(<App/>);
+function RootApp() {
+  const [realm, setRealm] = useState<'classic' | 'autochess'>(() =>
+    isAutoChessPage(pageFromPath(location.pathname)) ? 'autochess' : 'classic'
+  );
+  const canLeaveClassicRef = useRef<() => boolean>(() => true);
+  const realmRef = useRef(realm);
+  realmRef.current = realm;
+
+  useEffect(() => {
+    const onPopState = () => {
+      const nextRealm: 'classic' | 'autochess' = isAutoChessPage(pageFromPath(location.pathname))
+        ? 'autochess'
+        : 'classic';
+      if (realmRef.current === 'classic' && nextRealm === 'autochess' && !canLeaveClassicRef.current()) {
+        window.history.pushState(window.history.state, '', pageUrl('settings'));
+        return;
+      }
+      setRealm(nextRealm);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const switchToAutoChess = () => {
+    window.history.pushState({ scroll: 0 }, '', pageUrl('autochess'));
+    setRealm('autochess');
+    window.scrollTo(0, 0);
+  };
+
+  const switchToClassic = () => {
+    window.history.pushState({ scroll: 0 }, '', pageUrl('home'));
+    setRealm('classic');
+    window.scrollTo(0, 0);
+  };
+
+  return realm === 'autochess'
+    ? <AutoChessApp onSwitchToClassic={switchToClassic} />
+    : <ClassicApp onSwitchToAutoChess={switchToAutoChess} canLeaveRef={canLeaveClassicRef} />;
+}
+
+createRoot(document.getElementById('root')!).render(<RootApp/>);

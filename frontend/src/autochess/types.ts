@@ -220,12 +220,140 @@ export interface AutoChessMatchSummary {
   updated_at: number;
 }
 
+export interface AutoChessStarStat {
+  star: number;
+  hp: number;
+  mp: number;
+  skill_bonus: number;
+  flat_dmg: number;
+  flat_dr: number;
+  dodge: number;
+  summon_hp_mult: number;
+  summon_skill_bonus: number;
+}
+
+export interface AutoChessWikiSkill {
+  name: string;
+  timing: string;
+  phase: number;
+  phase_label: string;
+  mp_cost: number | string;
+  range: number | null;
+  cooldown: number;
+  summary: string;
+}
+
+export interface AutoChessUnitWiki {
+  serial: string;
+  name: string;
+  cost: number;
+  pool_count: number;
+  role: string;
+  traits: string[];
+  range: number;
+  tag: string;
+  blurb: string;
+  mov: number;
+  tactical_move: number;
+  main_actions: number;
+  dex: number;
+  dodge: number;
+  can_block: boolean;
+  block_val: number;
+  flying: boolean;
+  tuning_notes: string[];
+  star_stats: Record<string, AutoChessStarStat>;
+  basic_attack: {
+    skill_name: string;
+    skill_val: number;
+    dice: string;
+    pierce: boolean;
+  };
+  passives: string[];
+  skills: AutoChessWikiSkill[];
+}
+
+export const AUTOCHESS_ROLE_LABELS: Record<string, string> = {
+  tank: '重装',
+  bruiser: '斗士',
+  assassin: '刺客',
+  ranged: '射手',
+  support: '辅助',
+  summoner: '召唤',
+};
+
+export type AutoChessWikiTab = 'units' | 'synergies' | 'augments' | 'rules';
+
+export interface AutoChessWikiTarget {
+  tab: AutoChessWikiTab;
+  serial?: string;
+  synergyId?: string;
+}
+
+export function resolveUnitWiki(catalog: AutoChessCatalog | null, serial: string): AutoChessUnitWiki | null {
+  if (!catalog || !serial) return null;
+  if (catalog.wiki_units && catalog.wiki_units[serial]) {
+    return catalog.wiki_units[serial];
+  }
+  const meta = catalog.units.find(u => u.serial === serial);
+  if (!meta) return null;
+  return {
+    serial: meta.serial,
+    name: meta.name,
+    cost: meta.cost,
+    pool_count: catalog.pool_counts?.[String(meta.cost)] ?? 0,
+    role: meta.role,
+    traits: meta.traits,
+    range: meta.range,
+    tag: meta.tag,
+    blurb: meta.blurb,
+    mov: 8,
+    tactical_move: 4,
+    main_actions: 1,
+    dex: 60,
+    dodge: 50,
+    can_block: false,
+    block_val: 0,
+    flying: serial === 'Y5' || serial === 'Y13',
+    tuning_notes: [],
+    star_stats: {
+      '1': {
+        star: 1,
+        hp: 10,
+        mp: 10,
+        skill_bonus: 0,
+        flat_dmg: 0,
+        flat_dr: 0,
+        dodge: 50,
+        summon_hp_mult: 1,
+        summon_skill_bonus: 0,
+      },
+    },
+    basic_attack: { skill_name: '斗殴', skill_val: 50, dice: '1d4', pierce: false },
+    passives: [],
+    skills: [],
+  };
+}
+
 export interface AutoChessCatalog {
   units: AutoChessUnitMeta[];
+  wiki_units?: Record<string, AutoChessUnitWiki>;
   synergies: AutoChessSynergyDef[];
   augments: AutoChessAugment[];
   arenas: AutoChessArenaPreset[];
-  terrains: Record<string, { name: string; summary: string }>;
+  terrains: Record<string, string | { name?: string; summary?: string }>;
   levels: Record<string, { max_pop: number; xp_to_next: number; odds: Record<string, number> }>;
   pool_counts: Record<string, number>;
+  star_scaling?: Record<
+    string,
+    {
+      hp_mult: number;
+      mp_mult: number;
+      skill_bonus: number;
+      flat_dmg: number;
+      flat_dr: number;
+      summon_hp_mult: number;
+      summon_skill_bonus: number;
+    }
+  >;
 }

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Award,
+  BookOpen,
   CircleHelp,
   Coins,
   Compass,
@@ -10,7 +11,6 @@ import {
   Pause,
   Play,
   RefreshCw,
-  Shield,
   Sparkles,
   Swords,
   Trash2,
@@ -26,23 +26,21 @@ import {
   listAutoChessMatches,
   sendAutoChessAction,
 } from './api';
+import { AutoChessWikiModal } from './AutoChessWikiModal';
+import { AutoChessWikiPopover } from './AutoChessWikiPopover';
 import './autochess.css';
-import type {
-  AutoChessCatalog,
-  AutoChessCombatUnit,
-  AutoChessMatchState,
-  AutoChessMatchSummary,
-  AutoChessOwnedUnit,
+import {
+  AUTOCHESS_ROLE_LABELS,
+  type AutoChessCatalog,
+  type AutoChessCombatUnit,
+  type AutoChessMatchState,
+  type AutoChessMatchSummary,
+  type AutoChessOwnedUnit,
+  type AutoChessWikiTarget,
 } from './types';
+import { useHoverWiki } from './useHoverWiki';
 
-const ROLE_LABELS: Record<string, string> = {
-  tank: '重装',
-  bruiser: '斗士',
-  assassin: '刺客',
-  ranged: '射手',
-  support: '辅助',
-  summoner: '召唤',
-};
+const ROLE_LABELS = AUTOCHESS_ROLE_LABELS;
 
 const STANCE_LABELS: Record<string, string> = {
   balanced: '均衡',
@@ -67,9 +65,13 @@ function sellValue(cost: number, star: number): number {
 
 export function AutoChessPage({
   playerName,
+  onPlayerNameChange,
+  wikiOpenNonce = 0,
   onError,
 }: {
   playerName: string;
+  onPlayerNameChange?: (name: string) => Promise<void> | void;
+  wikiOpenNonce?: number;
   onError: (msg: string) => void;
 }) {
   const [catalog, setCatalog] = useState<AutoChessCatalog | null>(null);
@@ -83,9 +85,19 @@ export function AutoChessPage({
   const [autoPlay, setAutoPlay] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [now, setNow] = useState(Date.now);
-  const [showRules, setShowRules] = useState(false);
+  const [wikiTarget, setWikiTarget] = useState<AutoChessWikiTarget | null>(null);
+  const [nameDraft, setNameDraft] = useState(playerName);
+  const hoverWiki = useHoverWiki();
   const inFlight = useRef(false);
   const resolveAfterStep = useRef(false);
+
+  useEffect(() => {
+    setNameDraft(playerName);
+  }, [playerName]);
+
+  useEffect(() => {
+    hoverWiki.closeNow();
+  }, [match?.id, match?.phase, match?.round_num, hoverWiki.closeNow]);
   // Older servers omit the deadline. Keep one local deadline throughout preparation.
   const prepDeadline = useMemo(() => {
     if (match?.phase !== 'prep') return null;
@@ -229,6 +241,57 @@ export function AutoChessPage({
     );
   }, [match, selectedId]);
 
+  useEffect(() => {
+    if (!wikiOpenNonce) return;
+    hoverWiki.closeNow();
+    setWikiTarget({
+      tab: 'units',
+      serial: selectedOwned?.serial || catalog?.units[0]?.serial || 'Y1',
+    });
+  }, [wikiOpenNonce]);
+
+  const wikiOverlays = (
+    <>
+      {hoverWiki.preview && (
+        <AutoChessWikiPopover
+          catalog={catalog}
+          serial={hoverWiki.preview.serial}
+          star={hoverWiki.preview.star}
+          anchorRect={hoverWiki.preview.rect}
+          onMouseEnter={hoverWiki.enterPopover}
+          onMouseLeave={hoverWiki.leavePopover}
+          onClose={hoverWiki.closeNow}
+          onOpenFullWiki={target => {
+            hoverWiki.closeNow();
+            setWikiTarget(target);
+          }}
+        />
+      )}
+      {wikiTarget && (
+        <AutoChessWikiModal
+          catalog={catalog}
+          initialTarget={wikiTarget}
+          onClose={() => setWikiTarget(null)}
+        />
+      )}
+    </>
+  );
+
+  const saveName = async () => {
+    const cleaned = nameDraft.trim().slice(0, 20);
+    if (!cleaned || cleaned === playerName || !onPlayerNameChange) {
+      setNameDraft(playerName);
+      return;
+    }
+    try {
+      await onPlayerNameChange(cleaned);
+      setNotice(`指挥官称呼已更新为「${cleaned}」`);
+    } catch (e) {
+      onError((e as Error).message);
+      setNameDraft(playerName);
+    }
+  };
+
   if (!match) {
     return (
       <div className="page ac-page">
@@ -237,12 +300,43 @@ export function AutoChessPage({
             <div className="eyebrow">STARLIGHT AUTO-CHESS · SPATIAL EDITION</div>
             <h1>星序自走棋</h1>
             <p>
-              保留完整 CoC D100 攻防与经典模式同时，引入对称战场、切比雪夫真射程、BFS 地形卡位、经济利息与三合一升星机制。
+              独立空间自走棋工作台：对称地形、切比雪夫真射程、BFS 地形卡位、经济利息与三合一升星。
             </p>
           </div>
-          <button className="button subtle" onClick={() => setShowRules(true)}>
-            <CircleHelp size={16} /> 规则说明
-          </button>
+          <div className="ac-lobby-actions">
+            {onPlayerNameChange && (
+              <form
+                className="ac-name-form"
+                onSubmit={e => {
+                  e.preventDefault();
+                  void saveName();
+                }}
+              >
+                <input
+                  aria-label="指挥官称呼"
+                  maxLength={20}
+                  value={nameDraft}
+                  placeholder="指挥官称呼"
+                  onChange={e => setNameDraft(e.target.value)}
+                />
+                <button type="submit" className="button subtle compact-button" disabled={busy || !nameDraft.trim()}>
+                  改名
+                </button>
+              </form>
+            )}
+            <button
+              className="button subtle compact-button"
+              onClick={() => setWikiTarget({ tab: 'units', serial: catalog?.units[0]?.serial })}
+            >
+              <BookOpen size={16} /> 自走棋百科
+            </button>
+            <button
+              className="button subtle compact-button"
+              onClick={() => setWikiTarget({ tab: 'rules' })}
+            >
+              <CircleHelp size={16} /> 规则说明
+            </button>
+          </div>
         </div>
 
         <div className="ac-lobby-grid">
@@ -288,7 +382,7 @@ export function AutoChessPage({
           </section>
 
           <section className="panel" style={{ padding: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div className="ac-section-head" style={{ marginBottom: 10 }}>
               <h3 style={{ margin: 0 }}>SQLite 存档对局</h3>
               <button className="button subtle" onClick={() => void refreshLobby()}>
                 <RefreshCw size={14} /> 刷新
@@ -321,7 +415,7 @@ export function AutoChessPage({
           </section>
         </div>
 
-        {showRules && <AutoChessRulesModal onClose={() => setShowRules(false)} />}
+        {wikiOverlays}
       </div>
     );
   }
@@ -425,7 +519,8 @@ export function AutoChessPage({
     );
   };
 
-  const benchSlots: (AutoChessOwnedUnit | null)[] = Array.from({ length: p.bench_capacity ?? 6 }, (_, i) =>
+  const benchCapacity = p.bench_capacity ?? 6;
+  const benchSlots: (AutoChessOwnedUnit | null)[] = Array.from({ length: 12 }, (_, i) =>
     p.bench.find(u => u.bench_idx === i) || null,
   );
 
@@ -467,7 +562,7 @@ export function AutoChessPage({
           <span className="muted" style={{ fontSize: '0.8rem' }}>
             {match.arena_name} · 公共牌库余 {match.pool_remaining} 张
           </span>
-          <button className="button subtle" onClick={() => setShowRules(true)}>
+          <button className="button subtle" onClick={() => setWikiTarget({ tab: 'rules' })}>
             <CircleHelp size={15} /> 规则说明
           </button>
         </div>
@@ -607,7 +702,14 @@ export function AutoChessPage({
               </div>
             </div>
 
-            <svg className="ac-board-svg" viewBox={`0 0 ${svgW} ${svgH}`} role="img" aria-label="自走棋战场棋盘">
+            <div className="ac-board-scroll">
+            <svg
+              className="ac-board-svg"
+              style={{ '--ac-cols': boardW } as CSSProperties}
+              viewBox={`0 0 ${svgW} ${svgH}`}
+              role="img"
+              aria-label="自走棋战场棋盘"
+            >
               {/* Column letters */}
               {Array.from({ length: boardW }, (_, c) => (
                 <text
@@ -701,8 +803,13 @@ export function AutoChessPage({
                   return (
                     <g
                       key={u.id}
+                      className="ac-board-unit"
+                      data-ac-serial={u.serial}
+                      onMouseEnter={e => hoverWiki.startHover(u.serial, u.star, e.currentTarget)}
+                      onMouseLeave={hoverWiki.leaveTarget}
                       onClick={e => {
                         e.stopPropagation();
+                        hoverWiki.closeNow();
                         onBoardCellClick(u.coord!, u);
                       }}
                     >
@@ -730,15 +837,27 @@ export function AutoChessPage({
                   if (!pt || (u.hp <= 0 && !u.dying)) return null;
                   const cx = padL + pt[0] * cellSize + cellSize / 2;
                   const cy = padT + pt[1] * cellSize + cellSize / 2;
+                  const starCount = u.name.match(/★/g)?.length || 1;
+                  const canWiki = !u.is_summon && Boolean(u.serial);
                   return (
-                    <g key={u.uid}>
+                    <g
+                      key={u.uid}
+                      className={canWiki ? 'ac-board-unit' : undefined}
+                      data-ac-serial={canWiki ? u.serial : undefined}
+                      onMouseEnter={
+                        canWiki
+                          ? e => hoverWiki.startHover(u.serial, starCount, e.currentTarget)
+                          : undefined
+                      }
+                      onMouseLeave={canWiki ? hoverWiki.leaveTarget : undefined}
+                    >
                       <title>{`${u.name} (${u.coord}) HP ${u.hp}/${u.max_hp} 护盾 ${u.shield} MP ${u.mp}`}</title>
                       {renderUnitToken(
                         cx,
                         cy,
                         u.name.replace(/★+/g, ''),
                         u.team,
-                        u.name.match(/★/g)?.length || 1,
+                        starCount,
                         u.hp / Math.max(1, u.max_hp),
                         u.shield,
                         u.flying,
@@ -750,6 +869,7 @@ export function AutoChessPage({
                   );
                 })}
             </svg>
+            </div>
 
             {/* AI Intent / Battle playback banner */}
             {match.phase !== 'prep' && latestFrame && (
@@ -803,6 +923,16 @@ export function AutoChessPage({
                       上阵到空位
                     </button>
                   )}
+                  <button
+                    className="button subtle"
+                    disabled={busy}
+                    onClick={() => {
+                      hoverWiki.closeNow();
+                      setWikiTarget({ tab: 'units', serial: selectedOwned.serial });
+                    }}
+                  >
+                    <BookOpen size={14} /> 查看百科
+                  </button>
                   <button
                     className="button subtle"
                     disabled={busy}
@@ -863,8 +993,8 @@ export function AutoChessPage({
 
           {/* Bench (6 slots) */}
           <section className="panel" style={{ padding: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <strong>备战席 ({p.bench.length}/{benchSlots.length})</strong>
+            <div className="ac-section-head" style={{ marginBottom: 6 }}>
+              <strong>备战席 ({p.bench.length}/{benchCapacity})</strong>
               <span className="muted" style={{ fontSize: '0.78rem' }}>点击棋子后点击紫色部署区即可上阵；同类3枚自动合成高星</span>
             </div>
             <div className="ac-bench-row">
@@ -873,8 +1003,14 @@ export function AutoChessPage({
                   <button
                     key={u.id}
                     type="button"
+                    data-ac-serial={u.serial}
                     className={'ac-bench-slot filled ' + (selectedId === u.id ? 'selected' : '')}
-                    onClick={() => setSelectedId(selectedId === u.id ? null : u.id)}
+                    onMouseEnter={e => hoverWiki.startHover(u.serial, u.star, e.currentTarget)}
+                    onMouseLeave={hoverWiki.leaveTarget}
+                    onClick={() => {
+                      hoverWiki.closeNow();
+                      setSelectedId(selectedId === u.id ? null : u.id);
+                    }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontWeight: 700 }}>
                       <span>{u.name}</span>
@@ -885,6 +1021,10 @@ export function AutoChessPage({
                     </small>
                     <small className="muted">{u.traits.join(' / ')}</small>
                   </button>
+                ) : idx >= benchCapacity ? (
+                  <div key={`locked_${idx}`} className="ac-bench-slot locked" title="栏位未解锁" aria-label={`备战席 ${idx + 1} 未解锁`}>
+                    <Lock size={16} aria-hidden="true" />
+                  </div>
                 ) : (
                   <div key={`empty_${idx}`} className="ac-bench-slot">
                     <span className="muted">空位 {idx + 1}</span>
@@ -901,7 +1041,7 @@ export function AutoChessPage({
               <div className="ac-hud-group">
                 <button
                   className="button subtle"
-                  disabled={busy || match.phase !== 'prep' || p.level >= 5 || p.gold < 4}
+                  disabled={busy || match.phase !== 'prep' || p.xp_to_next <= 0 || p.gold < 4}
                   onClick={() => void act('buy_xp')}
                 >
                   购买经验 +4XP (4G)
@@ -926,28 +1066,40 @@ export function AutoChessPage({
             <div className="ac-shop-row">
               {p.shop.map((slot, idx) =>
                 slot ? (
-                  <button
+                  <div
                     key={idx}
-                    type="button"
-                    disabled={busy || match.phase !== 'prep' || slot.bought || p.gold < slot.cost}
-                    className={`ac-shop-card cost-${slot.cost} ${slot.bought ? 'bought' : ''}`}
-                    onClick={() => void act('buy', { slot_index: slot.slot_index })}
+                    className="ac-shop-slot-wrap"
+                    data-ac-serial={slot.serial}
+                    onMouseEnter={e => {
+                      if (!slot.bought) hoverWiki.startHover(slot.serial, 1, e.currentTarget);
+                    }}
+                    onMouseLeave={hoverWiki.leaveTarget}
                   >
-                    {slot.hint && !slot.bought && <span className="ac-shop-hint">{slot.hint}</span>}
-                    <div className="ac-shop-top">
-                      <span>{slot.name}</span>
-                      <span>{slot.cost}G</span>
-                    </div>
-                    <div className="ac-shop-traits">
-                      {slot.traits.map(t => (
-                        <span key={t}>{t}</span>
-                      ))}
-                      <span>{ROLE_LABELS[slot.role] || slot.role}</span>
-                    </div>
-                    <small className="muted" style={{ fontSize: '0.73rem', lineHeight: 1.3 }}>
-                      {slot.tag} · {slot.blurb}
-                    </small>
-                  </button>
+                    <button
+                      type="button"
+                      disabled={busy || match.phase !== 'prep' || slot.bought || p.gold < slot.cost}
+                      className={`ac-shop-card cost-${slot.cost} ${slot.bought ? 'bought' : ''}`}
+                      onClick={() => {
+                        hoverWiki.closeNow();
+                        void act('buy', { slot_index: slot.slot_index });
+                      }}
+                    >
+                      {slot.hint && !slot.bought && <span className="ac-shop-hint">{slot.hint}</span>}
+                      <div className="ac-shop-top">
+                        <span>{slot.name}</span>
+                        <span>{slot.cost}G</span>
+                      </div>
+                      <div className="ac-shop-traits">
+                        {slot.traits.map(t => (
+                          <span key={t}>{t}</span>
+                        ))}
+                        <span>{ROLE_LABELS[slot.role] || slot.role}</span>
+                      </div>
+                      <small className="muted" style={{ fontSize: '0.73rem', lineHeight: 1.3 }}>
+                        {slot.tag} · {slot.blurb}
+                      </small>
+                    </button>
+                  </div>
                 ) : (
                   <div key={idx} className="ac-shop-card bought">
                     <span className="muted">牌库已空</span>
@@ -986,26 +1138,7 @@ export function AutoChessPage({
         </div>
       )}
 
-      {showRules && <AutoChessRulesModal onClose={() => setShowRules(false)} />}
-    </div>
-  );
-}
-
-function AutoChessRulesModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="modal-scrim" onClick={onClose}>
-      <section className="modal wide" role="dialog" aria-modal="true" aria-label="自走棋与战场规则说明" onClick={e => e.stopPropagation()}>
-        <header>
-          <h2><Shield size={18} /> 星序自走棋 & 空间战场规则</h2>
-          <button className="icon-button" onClick={onClose}><X size={18} /></button>
-        </header>
-        <div style={{ display: 'grid', gap: 10, fontSize: '0.9rem', lineHeight: 1.55 }}>
-          <p><strong>1. 双模式隔离</strong>：经典对战与锦标赛完整保留原汁原味的 10×10 格与传统设定；星序自走棋仅在本模式内启用对称方格战场、真射程、BFS 寻路与星级羁绊。</p>
-          <p><strong>2. 坐标、MOV 与行动池</strong>：棋盘采用 8 向切比雪夫距离。每回合主动作数仍严格保持 <code>max(1, (有效MOV+1)//5 + 额外)</code>，仅将每轮战术移动格数缩放为 2~8 格，防止高速单位直接穿场；回合结束不再弹回初始锚点。</p>
-          <p><strong>3. 地形机制</strong>：<b>墙体(墙)</b> 阻挡地面路径（飞行单位可越过）；<b>掩体(掩)</b> 地面进入消耗 2 点移动力，但受到 ≥3 格远程伤害降低 15%；<b>灵脉(灵)</b> 每轮开局令站在其上的单位恢复 +1 MP。</p>
-          <p><strong>4. 经济、升星与祝福</strong>：每 10 金币提供 +1 利息（基础上限 +5）；连胜/连败提供额外金币。同名同星 3 枚棋子自动合并升星（1★ → 2★ → 3★，共 17 位魔法少女共享有限公共牌库）。第 4 与第 8 回合触发 3 选 1 星序祝福。</p>
-        </div>
-      </section>
+      {wikiOverlays}
     </div>
   );
 }

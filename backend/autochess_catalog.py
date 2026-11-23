@@ -1,6 +1,7 @@
 """Auto-Chess unit catalog, pool counts, star scaling, synergies, augments, and PvE waves."""
 
 import copy
+import math
 
 from characters_data import ALL_CHARACTERS, load_character_to_engine
 
@@ -27,7 +28,8 @@ LEVEL_TABLE = {
     2: {'max_pop': 3, 'xp_to_next': 6, 'odds': {1: 55, 2: 35, 3: 10, 4: 0}},
     3: {'max_pop': 4, 'xp_to_next': 10, 'odds': {1: 30, 2: 40, 3: 25, 4: 5}},
     4: {'max_pop': 5, 'xp_to_next': 16, 'odds': {1: 18, 2: 32, 3: 35, 4: 15}},
-    5: {'max_pop': 6, 'xp_to_next': 0, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
+    5: {'max_pop': 6, 'xp_to_next': 24, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
+    6: {'max_pop': 6, 'xp_to_next': 0, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
 }
 
 STAR_SCALING = {
@@ -216,6 +218,7 @@ SYNERGIES = {
 }
 
 AUGMENTS = [
+    {'id': 'aug_reserves', 'name': '后备扩编', 'tier': '备战', 'desc': '本局永久解锁 2 个额外备战席，最多可用 12 格。'},
     {'id': 'aug_econ', 'name': '星辉投资', 'tier': '经济', 'desc': '立即获得 8 金币，且你的利息上限由 +5 提升至 +7。', 'instant_gold': 8, 'max_interest': 7},
     {'id': 'aug_xp', 'name': '秘典研习', 'tier': '经验', 'desc': '立即获得 6 点经验与 2 次免费商店刷新。', 'instant_xp': 6, 'free_rerolls': 2},
     {'id': 'aug_reroll', 'name': '黄金牌库', 'tier': '商店', 'desc': '立即获得 3 次免费刷新与 3 金币，刷新时更易搜到高费棋子。', 'instant_gold': 3, 'free_rerolls': 3},
@@ -490,10 +493,247 @@ def apply_opening_shields(engine, unit_shields):
     engine._set_effects(effs)
 
 
+_TIMING_LABELS = {
+    '1': '准备/被动',
+    '2': '主动作',
+    '3': '附加动作',
+    '4': '反应',
+    '23': '主/附加',
+}
+
+_Y14_PHASE_LABELS = {
+    0: '切卡',
+    1: '魂斗罗',
+    2: '最终幻想',
+    3: '音速索尼克',
+}
+
+
+def _summarize_wiki_spell_effects(effects):
+    parts = []
+    seen = set()
+
+    def _add(txt):
+        if txt and txt not in seen:
+            seen.add(txt)
+            parts.append(txt)
+
+    for eff in effects or ():
+        et = int(eff.get('type', 0) or 0)
+        if eff.get('伤害骰'):
+            _add(f"伤害 {eff['伤害骰']}")
+        elif eff.get('damage_pct_caster_max_hp'):
+            _add(f"按最大体力百分比伤害({eff['damage_pct_caster_max_hp']}%)")
+        elif eff.get('damage_table'):
+            _add('按命中阶次分级伤害')
+        if eff.get('每回合伤害骰'):
+            _add(f"持续伤害 {eff['每回合伤害骰']}")
+        if eff.get('ignite'):
+            _add(f"点燃({eff.get('ignite_dmg_dice') or eff.get('ignite_tick_dmg') or '灼烧'})")
+        if eff.get('吸血比例'):
+            _add(f"吸血 {int(float(eff['吸血比例']) * 100)}%")
+        if eff.get('回复hp'):
+            _add(f"回复HP {eff['回复hp']}")
+        if eff.get('回复mp'):
+            _add(f"回魔 {eff['回复mp']}")
+        if eff.get('回复san'):
+            _add(f"恢复SAN {eff['回复san']}")
+        if eff.get('护盾值'):
+            _add(f"护盾 {eff['护盾值']}")
+        if et == 5 or eff.get('召唤物模板'):
+            tmpl = eff.get('召唤物模板') or '使魔'
+            cnt = eff.get('召唤个数', 1)
+            _add(f"召唤 {tmpl}×{cnt}")
+        if et == 6 or eff.get('制造物模板'):
+            _add(f"制作 {eff.get('制造物模板') or '道具'}")
+        if et == 8 or eff.get('作用半径'):
+            r = eff.get('作用半径', 0)
+            _add(f"半径 {r} 格领域" if r else '触发领域')
+        if et == 11 or eff.get('战意削弱概率'):
+            _add('削弱敌方战意/输出')
+        if et == 18:
+            _add('队友濒死救援/急救')
+        if et == 19 or eff.get('复活回复比例'):
+            _add('复活阵亡友军')
+        if eff.get('target_phase') is not None:
+            _add(f"切换至形态 {eff['target_phase']}")
+        if eff.get('辅助效果'):
+            val = eff.get('辅助效果值')
+            _add(f"{eff['辅助效果']}" + (f"({val})" if val not in (None, '') else ''))
+        if eff.get('冰冻每轮层数'):
+            _add('叠加寒霜/冰冻')
+        dur = eff.get('持续回合')
+        if isinstance(dur, (int, float)):
+            if int(dur) > 0 and int(dur) < 90:
+                _add(f"持续{int(dur)}轮")
+        elif dur:
+            _add(f"持续{dur}轮")
+    return ' · '.join(parts) if parts else '强化或状态联动技能'
+
+
+def _build_wiki_passives(passive_rules):
+    if not isinstance(passive_rules, dict) or not passive_rules:
+        return []
+    out = []
+    if 'frost' in passive_rules:
+        fr = passive_rules['frost']
+        out.append(
+            f"寒霜机制：命中叠加寒霜，引爆造成 {fr.get('burst', '1d10+1d6+2')} 伤害与 "
+            f"{fr.get('dot', '1d4+2')} 持续冻伤，附带目标闪避/移速惩罚及友方周期回复。"
+        )
+    if 'cartridge' in passive_rules:
+        cr = passive_rules['cartridge']
+        out.append(
+            f"街机三卡带：可切换魂斗罗 / 最终幻想 / 音速索尼克三形态（基础切换冷却 "
+            f"{cr.get('cooldown', 3)} 回合），累计充能达 {cr.get('limit_cap', 5)} / "
+            f"冲刺 {cr.get('dash_distance', 8)} 格解锁高阶技能。"
+        )
+    if 'cloak' in passive_rules:
+        ck = passive_rules['cloak']
+        out.append(
+            f"魔导披风：免疫 <= {ck.get('immune_max', 3)} 点微伤，中等伤害减至 "
+            f"{ck.get('middle_damage', 3)}，高伤倍率 ×{ck.get('high_multiplier', 0.6)}，受击 +{ck.get('mp_per_hit', 1)} MP。"
+        )
+    if 'moon' in passive_rules:
+        mn = passive_rules['moon']
+        out.append(
+            f"虚假之月：技能积攒月能层数（满 {mn.get('ultimate_threshold', 20)} 层释放全额月光炮），"
+            f"弓术攻击额外 +{mn.get('bow_extra_mp', 1)} MP。"
+        )
+    if 'phantom' in passive_rules:
+        out.append('幻影秘术：按幻影检定阶次获得额外增伤/回蓝等辅助修正。')
+    return out
+
+
+def build_unit_wiki(serial):
+    """Build Auto-Chess-specific wiki data strictly matching Auto-Chess mechanics and stats."""
+    meta = UNIT_CATALOG[serial]
+    raw = CHAR_DATA_BY_SERIAL[serial]
+    attrs = raw.get('attrs', {}) or {}
+    str_attrs = raw.get('str_attrs', {}) or {}
+    passive_rules = raw.get('passive_rules') or {}
+
+    base_hp = int(attrs.get('体力上限', attrs.get('体力', 10)) or 10) + int(meta.get('hp_offset', 0) or 0)
+    base_mp = int(attrs.get('魔力上限', attrs.get('魔力', 10)) or 0)
+    mov = int(attrs.get('行动力', 8) or 0)
+    extra_acts = int(attrs.get('额外行动数', 0) or 0)
+    tactical_move = 0 if mov <= 0 else min(8, max(2, math.ceil(mov / 2)))
+    main_actions = max(1, (mov + 1) // 5 + extra_acts)
+    dex = int(attrs.get('敏捷', 50) or 50)
+    base_dodge = int(attrs.get('闪避', 25) or 25)
+    can_block = bool(attrs.get('可格挡'))
+    block_val = int(attrs.get('格挡', 0) or 0) if can_block else 0
+    flying = serial in ('Y5', 'Y13')
+
+    tuning_notes = []
+    if meta.get('hp_offset'):
+        hp_off = int(meta['hp_offset'])
+        tuning_notes.append(f"自走棋基础体力 {'+' if hp_off > 0 else ''}{hp_off}")
+    if meta.get('dmg_pct_offset'):
+        pct_off = int(meta['dmg_pct_offset'])
+        tuning_notes.append(f"自走棋输出倍率 {'+' if pct_off > 0 else ''}{pct_off}%")
+    if meta.get('flat_dmg_offset'):
+        fd_off = int(meta['flat_dmg_offset'])
+        tuning_notes.append(f"自走棋附加伤害 {'+' if fd_off > 0 else ''}{fd_off}")
+
+    star_stats = {}
+    for star in (1, 2, 3):
+        sc = STAR_SCALING[star]
+        star_stats[str(star)] = {
+            'star': star,
+            'hp': max(1, int(round(base_hp * sc['hp_mult']))),
+            'mp': max(0, int(round(base_mp * sc['mp_mult']))),
+            'skill_bonus': sc['skill_bonus'],
+            'flat_dmg': sc['flat_dmg'] + int(meta.get('flat_dmg_offset', 0) or 0),
+            'flat_dr': sc['flat_dr'],
+            'dodge': min(85, base_dodge + (4 if star == 2 else 8 if star == 3 else 0)),
+            'summon_hp_mult': sc['summon_hp_mult'],
+            'summon_skill_bonus': sc['summon_skill_bonus'],
+        }
+
+    skill_candidates = [
+        (k, int(attrs[k]))
+        for k in ('斗殴', '剑术', '武术', '射击:弓', '弓术')
+        if int(attrs.get(k, 0) or 0) > 0
+    ]
+    best_skill_name, best_skill_val = max(skill_candidates, key=lambda x: x[1], default=('斗殴', 50))
+
+    skills_wiki = []
+    for sp in raw.get('spells', ()):
+        sp_name = sp.get('name', '未命名技能')
+        effs = sp.get('effects', ()) or ()
+        phase = int(sp.get('phase', 0) or 0)
+        if serial == 'Y14':
+            phase_label = _Y14_PHASE_LABELS.get(phase, f'形态{phase}')
+        else:
+            phase_label = f'形态{phase}' if phase > 0 else ''
+
+        if sp_name in AUTOCHESS_RANGE_OVERRIDES:
+            eff_range = AUTOCHESS_RANGE_OVERRIDES[sp_name]
+        else:
+            raw_ranges = [int(e['射程']) for e in effs if isinstance(e.get('射程'), (int, float)) and e['射程'] > 0]
+            if not raw_ranges:
+                eff_range = None
+            else:
+                mr = max(raw_ranges)
+                eff_range = meta['range'] if mr >= 90 else mr
+
+        cd_vals = [
+            int(v)
+            for v in ([sp.get('cooldown_rounds', 0)] + [e.get('cooldown_rounds', 0) for e in effs])
+            if isinstance(v, (int, float)) or (isinstance(v, str) and v.isdigit())
+        ] or [0]
+        cooldown = max(cd_vals)
+        if serial == 'Y14' and sp_name.startswith('卡带切换'):
+            cooldown = int((passive_rules.get('cartridge') or {}).get('cooldown', 3) or 3)
+
+        skills_wiki.append({
+            'name': sp_name,
+            'timing': _TIMING_LABELS.get(str(sp.get('timing', '2')), str(sp.get('timing', '主动作'))),
+            'phase': phase,
+            'phase_label': phase_label,
+            'mp_cost': sp.get('消耗mp', 0),
+            'range': eff_range,
+            'cooldown': cooldown,
+            'summary': _summarize_wiki_spell_effects(effs),
+        })
+
+    return {
+        'serial': serial,
+        'name': meta['name'],
+        'cost': meta['cost'],
+        'pool_count': POOL_COUNTS[meta['cost']],
+        'role': meta['role'],
+        'traits': list(meta['traits']),
+        'range': meta['range'],
+        'tag': meta['tag'],
+        'blurb': meta['blurb'],
+        'mov': mov,
+        'tactical_move': tactical_move,
+        'main_actions': main_actions,
+        'dex': dex,
+        'dodge': base_dodge,
+        'can_block': can_block,
+        'block_val': block_val,
+        'flying': flying,
+        'tuning_notes': tuning_notes,
+        'star_stats': star_stats,
+        'basic_attack': {
+            'skill_name': best_skill_name,
+            'skill_val': best_skill_val,
+            'dice': str_attrs.get('伤害值') or '1d4',
+            'pierce': bool(attrs.get('伤害贯穿')),
+        },
+        'passives': _build_wiki_passives(passive_rules),
+        'skills': skills_wiki,
+    }
+
+
 def catalog_summary():
     """Return UI-friendly catalog metadata dictionary."""
     return {
         'units': sorted(UNIT_CATALOG.values(), key=lambda u: (u['cost'], u['serial'])),
+        'wiki_units': {s: build_unit_wiki(s) for s in sorted(UNIT_CATALOG, key=lambda x: int(x[1:]))},
         'synergies': list(SYNERGIES.values()),
         'augments': AUGMENTS,
         'levels': LEVEL_TABLE,

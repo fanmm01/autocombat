@@ -1,13 +1,159 @@
+/* Isolated Auto-Chess Shell & Responsive Layout (Desktop + Portrait Tablet + Small Mobile) */
+
+.ac-shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: clip;
+  background: var(--bg, #f7f6fb);
+}
+
+.ac-topbar {
+  min-height: 60px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 28px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid var(--line, #e6e3f0);
+}
+
+.ac-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.ac-topbar-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #f1ecf9;
+  color: #7c5cff;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.ac-topbar-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ac-topbar-title strong {
+  font-size: 1rem;
+  color: #3f3858;
+  line-height: 1.25;
+}
+
+.ac-topbar-title small {
+  font-size: 0.65rem;
+  letter-spacing: 1.6px;
+  color: #8c87a2;
+  font-weight: 600;
+}
+
+.ac-topbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ac-topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  color: #5b556e;
+}
+
+.ac-topbar-user > span {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ede6f5;
+  color: #8469b0;
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.ac-topbar-user > em {
+  font-style: normal;
+  font-weight: 600;
+}
+
+.ac-mode-switch,
+.classic-ac-switch {
+  border-color: #d8cef0;
+  color: #5d4ca3;
+  background: #f8f6fc;
+}
+
+.ac-mode-switch:hover:not(:disabled),
+.classic-ac-switch:hover:not(:disabled) {
+  background: #eee8fa;
+  border-color: #b7a2e4;
+}
+
+.ac-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
 .ac-page {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  padding: 20px 24px calc(28px + env(safe-area-inset-bottom, 0px));
+  min-width: 0;
+}
+
+.ac-lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ac-name-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ac-name-form input {
+  width: 132px;
+  padding: 6px 10px;
+  min-height: 34px;
+  font-size: 0.84rem;
+}
+
+.ac-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
 }
 
 .ac-lobby-grid {
   display: grid;
   grid-template-columns: 1.25fr 1fr;
   gap: 16px;
+}
+
+.ac-lobby-grid > * {
+  min-width: 0;
 }
 
 @media (max-width: 960px) {
@@ -90,9 +236,10 @@
 
 .ac-saved-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border, #e2dff0);
@@ -104,7 +251,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 10px 14px;
 }
 
@@ -112,7 +259,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .ac-stat-chip {
@@ -122,8 +269,9 @@
   padding: 4px 10px;
   border-radius: 999px;
   background: rgba(124, 92, 255, 0.08);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .ac-stat-chip.gold {
@@ -138,21 +286,23 @@
 
 .ac-workspace {
   display: grid;
-  grid-template-columns: 270px 1fr;
+  grid-template-columns: 270px minmax(0, 1fr);
   gap: 14px;
   align-items: start;
-}
-
-@media (max-width: 1080px) {
-  .ac-workspace {
-    grid-template-columns: 1fr;
-  }
 }
 
 .ac-left-col {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
+}
+
+.ac-center-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 
 .ac-syn-list,
@@ -217,14 +367,9 @@
   color: var(--muted, #6b7280);
 }
 
-.ac-center-col {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
 .ac-board-panel {
   padding: 12px 14px;
+  min-width: 0;
 }
 
 .ac-board-toolbar {
@@ -257,12 +402,20 @@
   border-radius: 3px;
 }
 
+.ac-board-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+}
+
 .ac-board-svg {
   width: 100%;
   max-height: 430px;
   height: auto;
   display: block;
   user-select: none;
+  touch-action: manipulation;
 }
 
 .ac-intent-bar {
@@ -273,9 +426,10 @@
   border-left: 3px solid var(--accent, #7c5cff);
   font-size: 0.84rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px 10px;
 }
 
 .ac-inspector {
@@ -291,19 +445,28 @@
   font-size: 0.83rem;
 }
 
+.ac-inspector select {
+  max-width: 100%;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.ac-bench-slot.locked {
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: #eeedf3;
+}
+
 .ac-bench-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow-x: auto;
+  grid-template-columns: repeat(6, minmax(66px, 1fr));
   gap: 8px;
 }
 
-@media (max-width: 720px) {
-  .ac-bench-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 .ac-bench-slot {
+  min-width: 0;
   min-height: 70px;
   border-radius: 10px;
   border: 1.5px dashed var(--border, #d8d4e8);
@@ -317,6 +480,7 @@
   cursor: pointer;
   font-size: 0.8rem;
   text-align: left;
+  touch-action: manipulation;
 }
 
 .ac-bench-slot.filled {
@@ -343,14 +507,9 @@
   gap: 9px;
 }
 
-@media (max-width: 900px) {
-  .ac-shop-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 .ac-shop-card {
   position: relative;
+  min-width: 0;
   border-radius: 11px;
   border: 1.5px solid var(--border, #d8d4e8);
   padding: 9px 10px;
@@ -361,6 +520,7 @@
   flex-direction: column;
   gap: 4px;
   transition: transform 0.12s, box-shadow 0.12s;
+  touch-action: manipulation;
 }
 
 .ac-shop-card:hover:not(:disabled) {
@@ -394,6 +554,7 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 6px;
   font-weight: 700;
   font-size: 0.88rem;
 }
@@ -414,7 +575,7 @@
 
 .ac-report-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 8px;
   margin-top: 8px;
 }
@@ -446,12 +607,6 @@
   margin-top: 12px;
 }
 
-@media (max-width: 780px) {
-  .ac-aug-choices {
-    grid-template-columns: 1fr;
-  }
-}
-
 .ac-aug-card {
   padding: 14px;
   border-radius: 12px;
@@ -459,6 +614,7 @@
   background: rgba(124, 92, 255, 0.05);
   text-align: left;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .ac-aug-card:hover {
@@ -473,4 +629,879 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+/* Portrait tablet & narrow desktop: put board/bench/shop first, info panels below */
+@media (max-width: 1080px) {
+  .ac-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .ac-center-col {
+    order: 1;
+  }
+
+  .ac-left-col {
+    order: 2;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .ac-left-col > section:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+
+  .ac-shop-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .ac-aug-choices {
+    grid-template-columns: 1fr;
+  }
+
+  .ac-page .button,
+  .ac-shell .modal .button {
+    min-height: 36px;
+    padding: 7px 12px;
+    font-size: 0.82rem;
+  }
+}
+
+/* Mobile & small portrait viewports */
+@media (max-width: 640px) {
+  .ac-topbar {
+    min-height: 54px;
+    padding: 8px 12px;
+  }
+
+  .ac-topbar-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .ac-topbar-title small {
+    display: none;
+  }
+
+  .ac-topbar-user > em {
+    display: none;
+  }
+
+  .ac-topbar-actions .connection > span {
+    display: none;
+  }
+
+  .ac-page {
+    gap: 10px;
+    padding: 12px 10px calc(22px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .ac-page .page-intro {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+
+  .ac-lobby-actions {
+    justify-content: space-between;
+  }
+
+  .ac-left-col {
+    grid-template-columns: 1fr;
+  }
+
+  .ac-mode-pills,
+  .ac-arena-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .ac-hud {
+    padding: 8px 10px;
+  }
+
+  .ac-hud-group {
+    gap: 6px;
+  }
+
+  .ac-stat-chip {
+    font-size: 0.76rem;
+    padding: 3px 8px;
+  }
+
+  .ac-board-panel {
+    padding: 10px;
+  }
+
+  .ac-board-svg {
+    min-width: max(100%, calc(var(--ac-cols, 10) * 38px));
+    max-height: none;
+  }
+
+
+  .ac-bench-slot {
+    min-height: 54px;
+    padding: 5px 8px;
+  }
+
+  .ac-shell .modal {
+    padding: 16px;
+    max-height: 88dvh;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .ac-name-form {
+    flex: 1;
+  }
+
+  .ac-name-form input {
+    flex: 1;
+    width: auto;
+    min-width: 80px;
+  }
+
+  .classic-ac-switch,
+  .ac-topbar-wiki-btn,
+  .ac-mode-switch {
+    padding: 5px 8px;
+    min-height: 30px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 360px) {
+  .ac-shop-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ac-shop-slot-wrap {
+  display: flex;
+  min-width: 0;
+}
+
+.ac-shop-slot-wrap > .ac-shop-card {
+  width: 100%;
+  flex: 1;
+}
+
+/* Wikipedia-like Hover Preview Popover */
+.ac-wiki-popover {
+  position: fixed;
+  z-index: 95;
+  background: #ffffff;
+  border: 1px solid #d9d3eb;
+  border-top: 3px solid #7c5cff;
+  border-radius: 12px;
+  box-shadow: 0 18px 42px rgba(27, 20, 58, 0.18), 0 4px 12px rgba(27, 20, 58, 0.08);
+  padding: 11px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  color: #2c2840;
+  font-size: 0.82rem;
+}
+
+.ac-wiki-popover.cost-1 { border-top-color: #9ca3af; }
+.ac-wiki-popover.cost-2 { border-top-color: #10b981; }
+.ac-wiki-popover.cost-3 { border-top-color: #3b82f6; }
+.ac-wiki-popover.cost-4 { border-top-color: #a855f7; }
+
+.ac-wiki-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ac-wiki-pop-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ac-wiki-pop-title strong {
+  font-size: 0.98rem;
+  color: #241f38;
+}
+
+.ac-wiki-pop-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.ac-wiki-serial {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #f1eef9;
+  color: #5b4a9a;
+}
+
+.ac-wiki-stars {
+  color: #d97706;
+  font-size: 0.78rem;
+  letter-spacing: 1px;
+}
+
+.ac-wiki-cost {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.ac-wiki-cost.cost-1 { background: #f3f4f6; color: #4b5563; }
+.ac-wiki-cost.cost-2 { background: #ecfdf5; color: #047857; }
+.ac-wiki-cost.cost-3 { background: #eff6ff; color: #1d4ed8; }
+.ac-wiki-cost.cost-4 { background: #faf5ff; color: #7e22ce; }
+
+.ac-wiki-pop-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.74rem;
+  color: #6b7280;
+}
+
+.ac-wiki-pop-lead {
+  margin: 0;
+  font-size: 0.79rem;
+  line-height: 1.45;
+  color: #4b4760;
+}
+
+.ac-wiki-stat-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ac-wiki-stat-pills > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #f5f3fb;
+  font-size: 0.74rem;
+  color: #463f63;
+}
+
+.ac-wiki-tune-pill {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+}
+
+.ac-wiki-trait-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ac-wiki-trait-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #d9d1f1;
+  background: #f8f6fd;
+  color: #55429d;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ac-wiki-trait-btn:hover {
+  background: #ece6fa;
+}
+
+.ac-wiki-pop-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px dashed #e5e1f0;
+  padding-top: 7px;
+}
+
+.ac-wiki-pop-sec {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #4e4769;
+}
+
+.ac-wiki-pop-skill {
+  background: #faf9fd;
+  border: 1px solid #ebe8f4;
+  border-radius: 7px;
+  padding: 5px 7px;
+}
+
+.ac-wiki-pop-skill-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.76rem;
+}
+
+.ac-wiki-pop-skill-top span {
+  color: #6b7280;
+  font-size: 0.71rem;
+  white-space: nowrap;
+}
+
+.ac-wiki-pop-skill-desc {
+  margin-top: 2px;
+  font-size: 0.73rem;
+  color: #5b566e;
+  line-height: 1.35;
+}
+
+.ac-wiki-pop-more {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid #d8cef0;
+  background: #f5f2fc;
+  color: #5641a6;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ac-wiki-pop-more span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ac-wiki-pop-more:hover {
+  background: #eae3fa;
+}
+
+/* Independent Auto-Chess Wiki Modal */
+.ac-wiki-modal {
+  max-width: 1020px;
+  width: min(1020px, calc(100vw - 24px));
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.ac-wiki-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+.ac-wiki-modal-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 2px;
+}
+
+.ac-wiki-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid #e6e2f0;
+  padding-bottom: 8px;
+}
+
+.ac-wiki-tab {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2ddf0;
+  background: #faf9fd;
+  color: #5d5775;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ac-wiki-tab.active {
+  background: #7967b7;
+  border-color: #7967b7;
+  color: #fff;
+}
+
+.ac-wiki-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.ac-wiki-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ac-wiki-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 220px;
+  padding: 0 10px;
+  border: 1px solid #dedaea;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ac-wiki-search-wrap input {
+  border: 0;
+  padding: 7px 0;
+  width: 100%;
+  outline: none;
+  font-size: 0.84rem;
+}
+
+.ac-wiki-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.ac-wiki-filter-pills select {
+  padding: 5px 8px;
+  font-size: 0.8rem;
+}
+
+.ac-wiki-chip {
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid #dcd6ec;
+  background: #f8f6fc;
+  color: #534c70;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ac-wiki-chip.active {
+  background: #7967b7;
+  border-color: #7967b7;
+  color: #fff;
+}
+
+.ac-wiki-split {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.ac-wiki-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 58dvh;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.ac-wiki-list-item {
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1.5px solid #e5e1f0;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ac-wiki-list-item.active {
+  border-color: #7c5cff;
+  background: #f5f2fd;
+}
+
+.ac-wiki-list-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.84rem;
+}
+
+.ac-wiki-article {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ac-wiki-infobox {
+  padding: 12px 14px;
+  border-radius: 11px;
+  border: 1px solid #e1dcf0;
+  border-left: 4px solid #7c5cff;
+  background: #fbfafd;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ac-wiki-infobox.cost-1 { border-left-color: #9ca3af; }
+.ac-wiki-infobox.cost-2 { border-left-color: #10b981; }
+.ac-wiki-infobox.cost-3 { border-left-color: #3b82f6; }
+.ac-wiki-infobox.cost-4 { border-left-color: #a855f7; }
+
+.ac-wiki-info-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ac-wiki-info-head > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ac-wiki-info-head h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.ac-wiki-info-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #5b556e;
+}
+
+.ac-wiki-info-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #efecf8;
+}
+
+.ac-wiki-lead {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #423d57;
+  line-height: 1.5;
+}
+
+.ac-wiki-section h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  color: #3b3456;
+}
+
+.ac-wiki-syn-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ac-wiki-syn-card {
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: 1px solid #e5e1f0;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ac-wiki-syn-card-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.ac-wiki-partner-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ac-wiki-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #e6e2f0;
+  border-radius: 9px;
+}
+
+.ac-wiki-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+  min-width: 440px;
+}
+
+.ac-wiki-table th,
+.ac-wiki-table td {
+  padding: 6px 7px;
+  border-bottom: 1px solid #eeebf6;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ac-wiki-table th {
+  background: #f7f5fc;
+  color: #574e78;
+  font-weight: 600;
+}
+
+.ac-wiki-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ac-wiki-basic-box {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f6fc;
+  border: 1px solid #e6e1f2;
+  font-size: 0.82rem;
+}
+
+.ac-wiki-passives {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.81rem;
+  color: #46415c;
+  line-height: 1.5;
+}
+
+.ac-wiki-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ac-wiki-skill-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e6e1f2;
+  background: #fff;
+}
+
+.ac-wiki-skill-row p {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: #534e68;
+  line-height: 1.45;
+}
+
+.ac-wiki-skill-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ac-wiki-phase {
+  margin-left: 6px;
+  color: #7c5cff;
+  font-size: 0.76rem;
+}
+
+.ac-wiki-skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 0.72rem;
+}
+
+.ac-wiki-skill-tags > span {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #f3f0fa;
+  color: #5a527a;
+}
+
+.ac-wiki-syn-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ac-wiki-syn-panel {
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1.5px solid #e5e1f0;
+  background: #fff;
+}
+
+.ac-wiki-syn-panel.selected {
+  border-color: #7c5cff;
+  background: #f7f4fe;
+}
+
+.ac-wiki-syn-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.94rem;
+}
+
+.ac-wiki-tiers {
+  margin: 0 0 8px;
+  padding-left: 16px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.ac-wiki-aug-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.ac-wiki-aug-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e1dcf0;
+  background: #fbfafd;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ac-wiki-aug-card p {
+  margin: 0;
+  font-size: 0.79rem;
+  color: #4f4a65;
+  line-height: 1.45;
+}
+
+.ac-wiki-aug-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #6d4aff;
+}
+
+.ac-wiki-rules {
+  gap: 10px;
+}
+
+.ac-wiki-rule-card {
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid #e4e0ef;
+  background: #fbfafd;
+}
+
+.ac-wiki-rule-card h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.ac-wiki-rule-card p,
+.ac-wiki-rule-card ul {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: #46415c;
+}
+
+.ac-wiki-rule-card ul {
+  padding-left: 18px;
+  margin-bottom: 8px;
+}
+
+.ac-wiki-arena-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.ac-wiki-arena-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e1f0;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  .ac-wiki-split {
+    grid-template-columns: 1fr;
+  }
+
+  .ac-wiki-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-height: 165px;
+  }
+
+  .ac-wiki-syn-grid,
+  .ac-wiki-aug-grid,
+  .ac-wiki-syn-cards,
+  .ac-wiki-arena-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .ac-wiki-modal {
+    width: calc(100vw - 12px);
+    padding: 12px !important;
+    max-height: 92dvh !important;
+  }
+
+  .ac-wiki-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 148px;
+  }
+
+  .ac-wiki-tab {
+    padding: 5px 9px;
+    font-size: 0.78rem;
+  }
 }

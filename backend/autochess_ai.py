@@ -80,7 +80,7 @@ def run_commander_prep(match, cid):
     # 2. Leveling priority before shopping
     for _ in range(4):
         lvl = cmd['level']
-        if lvl >= 5:
+        if lvl >= max(LEVEL_TABLE):
             break
         gold = cmd['gold']
         need_xp = max(0, LEVEL_TABLE[lvl]['xp_to_next'] - cmd['xp'])
