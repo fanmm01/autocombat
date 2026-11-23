@@ -161,6 +161,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
           </div>
         )}
         <AutoChessPage
+          isMobileLandscape={isMobileLandscape}
           playerName={displayTitle}
           account={account}
           guestTokens={guestTokens}

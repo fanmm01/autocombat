@@ -87,6 +87,7 @@ function sellValue(cost: number, star: number): number {
 }
 
 interface AutoChessPageProps {
+  isMobileLandscape: boolean;
   playerName: string;
   account: AutoChessAccount | null;
   guestTokens: Record<string, string>;
@@ -101,6 +102,7 @@ interface AutoChessPageProps {
 }
 
 export function AutoChessPage({
+  isMobileLandscape,
   playerName,
   account,
   guestTokens,
@@ -121,7 +123,7 @@ export function AutoChessPage({
   const [rankedArena, setRankedArena] = useState<string>('autochess_standard');
   const [rankedSettlement, setRankedSettlement] = useState<AutoChessRankedSettlement | null>(null);
   const [confirmSurrender, setConfirmSurrender] = useState(false);
-  const [leftRailTab, setLeftRailTab] = useState<'synergies' | 'standings' | 'logs'>('synergies');
+  const [leftRailTab, setLeftRailTab] = useState<'standings' | 'logs'>('standings');
   const [lobbyMobileTab, setLobbyMobileTab] = useState<'ranked' | 'pve' | 'pvp'>('ranked');
   const [showTelemetryMobile, setShowTelemetryMobile] = useState(false);
 
@@ -875,13 +877,13 @@ export function AutoChessPage({
               </form>
             )}
             <button
-              className="button subtle compact-button"
+              className="button subtle compact-button ac-lobby-dup-action"
               onClick={() => onOpenTokenEditor?.(catalog?.units[0]?.serial)}
             >
               <ImageIcon size={16} /> 定制棋子头图
             </button>
             <button
-              className="button subtle compact-button"
+              className="button subtle compact-button ac-lobby-dup-action"
               onClick={() => setWikiTarget({ tab: 'units', serial: catalog?.units[0]?.serial })}
             >
               <BookOpen size={16} /> 自走棋百科
@@ -1090,50 +1092,52 @@ export function AutoChessPage({
 
         <div className={'ac-lobby-grid ' + (lobbyMobileTab !== 'ranked' ? 'ac-lobby-grid-mobile-active' : '')}>
           {/* Left Panel: Singleplayer / PvE (Available to Guests & Logged-in Accounts) */}
-          <section className={'panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pve' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
-            <div className="ac-section-head" style={{ marginBottom: 8 }}>
-              <h3 style={{ margin: 0 }}>单人模式 · PvE 试炼与 AI 练习</h3>
-              <span className="ac-badge-free">{account ? '账号云同步中' : '游客免登录可用'}</span>
-            </div>
-            <div className="ac-mode-pills">
-              <button
-                type="button"
-                className={'ac-mode-pill ' + (mode === 'lobby4' ? 'active' : '')}
-                onClick={() => setMode('lobby4')}
-              >
-                <strong>4 人 AI 锦标大厅</strong>
-                <small>与 3 名策略各异的 AI 指挥官争夺第一名，第 4、8、12 回合可选星序祝福</small>
-              </button>
-              <button
-                type="button"
-                className={'ac-mode-pill ' + (mode === 'pve12' ? 'active' : '')}
-                onClick={() => setMode('pve12')}
-              >
-                <strong>12 波星序试炼 (PvE)</strong>
-                <small>迎战 12 波逐步强化的主题守卫阵营，检验构筑上限</small>
-              </button>
-            </div>
-
-            <h4 style={{ marginBottom: 8 }}>选择对称战场形制</h4>
-            <div className="ac-arena-cards">
-              {(catalog?.arenas || []).map(ar => (
+          <section className={'panel ac-pve-panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pve' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
+            <div className="ac-pve-setup">
+              <div className="ac-section-head" style={{ marginBottom: 8 }}>
+                <h3 style={{ margin: 0 }}>单人模式 · PvE 试炼与 AI 练习</h3>
+                <span className="ac-badge-free">{account ? '账号云同步中' : '游客免登录可用'}</span>
+              </div>
+              <div className="ac-mode-pills">
                 <button
-                  key={ar.id}
                   type="button"
-                  className={'ac-arena-card ' + (arenaPreset === ar.id ? 'active' : '')}
-                  onClick={() => setArenaPreset(ar.id)}
+                  className={'ac-mode-pill ' + (mode === 'lobby4' ? 'active' : '')}
+                  onClick={() => setMode('lobby4')}
                 >
-                  <strong>{ar.name}</strong>
-                  <p>{ar.description}</p>
+                  <strong>4 人 AI 锦标大厅</strong>
+                  <small>与 3 名策略各异的 AI 指挥官争夺第一名，第 4、8、12 回合可选星序祝福</small>
                 </button>
-              ))}
+                <button
+                  type="button"
+                  className={'ac-mode-pill ' + (mode === 'pve12' ? 'active' : '')}
+                  onClick={() => setMode('pve12')}
+                >
+                  <strong>12 波星序试炼 (PvE)</strong>
+                  <small>迎战 12 波逐步强化的主题守卫阵营，检验构筑上限</small>
+                </button>
+              </div>
+
+              <h4 className="ac-pve-subhead">选择对称战场形制</h4>
+              <div className="ac-arena-cards">
+                {(catalog?.arenas || []).map(ar => (
+                  <button
+                    key={ar.id}
+                    type="button"
+                    className={'ac-arena-card ' + (arenaPreset === ar.id ? 'active' : '')}
+                    onClick={() => setArenaPreset(ar.id)}
+                  >
+                    <strong>{ar.name}</strong>
+                    <p>{ar.description}</p>
+                  </button>
+                ))}
+              </div>
+
+              <button className="button primary ac-pve-start-btn" disabled={busy} onClick={handleCreate}>
+                <Sparkles size={16} /> 开启单人 / PvE 对局
+              </button>
             </div>
 
-            <button className="button primary" disabled={busy} onClick={handleCreate}>
-              <Sparkles size={16} /> 开启单人 / PvE 对局
-            </button>
-
-            <div style={{ marginTop: 18 }}>
+            <div className="ac-pve-saves">
               <div className="ac-section-head" style={{ marginBottom: 8 }}>
                 <h4 style={{ margin: 0 }}>
                   {account ? `我的存档对局 (@${account.username} 跨端互通)` : '本机游客存档对局'}
@@ -1308,7 +1312,7 @@ export function AutoChessPage({
                   </button>
                 </div>
 
-                <div>
+                <div className="ac-room-directory">
                   <div className="ac-section-head" style={{ marginBottom: 8 }}>
                     <h4 style={{ margin: 0 }}>开放与进行中的联机房间</h4>
                     <button type="button" className="button subtle compact-button" onClick={() => void refreshLobby()}>
@@ -1542,6 +1546,47 @@ export function AutoChessPage({
     ? activeMatch.commanders.find(c => c.id === spectateCid)
     : null;
 
+  const synergyPanel = (
+    <section className="panel ac-synergy-panel" style={{ padding: 12 }}>
+      <h4 style={{ margin: '0 0 8px' }}>羁绊共鸣 ({p.board.length} 棋子)</h4>
+      <div className="ac-syn-list">
+        {p.synergies.length === 0 ? (
+          <p className="muted" style={{ fontSize: '0.8rem', margin: 0 }}>
+            上阵棋子即可激活对应双轴羁绊。
+          </p>
+        ) : (
+          [...p.synergies]
+            .sort((a, b) => (b.active_tier ? 1 : 0) - (a.active_tier ? 1 : 0) || b.count - a.count)
+            .map(s => (
+              <div key={s.id} className={'ac-syn-row ' + (s.active_tier ? 'lit' : '')} title={s.desc}>
+                <div className="ac-syn-head">
+                  <span>
+                    {s.icon} {s.name}
+                  </span>
+                  <span>
+                    {s.count}/{s.next_tier || s.max_tier}
+                  </span>
+                </div>
+                <div className="ac-syn-desc">{s.active_tier ? s.active_tier.label : s.desc}</div>
+              </div>
+            ))
+        )}
+      </div>
+      {p.augments.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <strong style={{ fontSize: '0.8rem' }}>已选星序祝福</strong>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+            {p.augments.map(a => (
+              <span key={a.id} className="ac-stat-chip" style={{ fontSize: '0.72rem' }} title={a.desc}>
+                🌟 {a.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div className="page ac-page ac-page-playing">
       {/* Top HUD */}
@@ -1648,7 +1693,7 @@ export function AutoChessPage({
       </section>
 
       {notice && (
-        <div className="ac-intent-bar">
+        <div className="ac-intent-bar ac-match-notice">
           <span>{notice}</span>
           <button className="icon-button" onClick={() => setNotice('')}>
             <X size={14} />
@@ -1675,15 +1720,6 @@ export function AutoChessPage({
             <button
               type="button"
               role="tab"
-              aria-selected={leftRailTab === 'synergies'}
-              className={leftRailTab === 'synergies' ? 'active' : ''}
-              onClick={() => setLeftRailTab('synergies')}
-            >
-              羁绊
-            </button>
-            <button
-              type="button"
-              role="tab"
               aria-selected={leftRailTab === 'standings'}
               className={leftRailTab === 'standings' ? 'active' : ''}
               onClick={() => setLeftRailTab('standings')}
@@ -1701,44 +1737,7 @@ export function AutoChessPage({
             </button>
           </div>
 
-          <section className={'panel ac-rail-panel ' + (leftRailTab === 'synergies' ? 'ac-rail-active' : '')} style={{ padding: 12 }}>
-            <h4 style={{ margin: '0 0 8px' }}>羁绊共鸣 ({p.board.length} 棋子)</h4>
-            <div className="ac-syn-list">
-              {p.synergies.length === 0 ? (
-                <p className="muted" style={{ fontSize: '0.8rem', margin: 0 }}>
-                  上阵棋子即可激活对应双轴羁绊。
-                </p>
-              ) : (
-                [...p.synergies]
-                  .sort((a, b) => (b.active_tier ? 1 : 0) - (a.active_tier ? 1 : 0) || b.count - a.count)
-                  .map(s => (
-                    <div key={s.id} className={'ac-syn-row ' + (s.active_tier ? 'lit' : '')} title={s.desc}>
-                      <div className="ac-syn-head">
-                        <span>
-                          {s.icon} {s.name}
-                        </span>
-                        <span>
-                          {s.count}/{s.next_tier || s.max_tier}
-                        </span>
-                      </div>
-                      <div className="ac-syn-desc">{s.active_tier ? s.active_tier.label : s.desc}</div>
-                    </div>
-                  ))
-              )}
-            </div>
-            {p.augments.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <strong style={{ fontSize: '0.8rem' }}>已选星序祝福</strong>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                  {p.augments.map(a => (
-                    <span key={a.id} className="ac-stat-chip" style={{ fontSize: '0.72rem' }} title={a.desc}>
-                      🌟 {a.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
+          {!isMobileLandscape && synergyPanel}
 
           <section className={'panel ac-rail-panel ' + (leftRailTab === 'standings' ? 'ac-rail-active' : '')} style={{ padding: 12 }}>
             <h4 style={{ margin: '0 0 8px' }}>
@@ -1795,6 +1794,7 @@ export function AutoChessPage({
           <section className={'panel ac-rail-panel ' + (leftRailTab === 'logs' ? 'ac-rail-active' : '')} style={{ padding: 12 }}>
             <h4 style={{ margin: '0 0 6px' }}>对局纪要</h4>
             <div className="ac-logs">
+              {notice && <div className="ac-landscape-log-notice" role="status">{notice}</div>}
               {[...activeMatch.logs].reverse().map((ln, idx) => (
                 <div key={idx}>{ln}</div>
               ))}
@@ -1805,6 +1805,7 @@ export function AutoChessPage({
         {/* Center column: Board, Telemetry, Bench, Shop */}
         <main className="ac-center-col">
           <section className="panel ac-board-panel">
+            {isMobileLandscape && synergyPanel}
             <div className="ac-board-toolbar">
               <div className="ac-legend">
                 <span>
@@ -1885,32 +1886,30 @@ export function AutoChessPage({
                   </>
                 )}
                 {activeMatch.phase === 'round_result' && (
-                  <>
-                    <button
-                      className={`button ${isPvpRoom && p.next_ready ? 'subtle' : 'primary'}`}
-                      disabled={busy}
-                      onClick={() =>
-                        isPvpRoom
-                          ? void act('ready_next', { ready: !p.next_ready })
-                          : void act('next_round')
-                      }
-                    >
-                      {isPvpRoom
-                        ? p.next_ready
-                          ? '已确认下一回合，等待其他玩家…'
-                          : `准备进入第 ${activeMatch.round_num + 1} 回合 →`
-                        : `跳过结算，进入第 ${activeMatch.round_num + 1} 回合 →`}
-                    </button>
-                    {activeMatch.last_round_report && (
-                      <button
-                        type="button"
-                        className="button subtle ac-landscape-tel-toggle"
-                        onClick={() => setShowTelemetryMobile(v => !v)}
-                      >
-                        {showTelemetryMobile ? '收起战报' : '本轮战报'}
-                      </button>
-                    )}
-                  </>
+                  <button
+                    className={`button ${isPvpRoom && p.next_ready ? 'subtle' : 'primary'}`}
+                    disabled={busy}
+                    onClick={() =>
+                      isPvpRoom
+                        ? void act('ready_next', { ready: !p.next_ready })
+                        : void act('next_round')
+                    }
+                  >
+                    {isPvpRoom
+                      ? p.next_ready
+                        ? '已确认下一回合，等待其他玩家…'
+                        : `准备进入第 ${activeMatch.round_num + 1} 回合 →`
+                      : `跳过结算，进入第 ${activeMatch.round_num + 1} 回合 →`}
+                  </button>
+                )}
+                {activeMatch.last_round_report && (activeMatch.phase === 'finished' || activeMatch.phase === 'round_result') && (
+                  <button
+                    type="button"
+                    className="button subtle ac-landscape-tel-toggle"
+                    onClick={() => setShowTelemetryMobile(true)}
+                  >
+                    本轮战报
+                  </button>
                 )}
               </div>
             </div>
@@ -2143,16 +2142,6 @@ export function AutoChessPage({
                   </div>
                 </div>
                 <div className="ac-hud-group">
-                  {(['aggressive', 'balanced', 'defensive'] as const).map(st => (
-                    <button
-                      key={st}
-                      className={'button ' + (selectedOwned.stance === st ? 'primary' : 'subtle')}
-                      disabled={busy}
-                      onClick={() => void act('set_stance', { unit_id: selectedOwned.id, stance: st })}
-                    >
-                      姿态:{STANCE_LABELS[st]}
-                    </button>
-                  ))}
                   <select
                     aria-label="替换成员"
                     value=""
@@ -2194,6 +2183,27 @@ export function AutoChessPage({
                   <button
                     className="button subtle"
                     disabled={busy}
+                    onClick={() => {
+                      void act('sell', { unit_id: selectedOwned.id });
+                      setSelectedId(null);
+                    }}
+                  >
+                    出售 (+{sellValue(selectedOwned.cost, selectedOwned.star)}G)
+                  </button>
+                  {(['aggressive', 'balanced', 'defensive'] as const).map(st => (
+                    <button
+                      key={st}
+                      style={st === 'aggressive' ? { gridColumnStart: 1 } : undefined}
+                      className={'button ' + (selectedOwned.stance === st ? 'primary' : 'subtle')}
+                      disabled={busy}
+                      onClick={() => void act('set_stance', { unit_id: selectedOwned.id, stance: st })}
+                    >
+                      姿态:{STANCE_LABELS[st]}
+                    </button>
+                  ))}
+                  <button
+                    className="button subtle"
+                    disabled={busy}
                     onClick={() => onOpenTokenEditor?.(selectedOwned.serial)}
                   >
                     <ImageIcon size={14} /> 换头图
@@ -2208,15 +2218,8 @@ export function AutoChessPage({
                   >
                     <BookOpen size={14} /> 查看百科
                   </button>
-                  <button
-                    className="button subtle"
-                    disabled={busy}
-                    onClick={() => {
-                      void act('sell', { unit_id: selectedOwned.id });
-                      setSelectedId(null);
-                    }}
-                  >
-                    出售 (+{sellValue(selectedOwned.cost, selectedOwned.star)}G)
+                  <button className="button subtle ac-inspector-done" onClick={() => setSelectedId(null)}>
+                    取消选择
                   </button>
                 </div>
               </div>
@@ -2233,6 +2236,9 @@ export function AutoChessPage({
                 }
                 style={{ padding: 12 }}
               >
+                <button type="button" className="button subtle ac-landscape-tel-toggle" onClick={() => setShowTelemetryMobile(false)}>
+                  收起战报
+                </button>
                 <div
                   style={{
                     display: 'flex',
@@ -2315,7 +2321,7 @@ export function AutoChessPage({
                 点击棋子后点击紫色部署区即可上阵；同类 3 枚自动合成高星
               </span>
             </div>
-            <div className="ac-bench-row">
+            <div className="ac-bench-row" style={{ '--ac-bench-columns': Math.ceil(benchCapacity / 2) } as CSSProperties}>
               {benchSlots.map((u, idx) =>
                 u ? (
                   <button

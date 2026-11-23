@@ -12,8 +12,8 @@ RANKED_AI_ARCHETYPES = (
         'label': '炎域爆发流',
         'personality': 'balanced',
         'preferred_traits': ('炎域', '星祈'),
-        'preferred_augs': ('aug_execute', 'aug_precision', 'aug_mana'),
-        'interest_floor': 14,
+        'preferred_augs': ('aug_pop', 'aug_execute', 'aug_mana'),
+        'interest_floor': 12,
         'reroll_bias': 1,
         'level_bias': 1,
         'band': 'strong',
@@ -23,8 +23,8 @@ RANKED_AI_ARCHETYPES = (
         'label': '血月收割流',
         'personality': 'balanced',
         'preferred_traits': ('血月', '武斗'),
-        'preferred_augs': ('aug_blood', 'aug_execute', 'aug_titan'),
-        'interest_floor': 12,
+        'preferred_augs': ('aug_pop', 'aug_blood', 'aug_execute'),
+        'interest_floor': 10,
         'reroll_bias': 1,
         'level_bias': 1,
         'band': 'strong',
@@ -35,7 +35,7 @@ RANKED_AI_ARCHETYPES = (
         'personality': 'econ',
         'preferred_traits': ('重盾', '秘愈'),
         'preferred_augs': ('aug_bastion', 'aug_titan', 'aug_pop'),
-        'interest_floor': 20,
+        'interest_floor': 12,
         'reroll_bias': 0,
         'level_bias': 1,
         'band': 'strong',
@@ -90,7 +90,7 @@ RANKED_AI_ARCHETYPES = (
         'personality': 'econ',
         'preferred_traits': (),
         'preferred_augs': ('aug_econ', 'aug_xp', 'aug_pop'),
-        'interest_floor': 24,
+        'interest_floor': 16,
         'reroll_bias': 0,
         'level_bias': 0,
         'band': 'mid',
@@ -109,24 +109,24 @@ RANKED_AI_ARCHETYPES = (
     {
         'id': 'synergy_sky',
         'label': '破空风筝流',
-        'personality': 'reroll',
+        'personality': 'balanced',
         'preferred_traits': ('破空', '星祈'),
         'preferred_augs': ('aug_swift', 'aug_mana', 'aug_reroll'),
-        'interest_floor': 18,
+        'interest_floor': 12,
         'reroll_bias': 0,
-        'level_bias': 0,
-        'band': 'weak',
+        'level_bias': 1,
+        'band': 'mid_low',
     },
     {
         'id': 'macro_reroll',
         'label': '低费赌狗流',
         'personality': 'reroll',
-        'preferred_traits': ('血月', '炎域'),
+        'preferred_traits': (),
         'preferred_augs': ('aug_reroll', 'aug_pair', 'aug_reserves'),
-        'interest_floor': 4,
-        'reroll_bias': 2,
+        'interest_floor': 20,
+        'reroll_bias': 0,
         'level_bias': -1,
-        'band': 'mid_low',
+        'band': 'weak',
     },
     {
         'id': 'macro_greed',
@@ -134,7 +134,7 @@ RANKED_AI_ARCHETYPES = (
         'personality': 'econ',
         'preferred_traits': (),
         'preferred_augs': ('aug_reserves', 'aug_pair', 'aug_reroll'),
-        'interest_floor': 30,
+        'interest_floor': 24,
         'reroll_bias': -1,
         'level_bias': -1,
         'band': 'weak',
@@ -204,43 +204,43 @@ TIER_AI_BASELINES = {
         },
     },
     'platinum': {
-        'shop_noise': 6.5,
-        'pair_bonus_scale': 0.88,
-        'synergy_lookahead': 0.30,
-        'interest_discipline': 0.90,
-        'level_discipline': 0.78,
-        'reroll_cap': 1,
+        'shop_noise': 9.0,
+        'pair_bonus_scale': 0.80,
+        'synergy_lookahead': 0.28,
+        'interest_discipline': 0.82,
+        'level_discipline': 0.70,
+        'reroll_cap': 0,
         'all_in_hp': 0,
         'lock_shop_prob': 0.15,
         'board_synergy_opt': 0.0,
-        'formation_opt': 0.86,
+        'formation_opt': 0.80,
         'stance_opt': 0.0,
         'frontline_req': 2,
         'tactics_profile': {
-            'suboptimal_prob': 0.12,
-            'terrain_scale': 0.80,
-            'focus_scale': 0.82,
-            'skill_scale': 0.90,
+            'suboptimal_prob': 0.17,
+            'terrain_scale': 0.72,
+            'focus_scale': 0.74,
+            'skill_scale': 0.85,
         },
     },
     'diamond': {
-        'shop_noise': 0.5,
-        'pair_bonus_scale': 1.12,
-        'synergy_lookahead': 0.85,
-        'interest_discipline': 1.0,
-        'level_discipline': 1.0,
+        'shop_noise': 0.0,
+        'pair_bonus_scale': 1.15,
+        'synergy_lookahead': 0.92,
+        'interest_discipline': 0.90,
+        'level_discipline': 1.05,
         'reroll_cap': 2,
-        'all_in_hp': 22,
-        'lock_shop_prob': 0.70,
-        'board_synergy_opt': 0.85,
+        'all_in_hp': 26,
+        'lock_shop_prob': 0.80,
+        'board_synergy_opt': 0.95,
         'formation_opt': 1.0,
-        'stance_opt': 0.90,
+        'stance_opt': 0.95,
         'frontline_req': 2,
         'tactics_profile': {
             'suboptimal_prob': 0.0,
-            'terrain_scale': 1.08,
-            'focus_scale': 1.12,
-            'skill_scale': 1.06,
+            'terrain_scale': 1.12,
+            'focus_scale': 1.15,
+            'skill_scale': 1.08,
         },
     },
     'king': {
@@ -268,15 +268,15 @@ TIER_AI_BASELINES = {
 # Intra-tier spread calibrated to push strongest vs weakest toward ~65% vs ~35%.
 BAND_DELTAS = {
     'strong': {
-        'noise_add': -2.0,
-        'syn_add': 0.15,
-        'pair_add': 0.12,
-        'level_disc_add': 0.08,
+        'noise_add': -6.0,
+        'syn_add': 0.25,
+        'pair_add': 0.22,
+        'level_disc_add': 0.10,
         'reroll_add': 0,
-        'board_opt_add': 0.18,
-        'form_add': 0.10,
-        'subopt_add': -0.06,
-        'scale_add': 0.08,
+        'board_opt_add': 0.35,
+        'form_add': 0.18,
+        'subopt_add': -0.10,
+        'scale_add': 0.14,
     },
     'mid_high': {
         'noise_add': -1.0,
@@ -312,15 +312,15 @@ BAND_DELTAS = {
         'scale_add': -0.05,
     },
     'weak': {
-        'noise_add': 8.0,
-        'syn_add': -0.16,
-        'pair_add': -0.16,
-        'level_disc_add': -0.12,
+        'noise_add': 15.0,
+        'syn_add': -0.25,
+        'pair_add': -0.32,
+        'level_disc_add': -0.10,
         'reroll_add': 0,
-        'board_opt_add': -0.18,
-        'form_add': -0.12,
-        'subopt_add': 0.10,
-        'scale_add': -0.10,
+        'board_opt_add': -0.25,
+        'form_add': -0.25,
+        'subopt_add': 0.22,
+        'scale_add': -0.22,
     },
 }
 
@@ -366,7 +366,7 @@ def build_ranked_ai_profile(tier_id, archetype_def):
     delta = BAND_DELTAS.get(band, BAND_DELTAS['mid'])
     tp_base = base['tactics_profile']
 
-    subopt = max(0.0, min(0.68, tp_base['suboptimal_prob'] + delta['subopt_add']))
+    subopt = max(0.0, min(0.75, tp_base['suboptimal_prob'] + delta['subopt_add']))
     t_scale = max(0.08, min(1.32, tp_base['terrain_scale'] + delta['scale_add']))
     f_scale = max(0.10, min(1.38, tp_base['focus_scale'] + delta['scale_add']))
     s_scale = max(0.35, min(1.25, tp_base['skill_scale'] + delta['scale_add'] * 0.55))
@@ -386,11 +386,11 @@ def build_ranked_ai_profile(tier_id, archetype_def):
         'synergy_lookahead': max(0.0, min(1.40, base['synergy_lookahead'] + delta['syn_add'])),
         'level_discipline': max(0.15, min(1.25, base['level_discipline'] + delta.get('level_disc_add', 0.0))),
         'reroll_cap': max(0, base['reroll_cap'] + delta.get('reroll_add', 0)),
-        'all_in_hp': 0 if band == 'weak' else base['all_in_hp'],
-        'lock_shop_prob': 0.0 if band == 'weak' else base['lock_shop_prob'],
+        'all_in_hp': 0 if band == 'weak' else (max(base['all_in_hp'], 16) if band == 'strong' else base['all_in_hp']),
+        'lock_shop_prob': 0.0 if band == 'weak' else (max(base['lock_shop_prob'], 0.45) if band == 'strong' else base['lock_shop_prob']),
         'board_synergy_opt': max(0.0, min(1.40, base['board_synergy_opt'] + delta['board_opt_add'])),
         'formation_opt': max(0.15, min(1.0, base['formation_opt'] + delta['form_add'])),
-        'stance_opt': 0.0 if band == 'weak' else base['stance_opt'],
+        'stance_opt': 0.0 if band == 'weak' else (max(base['stance_opt'], 0.55) if band == 'strong' else base['stance_opt']),
         'frontline_req': 0 if band == 'weak' else base['frontline_req'],
         'tactics_profile': {
             'suboptimal_prob': round(subopt, 3),
@@ -422,6 +422,7 @@ def pick_augment_for_commander(commander, choices, rng=None):
     if not choices:
         return None
     ai_profile = commander.get('ai_profile')
+    band = ai_profile.get('band') if isinstance(ai_profile, dict) else None
     personality = commander.get('personality', 'econ')
     board = [u for u in commander.get('units', []) if u.get('location') == 'board']
     synergies = compute_active_synergies(board)
@@ -434,12 +435,13 @@ def pick_augment_for_commander(commander, choices, rng=None):
     def _score(aug):
         aid = aug.get('id', '')
         sc = 50.0
-        if personality == 'econ' and aid in ('aug_econ', 'aug_pop', 'aug_xp'):
-            sc += 35.0
-        elif personality == 'fast_lv' and aid in ('aug_xp', 'aug_pop', 'aug_mana'):
-            sc += 35.0
-        elif personality == 'reroll' and aid in ('aug_reroll', 'aug_pair', 'aug_precision'):
-            sc += 35.0
+        if band != 'weak':
+            if personality == 'econ' and aid in ('aug_econ', 'aug_pop', 'aug_xp'):
+                sc += 35.0
+            elif personality == 'fast_lv' and aid in ('aug_xp', 'aug_pop', 'aug_mana'):
+                sc += 35.0
+            elif personality == 'reroll' and aid in ('aug_reroll', 'aug_pair', 'aug_precision'):
+                sc += 35.0
         if aid in pref_augs:
             sc += 28.0
         if aid == 'aug_summon' and (has_summon or '灵召' in synergies):
@@ -505,7 +507,7 @@ def _evaluate_ranked_shop_offer(match, cid, commander, serial, occupied_traits, 
         if tr in occupied_traits:
             score += 10.0 * max(0.3, syn_look)
         if tr in pref_traits:
-            score += 14.0 * max(0.4, syn_look)
+            score += 8.5 * max(0.3, syn_look)
 
     # Exact trait activation lookahead for Platinum/Diamond/King
     if syn_look >= 0.45 and (len(board) < match.max_pop(cid) or not owned_same):
@@ -710,7 +712,7 @@ def _ranked_commander_prep(match, cid, profile):
         elif gold - 4 >= interest_floor and need_xp <= (16 if lvl_disc >= 1.0 else 12):
             if not match.buy_xp(cid):
                 break
-        elif personality == 'reroll' and ((lvl < 3 and gold >= 8) or (lvl < 4 and match.round_num >= 5 and gold >= 14)):
+        elif personality == 'reroll' and profile.get('band') != 'weak' and ((lvl < 3 and gold >= 8) or (lvl < 4 and match.round_num >= 5 and gold >= 14)):
             if not match.buy_xp(cid):
                 break
         else:
@@ -718,7 +720,7 @@ def _ranked_commander_prep(match, cid, profile):
 
     # 2. Shop offers & reroll decisions
     base_rerolls = int(profile.get('reroll_cap', 1) or 0)
-    max_rerolls = base_rerolls + (2 if all_in else (1 if personality == 'reroll' else 0))
+    max_rerolls = base_rerolls + (2 if all_in else (1 if (personality == 'reroll' and profile.get('band') != 'weak') else 0))
     for step in range(max_rerolls + 1):
         units = cmd['units']
         board_traits = {

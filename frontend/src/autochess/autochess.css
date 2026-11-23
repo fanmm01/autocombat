@@ -246,6 +246,14 @@
   background: var(--surface, #fff);
 }
 
+.ac-pve-subhead {
+  margin: 12px 0 8px;
+}
+
+.ac-pve-saves {
+  margin-top: 18px;
+}
+
 .ac-hud {
   display: flex;
   flex-wrap: wrap;
@@ -2924,6 +2932,8 @@
 
 /* ── Mobile Phone Landscape One-Screen Cockpit (Auto-Chess Only; Desktop & Desktop-Mode Untouched) ── */
 
+.ac-inspector-done,
+.ac-landscape-log-notice,
 .ac-landscape-rail-tabs,
 .ac-landscape-lobby-tabs,
 .ac-landscape-tel-toggle {
@@ -2934,7 +2944,56 @@
   display: inline-flex;
 }
 
+.ac-shell[data-ac-mobile-landscape="true"] {
+  --ac-safe-top: env(safe-area-inset-top);
+  --ac-safe-right: env(safe-area-inset-right);
+  --ac-safe-bottom: env(safe-area-inset-bottom);
+  --ac-safe-left: env(safe-area-inset-left);
+  height: 100dvh;
+  padding: var(--ac-safe-top) var(--ac-safe-right) var(--ac-safe-bottom) var(--ac-safe-left);
+}
+
+@media (orientation: portrait) {
+  html:has(.ac-shell[data-ac-mobile-landscape="true"]) {
+    overflow: hidden;
+  }
+
+  .ac-shell[data-ac-mobile-landscape="true"] {
+    --ac-safe-top: env(safe-area-inset-right);
+    --ac-safe-right: env(safe-area-inset-bottom);
+    --ac-safe-bottom: env(safe-area-inset-left);
+    --ac-safe-left: env(safe-area-inset-top);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100dvh;
+    height: 100dvw;
+    min-height: 0;
+    transform-origin: top left;
+    transform: translateX(100dvw) rotate(90deg);
+  }
+
+  .ac-shell[data-ac-mobile-landscape="true"] .ac-wiki-modal {
+    width: 100%;
+    max-height: 100% !important;
+  }
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+}
+
 .ac-shell[data-ac-mobile-landscape="true"] .ac-topbar {
+  flex: none;
   min-height: 28px;
   padding: 2px 8px;
   gap: 4px 8px;
@@ -2967,26 +3026,58 @@
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby {
-  height: calc(100dvh - 30px);
-  max-height: calc(100dvh - 30px);
-  padding: 6px 10px;
-  gap: 6px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  padding: 3px 8px 5px;
+  gap: 4px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas: "tabs actions" "notice notice" "mode mode";
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby > :is(.ac-ranked-hero, .ac-lobby-grid) {
+  grid-area: mode;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby .page-intro > :first-child {
+  display: none;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby .page-intro {
+  grid-area: actions;
   flex-direction: row;
   align-items: center;
+  min-height: 22px;
   margin-bottom: 0;
-  gap: 8px;
+  gap: 6px;
   flex: none;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby .page-intro h1 {
-  font-size: 1.05rem;
+  font-size: 0.92rem;
+  line-height: 1.1;
   margin: 0;
+  white-space: nowrap;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-lobby-actions {
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-lobby-dup-action {
+  display: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-lobby-actions .button,
+.ac-shell[data-ac-mobile-landscape="true"] .ac-name-form input {
+  min-height: 22px;
+  padding: 1px 7px;
+  font-size: 0.7rem;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-name-form input {
+  width: 92px;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby .page-intro .eyebrow,
@@ -2994,10 +3085,19 @@
   display: none;
 }
 
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby > .ac-intent-bar {
+  grid-area: notice;
+  margin: 0;
+  flex: none;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+}
+
 .ac-shell[data-ac-mobile-landscape="true"] .ac-landscape-lobby-tabs {
+  grid-area: tabs;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
   flex: none;
 }
 
@@ -3009,7 +3109,8 @@
   color: #3c3657;
   font-size: 0.72rem;
   font-weight: 700;
-  padding: 4px 6px;
+  padding: 3px 6px;
+  min-height: 24px;
   cursor: pointer;
 }
 
@@ -3029,7 +3130,102 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 12px !important;
+  padding: 6px 8px !important;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby {
+  & :is(.ac-ranked-hero, .ac-pvp-panel) > .ac-section-head {
+    margin-bottom: 5px !important;
+    font-size: 0.82rem;
+  }
+
+  & :is(.ac-ranked-hero, .ac-pvp-panel) .button {
+    min-height: 26px;
+    padding: 3px 7px;
+    font-size: 0.74rem;
+  }
+
+  & .ac-ranked-hero-grid {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  & :is(.ac-ranked-profile-card, .ac-ranked-launch-box, .ac-ranked-locked-box, .ac-pvp-locked-box, .ac-create-room-box) {
+    padding: 6px 8px;
+    gap: 5px;
+  }
+
+  & .ac-ranked-mini-stats {
+    gap: 3px 8px;
+  }
+
+  & .ac-pvp-panel.ac-lobby-tab-active {
+    display: flex;
+    flex-direction: column;
+  }
+
+  & .ac-pvp-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "create join" "create rooms";
+    gap: 6px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  & .ac-create-room-box {
+    grid-area: create;
+    align-self: start;
+  }
+
+  & .ac-create-room-box h4 {
+    margin-bottom: 3px !important;
+  }
+
+  & .ac-create-room-box > :is(.ac-checkbox-row, .button) {
+    margin-top: 3px !important;
+  }
+
+  & .ac-create-room-box .ac-field {
+    gap: 2px;
+  }
+
+  & .ac-create-room-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 6px;
+  }
+
+  & .ac-join-room-bar {
+    grid-area: join;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+  }
+
+  & .ac-join-room-bar input {
+    min-width: 0;
+    width: 0;
+    flex: 1;
+  }
+
+  & :is(.ac-field input, .ac-field select, .ac-join-room-bar input) {
+    min-height: 26px;
+    padding: 3px 5px;
+    font-size: 0.75rem;
+  }
+
+  & .ac-room-directory {
+    grid-area: rooms;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  & .ac-room-directory .ac-saved-list {
+    min-height: 0;
+    overflow-y: auto;
+  }
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby .ac-lobby-grid {
@@ -3046,34 +3242,211 @@
   width: 100%;
 }
 
-/* Playing Screen: Fixed Single-Screen Landscape Cockpit */
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page-lobby .ac-pve-panel.ac-lobby-tab-active {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.55fr) minmax(196px, 0.95fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 10px !important;
+  overflow: hidden !important;
+}
 
-.ac-shell[data-ac-mobile-landscape="true"]:has(.ac-page-playing) {
-  height: 100dvh;
-  max-height: 100dvh;
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 5px;
   overflow: hidden;
 }
 
-.ac-shell[data-ac-mobile-landscape="true"] .ac-page-playing {
-  height: calc(100dvh - 30px);
-  max-height: calc(100dvh - 30px);
-  padding: 3px 8px;
-  gap: 4px;
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-section-head {
+  margin-bottom: 0 !important;
+  gap: 6px;
+  flex: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-section-head h3 {
+  font-size: 0.84rem;
+  line-height: 1.15;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-badge-free {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-mode-pills {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 0;
+  flex: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-mode-pill {
+  padding: 5px 8px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-mode-pill strong {
+  font-size: 0.76rem;
+  margin-bottom: 0;
+  line-height: 1.2;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-mode-pill small {
+  font-size: 0.64rem;
+  line-height: 1.22;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-subhead {
+  margin: 1px 0 0;
+  font-size: 0.73rem;
+  line-height: 1.15;
+  flex: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-arena-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-arena-card {
+  padding: 5px 7px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 0;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-arena-card strong {
+  font-size: 0.73rem;
+  line-height: 1.15;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-setup .ac-arena-card p {
+  margin: 0;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-start-btn {
+  margin-top: auto;
+  min-height: 29px;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  width: 100%;
+  justify-content: center;
+  flex: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves {
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid #e6e1f5;
+  padding-left: 10px;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-section-head {
+  margin-bottom: 0 !important;
+  flex: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-section-head h4 {
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-section-head .button {
+  min-height: 22px;
+  padding: 1px 7px;
+  font-size: 0.66rem;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-saved-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 5px;
+  padding-right: 2px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-saved-item {
+  padding: 5px 8px;
+  border-radius: 8px;
+  gap: 6px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-saved-item strong {
+  font-size: 0.73rem;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-saved-item .muted {
+  font-size: 0.63rem !important;
+  line-height: 1.25;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves .ac-saved-item .button {
+  min-height: 24px;
+  padding: 2px 7px;
+  font-size: 0.68rem;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-pve-saves > p.muted {
+  margin: 4px 0 0;
+  font-size: 0.7rem !important;
+  line-height: 1.4;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page-playing {
+  padding: 3px 5px;
+  gap: 4px;
+  overflow: auto;
   display: flex;
   flex-direction: column;
 }
 
+.ac-shell[data-ac-mobile-landscape="true"]:has(.ac-page-playing) > .ac-topbar,
+.ac-shell[data-ac-mobile-landscape="true"] .ac-match-notice,
+.ac-shell[data-ac-mobile-landscape="true"] .ac-board-panel > .ac-intent-bar {
+  display: none;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-landscape-log-notice {
+  display: block;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-page > .ac-intent-bar {
+  background: transparent;
+  border: 0;
+}
+
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-playing > .ac-intent-bar {
-  position: fixed;
-  top: auto;
-  bottom: 112px;
-  right: 12px;
-  z-index: 50;
-  max-width: 270px;
+  flex: none;
+  margin: 0;
   padding: 3px 8px;
   font-size: 0.7rem;
-  box-shadow: 0 6px 18px rgba(17, 15, 42, 0.22);
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-page-playing .ac-hud {
@@ -3109,10 +3482,11 @@
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-workspace {
   display: grid !important;
-  grid-template-columns: 142px minmax(0, 1fr) !important;
-  gap: 6px;
+  grid-template-columns: clamp(96px, 15dvmax, 142px) minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 4px;
   flex: 1;
-  min-height: 0;
+  min-height: 158px;
   overflow: hidden;
   align-items: stretch;
 }
@@ -3129,7 +3503,7 @@
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-landscape-rail-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 3px;
   flex: none;
 }
@@ -3150,6 +3524,20 @@
   min-height: 0;
   overflow-y: auto;
   padding: 6px !important;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-synergy-panel {
+  grid-area: synergy;
+  min-width: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 4px !important;
+  font-size: 0.7rem;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-syn-head {
+  flex-wrap: wrap;
+  gap: 2px;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-left-col > .ac-rail-panel h4 {
@@ -3183,7 +3571,9 @@
 .ac-shell[data-ac-mobile-landscape="true"] .ac-center-col {
   order: 2 !important;
   display: grid !important;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) clamp(138px, 22dvmax, 216px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas: "board shop" "bench shop";
   gap: 4px;
   height: 100%;
   min-height: 0;
@@ -3192,18 +3582,21 @@
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-panel {
-  display: flex;
-  flex-direction: column;
+  grid-area: board;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) min(32dvmax, 56%) minmax(0, 1fr);
+  grid-template-rows: fit-content(46%) minmax(0, 1fr);
+  grid-template-areas: "synergy map toolbar" "synergy map context";
   min-height: 0;
-  padding: 4px 6px !important;
-  gap: 2px;
-  position: relative;
-  overflow: hidden;
+  gap: 3px;
+  padding: 3px !important;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-toolbar {
-  flex: none;
-  justify-content: flex-end;
+  grid-area: toolbar;
+  align-content: flex-start;
+  justify-content: flex-start;
+  overflow: auto;
   gap: 6px;
   margin-bottom: 0;
 }
@@ -3216,15 +3609,19 @@
   min-height: 22px;
   padding: 2px 8px;
   font-size: 0.7rem;
+  white-space: normal;
+  max-width: 100%;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-toolbar .ac-hud-group {
-  flex-wrap: nowrap;
+  min-width: 0;
+  flex-wrap: wrap;
   font-size: 0.72rem;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-scroll {
-  flex: 1;
+  grid-area: map;
+  padding: 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -3241,42 +3638,41 @@
   display: block;
 }
 
-.ac-shell[data-ac-mobile-landscape="true"] .ac-board-panel > .ac-intent-bar {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 4px;
-  z-index: 15;
-  padding: 2px 7px;
-  font-size: 0.68rem;
-  background: rgba(255, 255, 255, 0.92);
-  pointer-events: none;
-}
-
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-panel > .ac-inspector {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 4px;
-  z-index: 20;
-  padding: 4px 6px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 4px 14px rgba(18, 16, 40, 0.22);
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  grid-area: context;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  margin: 0;
+  padding: 6px;
+  background: white;
+  overflow: auto;
   gap: 6px;
   font-size: 0.72rem;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-panel > .ac-inspector .ac-hud-group {
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(56px, 100%), 1fr));
+  gap: 4px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-inspector select {
+  min-width: 0;
+  width: 100%;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-inspector-done {
+  display: inline-flex;
+  grid-column: 1 / -1;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-board-panel > .ac-inspector .button {
-  min-height: 22px;
-  padding: 2px 6px;
+  min-height: 28px;
+  min-width: 0;
+  padding: 2px;
   font-size: 0.68rem;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-telemetry-panel {
@@ -3294,6 +3690,11 @@
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-bench-panel {
+  grid-area: bench;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 88px;
+  min-width: 0;
   padding: 3px 6px !important;
 }
 
@@ -3308,18 +3709,17 @@
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-bench-row {
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(var(--ac-bench-columns), minmax(70px, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 4px;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-bench-slot {
-  flex: 0 0 auto;
-  min-width: 70px;
-  min-height: 24px;
-  height: 24px;
+  min-width: 0;
+  min-height: 0;
   padding: 1px 6px;
   border-radius: 7px;
   flex-direction: row;
@@ -3329,18 +3729,27 @@
   font-size: 0.7rem;
 }
 
+.ac-shell[data-ac-mobile-landscape="true"] .ac-bench-name > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ac-shell[data-ac-mobile-landscape="true"] .ac-bench-slot > small,
 .ac-shell[data-ac-mobile-landscape="true"] .ac-bench-slot.locked {
   display: none;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-shop-panel {
+  grid-area: shop;
+  min-width: 0;
+  overflow: auto;
   padding: 4px 6px !important;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-shop-body {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 5px;
   align-items: stretch;
 }
@@ -3359,9 +3768,14 @@
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-shop-controls .ac-hud-group {
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
   gap: 2px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-shop-controls .button:first-child {
+  grid-column: 1 / -1;
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-shop-controls .button {
@@ -3375,7 +3789,7 @@
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-shop-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
 }
 
@@ -3391,6 +3805,8 @@
 }
 
 .ac-shell[data-ac-mobile-landscape="true"] .ac-shop-top {
+  flex-wrap: wrap;
+  gap: 2px;
   font-size: 0.7rem;
 }
 
@@ -3422,7 +3838,14 @@
   gap: 8px;
 }
 
-.ac-shell[data-ac-mobile-landscape="true"] .ac-modal {
-  max-height: 92dvh;
+.ac-shell[data-ac-mobile-landscape="true"] :is(.ac-modal-backdrop, .modal-scrim) {
+  padding: max(4px, var(--ac-safe-top)) max(6px, var(--ac-safe-right))
+    max(4px, var(--ac-safe-bottom)) max(6px, var(--ac-safe-left));
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] :is(.ac-modal, .modal) {
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
   padding: 10px 14px;
 }

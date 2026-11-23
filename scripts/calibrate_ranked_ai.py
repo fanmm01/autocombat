@@ -34,6 +34,7 @@ def _make_bot_cfg(name, personality, profile=None, style_label=''):
 
 def _simulate_duel_task(task):
     cfg_a, cfg_b, seed, swap = task
+    random.seed(int(seed) ^ (0x9E3779B9 if swap else 0x517CC1B7))
     left_cfg, right_cfg = (cfg_b, cfg_a) if swap else (cfg_a, cfg_b)
 
     m = AutoChessMatch(mode='lobby4', arena_preset='autochess_standard', seed=seed)
