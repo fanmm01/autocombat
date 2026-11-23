@@ -41,3 +41,8 @@
 .trait-definitions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}.trait-definitions p{margin:0!important;padding:12px;background:var(--bg,#f8f6f1);border-radius:8px;line-height:1.8!important}.trait-definitions strong{display:block;color:var(--character);font-size:13px}
 .encyclopedia-passives{border-left:3px solid var(--character);padding:2px 14px;margin:18px 0;background:#faf9f6}.encyclopedia-passives h4{font-size:13px}.encyclopedia-passives p,.encyclopedia-basic{font-size:12px;line-height:1.95;color:#625f6a}.profile-skills .skill-article{font-size:13px;line-height:1.9;color:#423f4a}.profile-skills .effect-description{font-size:12px;line-height:1.9;margin:8px 0;padding:0 0 0 12px;border-left:2px solid #e9e5ed}.profile-skills .skill-cost{line-height:1.85;color:#71657f}.profile-skills summary strong{flex:1;min-width:0}.profile-skills summary .tag{flex-shrink:0}.profile-skills details{padding:14px 0}
 @media(max-width:750px){.trait-definitions{grid-template-columns:1fr}.profile-skills summary{flex-wrap:wrap}.profile-skills summary strong{font-size:12px}}
+.cake-stock{color:var(--muted);font-size:10px;white-space:nowrap}
+.cake-options{display:grid;gap:8px;max-height:55vh;overflow:auto}
+.cake-option{width:100%;text-align:left}
+.cake-option span{display:grid;flex:1;gap:4px}
+.cake-option small{color:var(--muted)}

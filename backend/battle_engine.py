@@ -5265,11 +5265,14 @@ class CombatEngine:
             self._auto_cake_rescue = False
 
     def _find_personal_item(self, uid, item_kind=None, item_name=None, *, target_id=None):
+        return next(self._usable_personal_items(uid, item_kind, item_name, target_id=target_id), None)
+
+    def _usable_personal_items(self, uid, item_kind=None, item_name=None, *, target_id=None):
         from characters_data import ITEM_TEMPLATES
         ITEM_TEMPLATES = getattr(self, '_item_templates_snapshot', ITEM_TEMPLATES)
         char = self.get_char(uid)
         if not char:
-            return None
+            return
         for index, entry in enumerate(char.inventory):
             name = entry.get('item', '')
             if entry.get('count', 0) <= 0 or name not in ITEM_TEMPLATES:
@@ -5282,8 +5285,7 @@ class CombatEngine:
                 continue
             if target_id is not None and not self._inventory_item_allowed(entry, uid, uid, target_id):
                 continue
-            return name, index
-        return None
+            yield name, index
 
     def _consume_inventory_item(self, eater_id, index, item_name, target_id):
         char = self.get_char(eater_id)
@@ -8048,11 +8050,9 @@ class CombatEngine:
             buff_msg = f"，{skill_mod or (aux_type + ' ' + aux_val)}({buff_dur}回合)"
         return f"食用【{item_name}】→ {tname} 回复 {'+'.join(parts) or '0'}{buff_msg}"
 
-    def _eat_cake(self, eater_id, target_id=None):
+    def _eat_cake(self, eater_id, target_id=None, *, item_name=None, source=None):
         """Consume a usable cake from inventory, or a same-team crafted pool.
         Returns (result_text, success)."""
-        from characters_data import ITEM_TEMPLATES
-        ITEM_TEMPLATES = getattr(self, '_item_templates_snapshot', ITEM_TEMPLATES)
         tid = target_id or eater_id
         if not self.get_char(tid) or self._battle_team_of(tid) != self._battle_team_of(eater_id):
             return ('只能给同队存活或濒死单位食用蛋糕', False)
@@ -8060,26 +8060,34 @@ class CombatEngine:
             return ('目标已死亡，无法食用蛋糕', False)
 
         # 1) Prefer the eater's own inventory; only same-team entries are usable.
-        cake = self._find_personal_item(eater_id, target_id=tid)
-        if cake:
-            item_name, index = cake
-            result, ok = self._consume_inventory_item(eater_id, index, item_name, tid)
-            if ok:
-                return (result, True)
+        if source in (None, 'personal'):
+            cake = self._find_personal_item(eater_id, item_name=item_name, target_id=tid)
+            if cake:
+                name, index = cake
+                return self._consume_inventory_item(eater_id, index, name, tid)
 
         # 2) Fall back to ready crafted items belonging to the eater's team.
-        team = self._battle_team_of(eater_id)
+        shared = next(self._ready_shared_cakes(eater_id, item_name=item_name), None) if source in (None, 'shared') else None
+        if shared is None:
+            return ('所选蛋糕已不可用' if item_name else '无可用的蛋糕', False)
+        index, cake = shared
         effects = self._get_effects()
-        for i, e in enumerate(effects):
-            if e.get('type') != 'create': continue
-            if e.get('craftRoundsRemaining', 1) > 0: continue
-            if e.get('sourceTeam') and e['sourceTeam'] != team: continue
-            tmpl = e.get('template', '')
-            if not tmpl or tmpl not in ITEM_TEMPLATES: continue
-            result = self._apply_item_heal(tmpl, tid, metadata=e)
-            effects.pop(i); self._set_effects(effects)
-            return (result, True)
-        return ("无可用的蛋糕", False)
+        result = self._apply_item_heal(cake['template'], tid, metadata=cake)
+        effects.pop(index)
+        self._set_effects(effects)
+        return (result, True)
+
+    def _ready_shared_cakes(self, uid=None, *, item_name=None):
+        """Yield the indices and records of shared cakes, in consumption order."""
+        from characters_data import ITEM_TEMPLATES
+        templates = getattr(self, '_item_templates_snapshot', ITEM_TEMPLATES)
+        team = self._battle_team_of(uid) if uid is not None else None
+        for index, effect in enumerate(self._get_effects()):
+            if (effect.get('type') == 'create' and effect.get('craftRoundsRemaining', 1) <= 0
+                    and effect.get('template', '') in templates
+                    and (not item_name or effect['template'] == item_name)
+                    and (uid is None or not effect.get('sourceTeam') or effect['sourceTeam'] == team)):
+                yield index, effect
 
     def _has_ready_cake(self, uid=None, target_id=None, item_kind=None):
         """Check usable cakes for a team (or personal inventory for uid)."""
@@ -8090,20 +8098,9 @@ class CombatEngine:
                 for entry in char.inventory:
                     if entry.get('item', '') in ITEM_TEMPLATES and entry.get('count', 0) > 0:
                         return True
-        else:
-            if self._find_personal_item(uid, item_kind=item_kind, target_id=target_id or uid):
-                return True
-            team = self._battle_team_of(uid)
-            if any(e.get('type') == 'create' and e.get('craftRoundsRemaining', 1) <= 0
-                   and e.get('template', '') in ITEM_TEMPLATES
-                   and (not e.get('sourceTeam') or e['sourceTeam'] == team)
-                   for e in self._get_effects()):
-                return True
-            return False
-        for e in self._get_effects():
-            if e.get('type') == 'create' and e.get('craftRoundsRemaining', 1) <= 0:
-                if e.get('template', '') in ITEM_TEMPLATES: return True
-        return False
+        elif self._find_personal_item(uid, item_kind=item_kind, target_id=target_id or uid):
+            return True
+        return any(self._ready_shared_cakes(uid))
 
 class FullBattleEngine(CombatEngine):
     """Detailed COC7 battle mode with full attack flow, reactions, and logging.

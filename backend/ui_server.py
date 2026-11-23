@@ -153,6 +153,17 @@ def register_ui(app, ns):
             return '附加动作次数已用尽！'
         return ''
 
+    def cake_options(eng, uid):
+        counts = {}
+        inventory = eng.get_inventory(uid)
+        for name, index in eng._usable_personal_items(uid, target_id=uid):
+            key = (name, 'personal')
+            counts[key] = counts.get(key, 0) + inventory[index]['count']
+        for _, effect in eng._ready_shared_cakes(uid):
+            key = (effect['template'], 'shared')
+            counts[key] = counts.get(key, 0) + 1
+        return [dict(item=name, source=source, count=count) for (name, source), count in counts.items()]
+
     def spell_info(eng, uid, s):
         timing = str(s.get('时机', s.get('timing', '2')))
         acts = eng._get_my_actions(uid)
@@ -279,9 +290,13 @@ def register_ui(app, ns):
                            effects=[], available=basic_attack_available(eng, uid),
                            reason='', cooldown=0, revive_candidates=[], once=False)]
             skills += [spell_info(eng, uid, s) for s in (ch.spells or eng.load_spells(uid) or [])]
+            cakes = cake_options(eng, uid)
+            next_cake = {key: cakes[0][key] for key in ('item', 'source')} if cakes else None
             turn = dict(uid=eng._resolve_uid(uid), slot_uid=uid, skills=skills,
                         controller=controller(room, eng, uid), actions=eng._get_my_actions(uid),
-                        cake_unavailable_reason=cake_unavailable_reason(eng, uid))
+                        cake_unavailable_reason=cake_unavailable_reason(eng, uid),
+                        shared_cake_count=sum(cake['count'] for cake in cakes if cake['source'] == 'shared'),
+                        next_cake=next_cake, cake_options=cakes)
         p = pending_for(room)
         reaction = None
         if p:
@@ -640,6 +655,11 @@ def register_ui(app, ns):
                     'count', 'bp_suffix', 'restim_mode', 'allow_failed_reaction'):
             if key in data:
                 payload[key] = data[key]
+        if 'cake_item' in data or 'cake_source' in data:
+            item, source = data.get('cake_item'), data.get('cake_source')
+            if cmd != '.a eat' or not isinstance(item, str) or not item or source not in ('personal', 'shared'):
+                raise BadRequest('请选择蛋糕种类和库存来源')
+            payload.update(_ui_cake_item=item, _ui_cake_source=source)
         if cmd == '.a give':
             if not target or eng._battle_team_of(target) != eng._battle_team_of(uid) or eng._resolve_uid(target) == eng._resolve_uid(uid):
                 raise BadRequest('请选择其他同队角色')

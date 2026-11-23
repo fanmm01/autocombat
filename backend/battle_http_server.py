@@ -4333,7 +4333,14 @@ def submit_action(battle_id):
                             target_id = target_entry['userId']
                         else:
                             return jsonify({'error': True, 'message': f'未找到目标: {target_name}'}), 404
-                    out, success = engine._eat_cake(effective_uid, target_id)
+                    item = data.get('_ui_cake_item') if getattr(engine, '_ui_deferred_ai', False) else None
+                    if item is not None:
+                        out, success = engine._eat_cake(effective_uid, target_id, item_name=item,
+                                                        source=data.get('_ui_cake_source'))
+                        if not success:
+                            return jsonify({'error': True, 'message': out}), 400
+                    else:
+                        out, success = engine._eat_cake(effective_uid, target_id)
                     output = out if isinstance(out, str) else str(out)
                     if success:
                         engine._consume_action(effective_uid, '附加')

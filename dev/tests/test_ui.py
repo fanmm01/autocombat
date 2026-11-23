@@ -497,6 +497,8 @@ class BrowserUITests(unittest.TestCase):
         url = f'/api/ui/rooms/{self.code}'
         before = self.state()
         self.assertEqual(before['snapshot']['turn']['cake_unavailable_reason'], '无可用的蛋糕')
+        self.assertEqual(before['snapshot']['turn']['shared_cake_count'], 0)
+        self.assertIsNone(before['snapshot']['turn']['next_cake'])
         options = self.client.post(url + '/options', json=dict(command='.a give', revision=before['revision']))
         self.assertEqual(options.get_json()['targets'], [])
         for command, target in (('.a eat', ''), ('.a give', ally)):
@@ -512,6 +514,7 @@ class BrowserUITests(unittest.TestCase):
         self.eng._set_effects([craft])
         ready = self.state()
         self.assertEqual(ready['snapshot']['turn']['cake_unavailable_reason'], '')
+        self.assertEqual(ready['snapshot']['turn']['next_cake'], dict(item='蛋糕HP', source='personal'))
         options = self.client.post(url + '/options', json=dict(command='.a give', revision=ready['revision']))
         self.assertIn(ally, options.get_json()['targets'])
         preview = self.client.post(url + '/preview', json=dict(command='.a eat', revision=ready['revision']))
@@ -528,6 +531,93 @@ class BrowserUITests(unittest.TestCase):
         self.assertEqual(turn['cake_unavailable_reason'], '无可用的蛋糕')
         char.inventory.append({'item': '蛋糕HP', 'count': 1})
         self.assertEqual(self.state()['snapshot']['turn']['cake_unavailable_reason'], '附加动作次数已用尽！')
+
+    def test_empty_personal_inventory_can_only_heal_while_shared_cakes_remain(self):
+        self.create(team_a=['Y8', 'Y1'], team_b=['Y2'], seed=42)
+        self.control(op='start')
+        self.control(op='pause')
+
+        def advance_to(serial):
+            for _ in range(5):
+                snapshot = self.state()['snapshot']
+                unit = next(u for u in snapshot['units'] if u['uid'] == snapshot['turn']['uid'])
+                if unit['serial'] == serial:
+                    return snapshot['turn']
+                response = self.submit()
+                self.assertEqual(response.status_code, 200, response.get_json())
+            self.fail(f'{serial} did not get a turn')
+
+        baker = advance_to('Y8')
+        craft = next(skill for skill in baker['skills'] if skill['name'] == '美味的蛋糕')
+        baked = self.submit(command=craft['command'])
+        self.assertEqual(baked.status_code, 200, baked.get_json())
+        portions = baked.get_json()['snapshot']['turn']['shared_cake_count']
+        self.assertGreater(portions, 0)
+
+        turn = advance_to('Y1')
+        uid = turn['uid']
+        self.assertEqual(self.eng.get_char(uid).inventory, [])
+        self.assertEqual(turn['shared_cake_count'], portions)
+        self.assertEqual(turn['next_cake'], dict(item='蛋糕HP', source='shared'))
+        self.eng._init_combat_hp(uid, 1)
+        self.eng._set_actions({uid: {'主动': 1, '附加': portions + 1}})
+        for remaining in reversed(range(portions)):
+            hp_before = self.eng._get_combat_hp(uid)
+            eaten = self.submit(command='.a eat')
+            self.assertEqual(eaten.status_code, 200, eaten.get_json())
+            self.assertEqual(eaten.get_json()['snapshot']['turn']['shared_cake_count'], remaining)
+            self.assertGreater(self.eng._get_combat_hp(uid), hp_before)
+
+        before = self.state()
+        self.assertEqual(before['snapshot']['turn']['actions']['附加'], 1)
+        self.assertIsNone(before['snapshot']['turn']['next_cake'])
+        denied = self.submit(command='.a eat')
+        self.assertEqual(denied.status_code, 400, denied.get_json())
+        self.assertEqual(denied.get_json()['message'], '无可用的蛋糕')
+        self.assertEqual(self.state()['snapshot'], before['snapshot'])
+
+    def test_manual_eat_consumes_only_the_selected_cake_and_source(self):
+        self.create()
+        self.close_range()
+        uid = self.state()['snapshot']['turn']['uid']
+        char = self.eng.get_char(uid)
+        char.inventory = [{'item': '蛋糕HP', 'count': 2}, {'item': '蛋糕MP', 'count': 1}]
+        char.set_attr('魔力', 1)
+        self.eng._init_combat_hp(uid, 1)
+        self.eng._set_actions({uid: {'主动': 1, '附加': 3}})
+        team = self.eng._battle_team_of(uid)
+        shared = dict(type='create', template='蛋糕HP', craftRoundsRemaining=0, sourceTeam=team)
+        self.eng._set_effects([shared, {**shared, 'template': '蛋糕MP', 'craftRoundsRemaining': 1}])
+
+        before = self.state()
+        self.assertEqual(before['snapshot']['turn']['cake_options'], [
+            dict(item='蛋糕HP', source='personal', count=2),
+            dict(item='蛋糕MP', source='personal', count=1),
+            dict(item='蛋糕HP', source='shared', count=1),
+        ])
+        url = f'/api/ui/rooms/{self.code}/preview'
+        mp_cake = dict(command='.a eat', cake_item='蛋糕MP', cake_source='personal')
+        preview = self.client.post(url, json={**mp_cake, 'revision': before['revision']})
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+        self.assertEqual(self.state()['snapshot'], before['snapshot'])
+
+        eaten = self.submit(**mp_cake)
+        self.assertEqual(eaten.status_code, 200, eaten.get_json())
+        self.assertGreater(char.get_attr('魔力'), 1)
+        self.assertEqual(self.eng._get_combat_hp(uid), 1)
+        self.assertEqual(char.inventory, [{'item': '蛋糕HP', 'count': 2}])
+
+        eaten = self.submit(command='.a eat', cake_item='蛋糕HP', cake_source='shared')
+        self.assertEqual(eaten.status_code, 200, eaten.get_json())
+        self.assertGreater(self.eng._get_combat_hp(uid), 1)
+        self.assertEqual(char.inventory, [{'item': '蛋糕HP', 'count': 2}])
+        before = self.state()
+        self.assertEqual(before['snapshot']['turn']['shared_cake_count'], 0)
+        self.assertEqual(before['snapshot']['turn']['actions']['附加'], 1)
+        denied = self.submit(command='.a eat', cake_item='蛋糕HP', cake_source='shared')
+        self.assertEqual(denied.status_code, 400, denied.get_json())
+        self.assertEqual(denied.get_json()['message'], '所选蛋糕已不可用')
+        self.assertEqual(self.state()['snapshot'], before['snapshot'])
 
     def test_cake_targets_exact_hidden_summon_member(self):
         self.create(team_a=['Y8','Y9'],team_b=['Y1'])
