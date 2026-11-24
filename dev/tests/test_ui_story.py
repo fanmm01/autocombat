@@ -41,10 +41,54 @@ class StoryUITests(unittest.TestCase):
             else:self.fail('Unexpected status '+self.run['status'])
         self.fail('Story did not reach '+status)
 
+    def _login_author(self, client=None):
+        target = client or self.client
+        resp = target.post('/api/ui/autochess/auth/login', json={'username': 'fanmm01', 'password': 'fanmm0829'})
+        self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+        return target
+
     def test_three_chapters_and_continuation_lock(self):
-        chapters=next(p['chapters'] for p in self.client.get('/api/ui/story/projects').json['projects'] if p['id']=='astral-demo')
+        projects_res = self.client.get('/api/ui/story/projects').json
+        self.assertEqual(projects_res['default_workspace'], '')
+        chapters=next(p['chapters'] for p in projects_res['projects'] if p['id']=='astral-demo')
         self.assertEqual([x['unlocked'] for x in chapters],[True,True,False])
         self.assertEqual(self.client.post('/api/ui/story/runs',json={'project':'astral-demo','flow':'MC2'}).status_code,400)
+
+    def test_story_authoring_requires_story_manage_permission(self):
+        # Guest (with session) can play stories, but cannot access authoring workspace endpoints
+        self.assertEqual(self.client.get('/api/ui/story/workspaces').status_code, 403)
+        self.assertEqual(self.client.post('/api/ui/story/workspaces/create', json={'name': 'guest-story'}).status_code, 403)
+
+        auth = self.ui['auth']
+        store = self.ui['store']
+        created_ids = []
+        try:
+            u_reg = f'streg_{secrets.token_hex(3)}'
+            u_char = f'stchr_{secrets.token_hex(3)}'
+            u_story = f'stauth_{secrets.token_hex(3)}'
+            auth.register(u_reg, 'pw_test_123')
+            created_ids.append(u_reg)
+            auth.grant_admin('fanmm01', u_char, permissions=['character_manage'], password='pw_test_123')
+            created_ids.append(u_char)
+            auth.grant_admin('fanmm01', u_story, permissions=['story_manage'], password='pw_test_123')
+            created_ids.append(u_story)
+
+            c_reg = backend.app.test_client()
+            c_reg.post('/api/ui/autochess/auth/login', json={'username': u_reg, 'password': 'pw_test_123'})
+            self.assertEqual(c_reg.get('/api/ui/story/workspaces').status_code, 403)
+
+            c_char = backend.app.test_client()
+            c_char.post('/api/ui/autochess/auth/login', json={'username': u_char, 'password': 'pw_test_123'})
+            self.assertEqual(c_char.get('/api/ui/story/workspaces').status_code, 403)
+
+            c_story = backend.app.test_client()
+            c_story.post('/api/ui/autochess/auth/login', json={'username': u_story, 'password': 'pw_test_123'})
+            self.assertEqual(c_story.get('/api/ui/story/workspaces').status_code, 200)
+            proj = c_story.get('/api/ui/story/projects').json
+            self.assertTrue(proj['default_workspace'])
+        finally:
+            for acc_id in created_ids:
+                store.delete('autochess_account', acc_id)
 
     def test_choice_unlock_and_idempotence(self):
         self.start();self.advance_to('choice')
@@ -65,6 +109,7 @@ class StoryUITests(unittest.TestCase):
         self.assertTrue(updated['gates']['option:crossroads.chos:1'])
 
     def test_isolation_and_file_api(self):
+        self._login_author()
         root=Path(__file__).resolve().parents[2]/'story-projects/demo'
         result=self.client.post('/api/ui/story/workspaces/open',json={'path':str(root)})
         self.assertEqual(result.status_code,200,result.json);wid=result.json['id']
@@ -77,6 +122,7 @@ class StoryUITests(unittest.TestCase):
         self.assertEqual(stranger.get('/api/ui/story/runs/'+preview.json['id']).status_code,400)
 
     def test_create_and_switch_workspaces(self):
+        self._login_author()
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'story-projects').mkdir()
             with patch('ui_story.PROJECT_ROOT',root):
@@ -94,6 +140,7 @@ class StoryUITests(unittest.TestCase):
                 self.assertEqual(compiled.status_code,200,compiled.json)
 
     def test_workspace_list_discovers_unregistered_stories(self):
+        self._login_author()
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             story=root/'story-projects/fuzhe';story.mkdir(parents=True)
@@ -115,6 +162,7 @@ class StoryUITests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/ui/story/runs/'+rid+'/events?after=bad').status_code,400)
         self.assertEqual(self.client.get('/api/ui/story/runs/'+rid+'/slots').json['slots'],[])
         response=self.client.get('/ui/story-engine/');self.assertEqual(response.status_code,200);response.close()
+        self._login_author()
         workspace=self.client.post('/api/ui/story/workspaces/open',json={'path':str(Path(__file__).resolve().parents[2]/'story-projects/demo')}).json
         self.assertEqual(self.client.get('/api/ui/story/workspaces').status_code,200)
         graph=self.client.post('/api/ui/story/workspaces/'+workspace['id']+'/graph/patch',json={'path':'XU.flow','operation':{'op':'append','text':'LOCK@MC2'}})

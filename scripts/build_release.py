@@ -78,10 +78,8 @@ def main():
         # Validate the exact staged files before creating the archive.
         env = os.environ.copy()
         env.pop('PYTHONPATH', None)
-        previous_allowlist = Path(folder) / 'previous-allowlist.json'
-        previous_allowlist.write_text('["198.51.100.7"]', encoding='utf-8')
         env.update(AUTOCOMBAT_RUNTIME_DIR=str(Path(folder) / 'runtime'), AUTOCOMBAT_NO_FILE_LOG='1',
-                   AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST=str(previous_allowlist), PYTHONIOENCODING='utf-8')
+                   PYTHONIOENCODING='utf-8')
         smoke = """import autocombat_backend as b
 import time
 c = b.app.test_client()
@@ -95,9 +93,7 @@ with c.get('/ui/icons/flame.svg') as icon:
     assert b'<svg' in icon.data
 assert b._PIL_AVAILABLE and b._FONT_PATH
 c.post('/api/ui/session', json={'name':'release-smoke'})
-assert c.get('/api/ui/allowlist').get_json()['allowlist'] == ['198.51.100.7']
-assert c.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '198.51.100.7'}).status_code == 200
-assert c.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '198.51.100.8'}).status_code == 403
+assert c.get('/api/ui/admins').status_code == 403
 from combat_settings import settings_scope
 with settings_scope({'TARGET_1V1_MATCHES': 1, 'MAX_ROUNDS_PRELIM_BY_FORMAT': {'1v1': 1, '2v2': 1, '3v3': 1}}):
     r = c.post('/api/ui/simulations', json={'mode':'prelim', 'formats':['1v1'], 'n':1, 'workers':2, 'seed':17})

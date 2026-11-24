@@ -528,6 +528,14 @@ export interface AutoChessLeaderboardResponse {
   my_entry: AutoChessLeaderboardEntry | null;
 }
 
+export type AccountRole = 'user' | 'admin' | 'super_admin';
+
+export type AdminPermission =
+  | 'player_manage'
+  | 'story_manage'
+  | 'server_manage'
+  | 'character_manage';
+
 export interface AutoChessAccountStats {
   games: number;
   wins: number;
@@ -539,6 +547,11 @@ export interface AutoChessAccount {
   id: string;
   username: string;
   display_name: string;
+  role?: AccountRole;
+  role_label?: string;
+  permissions?: AdminPermission[];
+  can_edit?: boolean;
+  is_super_admin?: boolean;
   token_overrides: Record<string, string>;
   stats: AutoChessAccountStats;
   ranked?: AutoChessRankedProfile;

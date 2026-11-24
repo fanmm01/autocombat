@@ -1,9 +1,16 @@
 """Browser settings API; runtime settings have a separate lifecycle from character data."""
+import ast
 import sys
 
 from flask import jsonify, request
 from werkzeug.exceptions import BadRequest, Conflict, Forbidden
 
+from autochess_auth import (
+    PERM_CHARACTER_MANAGE,
+    PERM_PLAYER_MANAGE,
+    PERM_SERVER_MANAGE,
+    PERM_STORY_MANAGE,
+)
 from combat_settings import (SettingsStore, configure, metadata, READONLY, DEFAULTS,
                              file_path, instance_name)
 
@@ -20,10 +27,47 @@ class Settings:
 
     def can_manage(self):
         try:
-            self.management.require_local()
+            self.management.require_permission(PERM_SERVER_MANAGE)
             return True
         except Forbidden:
             return False
+
+    def _has_perm(self, perm):
+        try:
+            self.management.require_permission(perm)
+            return True
+        except Forbidden:
+            return False
+
+    def can_manage_admins(self):
+        try:
+            self.management.require_super_admin()
+            return True
+        except Forbidden:
+            return False
+
+    def _all_characters_summary(self):
+        module = self.management.module()
+        enabled_serials = {ch['serial'] for ch in getattr(module, 'ALL_CHARACTERS', [])}
+        data_file = self.management.root / 'characters_data.py'
+        if data_file.is_file():
+            source = data_file.read_text(encoding='utf-8-sig')
+            definitions = self.management.character_definitions(ast.parse(source))
+            items, seen = [], set()
+            for name in definitions:
+                ch = getattr(module, name, None)
+                if isinstance(ch, dict) and ch.get('serial') and ch['serial'] not in seen:
+                    seen.add(ch['serial'])
+                    items.append({
+                        'serial': ch['serial'],
+                        'name': ch.get('name', ch['serial']),
+                        'disabled': ch['serial'] not in enabled_serials,
+                    })
+            return items
+        return [
+            {'serial': ch['serial'], 'name': ch.get('name', ch['serial']), 'disabled': False}
+            for ch in getattr(module, 'ALL_CHARACTERS', [])
+        ]
 
     def response(self):
         values = self.store.read()
@@ -34,11 +78,24 @@ class Settings:
             fields = {k: v for k, v in fields.items() if k not in ('LOG_FILE', 'RESULT_FILE', 'BRACKET_FILE')}
         current = {key: values[key] for key in fields}
         runtime = dict(instance=self.instance, web_address=request.host_url.rstrip('/'))
+        payload = dict(
+            values=current,
+            fields=fields,
+            version=self.store.version(values),
+            can_manage=managed,
+            can_manage_server=managed,
+            can_manage_characters=self._has_perm(PERM_CHARACTER_MANAGE),
+            can_manage_players=self._has_perm(PERM_PLAYER_MANAGE),
+            can_manage_story=self._has_perm(PERM_STORY_MANAGE),
+            can_manage_admins=self.can_manage_admins(),
+            runtime=runtime,
+        )
         if managed:
             runtime['settings_file'] = str(self.store.path)
             runtime['files'] = {key: file_path(key) for key in ('LOG_FILE', 'RESULT_FILE', 'BRACKET_FILE')}
             runtime['web_port_argument'] = self._port_override()
-        return dict(values=current, fields=fields, version=self.store.version(values), can_manage=managed, runtime=runtime)
+            payload['all_characters'] = self._all_characters_summary()
+        return payload
 
     @staticmethod
     def _port_override():
@@ -51,7 +108,7 @@ class Settings:
         return jsonify(self.response())
 
     def save(self):
-        self.management.require_local()
+        self.management.require_permission(PERM_SERVER_MANAGE)
         data = self.c['body']()
         incoming = data.get('values')
         if not isinstance(incoming, dict) or any(key not in DEFAULTS for key in incoming):

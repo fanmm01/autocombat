@@ -13,6 +13,7 @@ import time
 
 from flask import jsonify, request, Response
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
+from autochess_auth import PERM_CHARACTER_MANAGE
 from ui_management import atomic_write, digest
 from ui_simulation_queue import SimulationQueue
 from combat_settings import value as setting, snapshot as settings_snapshot, valid_season
@@ -150,8 +151,18 @@ class Tasks:
             params['workers'] = workers
         return params
 
+    def _task_owner(self):
+        sid = self.c['session_id']()
+        if sid:
+            return sid
+        if hasattr(self.management, 'current_account'):
+            acc = self.management.current_account()
+            if isinstance(acc, dict) and acc.get('id'):
+                return f"acc:{acc['id']}"
+        return ''
+
     def start(self):
-        if not self.c['session_id']():
+        if not self._task_owner():
             raise BadRequest('请先建立会话')
         return jsonify(self.public(self.launch(self.params(self.c['body']()))))
 
@@ -172,7 +183,7 @@ class Tasks:
             params = {**params, 'settings': settings_snapshot()}
             if 'workers' in params or params['mode'] == 'train':
                 params['workers'] = min(params.get('workers', self.queue.workers), self.queue.workers)
-            owner = self.c['session_id']()
+            owner = self._task_owner()
             for active in self.store.list('task'):
                 if active['status'] in ('queued', 'running'):
                     if active['owner'] == owner:
@@ -310,7 +321,7 @@ class Tasks:
 
     def lookup(self, jid):
         job = self.store.get('task', jid)
-        if not job or job['owner'] != self.c['session_id']():
+        if not job or job['owner'] != self._task_owner():
             raise NotFound('任务不存在')
         return job
 
@@ -335,15 +346,16 @@ class Tasks:
             return jsonify(self.public(job))
 
     def train(self):
-        self.management.require_local()
+        self.management.require_permission(PERM_CHARACTER_MANAGE)
         data = self.c['body']()
         if 'target_serials' in data and data['target_serials'] is None:
             raise BadRequest('训练名单必须为非空角色编号列表')
         return jsonify(self.launch({'mode': 'train', 'seed': 42, **({'target_serials': data['target_serials']} if 'target_serials' in data else {})}))
 
     def training_status(self):
-        self.management.require_local()
-        return jsonify(jobs=[j for j in self.store.list('task') if j['params']['mode'] == 'train' and j['owner'] == self.c['session_id']()][:10])
+        self.management.require_permission(PERM_CHARACTER_MANAGE)
+        owner = self._task_owner()
+        return jsonify(jobs=[j for j in self.store.list('task') if j['params']['mode'] == 'train' and j['owner'] == owner][:10])
 
     def export(self, jid):
         job = self.lookup(jid)

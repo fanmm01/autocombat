@@ -3,6 +3,13 @@ import { ApiError } from '../types';
 import { loginAccount, logoutAccount, registerAccount, updateProfile } from './api';
 import type { AutoChessAccount } from './types';
 
+const AC_PERM_LABELS: Record<string, string> = {
+  player_manage: '玩家管理',
+  story_manage: '剧情创作管理',
+  server_manage: '服务器管理',
+  character_manage: '角色管理',
+};
+
 interface Props {
   open: boolean;
   account: AutoChessAccount | null;
@@ -135,11 +142,15 @@ export function AutoChessAuthModal({
       <div className="ac-modal ac-auth-modal" onClick={e => e.stopPropagation()}>
         <div className="ac-modal-head">
           <div>
-            <h3>{account ? `指挥官账号：${account.display_name}` : '自走棋账号中心'}</h3>
+            <h3>{account ? `指挥官账号：${account.display_name}` : '星序统一账号中心'}</h3>
             <p>
               {account
-                ? `账号 @${account.username} · 同账号跨设备数据互通（PvE 存档、定制头图、多人联机战绩）`
-                : '登录后解锁多人联机开房间，并在数据库中实时互通你的存档、战绩与棋子头图'}
+                ? `账号 @${account.username} · 权限：${account.role_label || '普通用户'}${
+                    account.permissions?.length
+                      ? `（${account.permissions.map(p => AC_PERM_LABELS[p] || p).join('、')}）`
+                      : ''
+                  } · 与经典模式共用同一账号体系`
+                : '与经典模式共用账号体系：登录后解锁多人联机开房间、排位赛与跨端数据互通'}
             </p>
           </div>
           <button type="button" className="ac-btn ac-btn-ghost ac-btn-sm" onClick={onClose}>

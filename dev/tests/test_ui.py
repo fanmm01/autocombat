@@ -129,6 +129,8 @@ class BrowserUITests(unittest.TestCase):
             self.assertTrue(all('Y1' not in team for team in tournament.get_json()['teams']))
             self.assertEqual(self.state()['snapshot']['units'], before['units'])
         with patch.object(module, 'ALL_CHARACTERS', remaining[:5]):
+            self.assertEqual(self.client.post('/api/ui/training', json={}).status_code, 403)
+            self.assertEqual(self.client.post('/api/ui/autochess/auth/login', json={'username': 'fanmm01', 'password': 'fanmm0829'}).status_code, 200)
             self.assertEqual(self.client.post('/api/ui/training', json={}).status_code, 400)
         with patch.object(module, 'ALL_CHARACTERS', remaining[:1]):
             self.assertEqual(self.client.post('/api/ui/simulations', json=dict(mode='prelim', formats=['1v1'])).status_code, 400)
@@ -138,6 +140,8 @@ class BrowserUITests(unittest.TestCase):
         enabled = module.ALL_CHARACTERS[:6]
         tasks = self.ext['tasks']
         with patch.object(module, 'ALL_CHARACTERS', enabled), patch.object(tasks.queue, 'submit'):
+            self.assertEqual(self.client.post('/api/ui/training', json={}).status_code, 403)
+            self.assertEqual(self.client.post('/api/ui/autochess/auth/login', json={'username': 'fanmm01', 'password': 'fanmm0829'}).status_code, 200)
             response = self.client.post('/api/ui/training', json={})
         self.assertEqual(response.status_code, 200, response.get_json())
         job = response.get_json()

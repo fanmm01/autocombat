@@ -2,7 +2,19 @@ import { createContext, useContext } from 'react';
 
 export type SettingsValues = Record<string, any>;
 export type SettingField = { label: string; group: string; default: any; readonly: boolean; apply: 'live' | 'startup' | 'new_task'; choices: (number | string)[] | null; kind: string };
-export type SettingsResponse = { values: SettingsValues; fields: Record<string, SettingField>; version: string; can_manage: boolean; runtime: { instance: string; web_address: string; settings_file?: string; files?: Record<string, string>; web_port_argument?: string } };
+export type SettingsResponse = {
+  values: SettingsValues;
+  fields: Record<string, SettingField>;
+  version: string;
+  can_manage: boolean;
+  can_manage_server?: boolean;
+  can_manage_characters?: boolean;
+  can_manage_players?: boolean;
+  can_manage_story?: boolean;
+  can_manage_admins?: boolean;
+  all_characters?: { serial: string; name: string; disabled: boolean }[];
+  runtime: { instance: string; web_address: string; settings_file?: string; files?: Record<string, string>; web_port_argument?: string };
+};
 export const RuntimeSettings = createContext<SettingsValues>({});
 export const useRuntimeSettings = () => useContext(RuntimeSettings);
 

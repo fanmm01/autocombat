@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--tcp-port', type=int, default=8892,
                         help='TCP tunnel forwarding port (default: 8892)')
     parser.add_argument('--import-management-allowlist', type=Path, metavar='FILE',
-                        help='导入上一版运行目录的 management-allowlist.json')
+                        help='[已废弃] 经典模式已改用统一账号登录与权限管理，不再使用 IP 白名单')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or not 1 <= args.tcp_port <= 65535:
         parser.error('端口必须在 1–65535 之间')
@@ -23,10 +23,8 @@ def main():
         parser.error('--port 和 --tcp-port 必须不同')
     env = os.environ.copy()
     if args.import_management_allowlist is not None:
-        source = args.import_management_allowlist.resolve()
-        if not source.is_file():
-            parser.error(f'管理白名单文件不存在：{source}')
-        env['AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST'] = str(source)
+        print('提示：--import-management-allowlist 已废弃，经典模式管理权限已改为统一账号登录与管理员权限分配（主管理员：fanmm01）。',
+              flush=True)
     root = Path(__file__).resolve().parent
     frontend = root / 'frontend'
     # Release bundles already contain the built UI and generated backend.

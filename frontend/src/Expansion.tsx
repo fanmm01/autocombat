@@ -5,6 +5,8 @@ import { useRuntimeSettings } from './settings';
 import { linkPaneScrolling } from './paneScrolling';
 import { CharacterLink } from './KnowledgeUI';
 import { PlayoffGraph, defaultPlayoff, playoffLabels, drawLabels } from './Playoffs';
+import { AdminManagementPanel, PermissionGatePanel, PlayerManagementPanel, hasPermission, isSuperAdmin } from './AccountUI';
+import type { AutoChessAccount } from './autochess/types';
 
 type Feedback = { onError: (message: string) => void };
 const rid = requestId;
@@ -123,7 +125,22 @@ export function Fields({ value, change, name = '', enums, samples }: {
   return <input value={String(value ?? '')} onChange={e => change(typeof value === 'number' ? Number(e.target.value) : e.target.value)}/>;
 }
 
-export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => void }) {
+export function DataEditor({
+  onError,
+  onSaved,
+  account,
+  authLoaded,
+  onOpenAuth,
+}: Feedback & {
+  onSaved: () => void;
+  account: AutoChessAccount | null;
+  authLoaded: boolean;
+  onOpenAuth: (mode?: 'login' | 'register', prompt?: string) => void;
+}) {
+  const canManageChars = hasPermission(account, 'character_manage');
+  const canManagePlayers = hasPermission(account, 'player_manage');
+  const superAdmin = isSuperAdmin(account);
+  const authScope = `${account?.id ?? ''}:${account?.role ?? ''}:${(account?.permissions ?? []).join(',')}`;
   const [data, setData] = useState<Effect | null>(null);
   const undoStack = useRef<Effect[]>([]);
   const redoStack = useRef<Effect[]>([]);
@@ -137,9 +154,6 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
   const [dirty, setDirty] = useState(false);
   const [training, setTraining] = useState<Effect | null>(null);
   const [trainingTargets, setTrainingTargets] = useState<string[]>([]);
-  const [allowlist, setAllowlist] = useState('');
-  const [allowlistBusy, setAllowlistBusy] = useState(false);
-  const [savedAllowlist,setSavedAllowlist]=useState('');
   const load = async () => {
     const selected = data?.characters[index]?.serial;
     const d = await api<Effect>('/data');
@@ -149,15 +163,32 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
     setData(d); setDirty(false);
     undoStack.current = []; redoStack.current = [];
     setBackups((await api<{ backups: Effect[] }>('/backups')).backups);
-    const access = await api<{ allowlist: string[] }>('/allowlist');
-    setAllowlist(access.allowlist.join('\n'));
-    setSavedAllowlist(access.allowlist.join('\n'));
   };
   async function work(fn: () => Promise<void>) { setBusy(true); try { await fn(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); } }
-  useEffect(() => { work(load); api<{ jobs: Effect[] }>('/training').then(x => setTraining(x.jobs[0] || null)).catch(() => {}); }, []);
+  useEffect(() => {
+    if (!authLoaded) return;
+    if (!canManageChars) {
+      setData(null);
+      setBackups([]);
+      setDirty(false);
+      setMessage('');
+      setTraining(null);
+      setTab('characters');
+      undoStack.current = [];
+      redoStack.current = [];
+      return;
+    }
+    void work(load);
+    api<{ jobs: Effect[] }>('/training').then(x => setTraining(x.jobs[0] || null)).catch(() => {});
+  }, [authLoaded, canManageChars, authScope]);
+  useEffect(() => {
+    if ((tab === 'players' && !canManagePlayers) || (tab === 'admins' && !superAdmin)) {
+      setTab('characters');
+    }
+  }, [tab, canManagePlayers, superAdmin]);
   const trainingPending = simulationPending(training?.status);
-  useEffect(() => { if (!training || !trainingPending) return; const timer = setInterval(() => api<Effect>('/simulations/' + training.id).then(setTraining).catch(e => onError(e.message)), 1000); return () => clearInterval(timer); }, [training?.id, trainingPending]);
-  useEffect(() => { if (training?.status === 'completed') { api<Effect>('/data').then(latest => setData(old => old ? { ...old, needs_training: latest.needs_training } : latest)); api<{backups:Effect[]}>('/backups').then(x => setBackups(x.backups)); } }, [training?.id, training?.status]);
+  useEffect(() => { if (!canManageChars || !training || !trainingPending) return; const timer = setInterval(() => api<Effect>('/simulations/' + training.id).then(setTraining).catch(e => onError(e.message)), 1000); return () => clearInterval(timer); }, [canManageChars, training?.id, trainingPending]);
+  useEffect(() => { if (canManageChars && training?.status === 'completed') { api<Effect>('/data').then(latest => setData(old => old ? { ...old, needs_training: latest.needs_training } : latest)); api<{backups:Effect[]}>('/backups').then(x => setBackups(x.backups)); } }, [canManageChars, training?.id, training?.status]);
   useEffect(() => {
     if (editorLayout.current) return linkPaneScrolling(editorLayout.current);
   }, [tab, !!data]);
@@ -168,21 +199,15 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
     try { await work(async () => { const result = await api<Effect>('/data/save', data); setMessage('已保存，并自动备份：' + result.backup); await load(); onSaved(); }); }
     finally { saveLock.current=false; }
   };
-  const saveAllowlist = async () => {
-    if(allowlistBusy || saveLock.current || allowlist===savedAllowlist)return;
-    saveLock.current=true;setAllowlistBusy(true);
-    try { const result=await api<{allowlist:string[]}>('/allowlist',{allowlist});setAllowlist(result.allowlist.join('\n'));setSavedAllowlist(result.allowlist.join('\n'));setMessage('访问白名单已保存'); }
-    catch(e){onError((e as Error).message);}finally{saveLock.current=false;setAllowlistBusy(false);}
-  };
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
       if (!(event.ctrlKey || event.metaKey)) return;
       if (event.key.toLowerCase() === 's') {
         event.preventDefault(); if (event.repeat) return;
-        if (tab === 'allowlist') void saveAllowlist(); else void saveData();
+        if (canManageChars && tab !== 'players' && tab !== 'admins') void saveData();
         return;
       }
-      if (!data || tab === 'allowlist') return;
+      if (!canManageChars || !data || tab === 'players' || tab === 'admins') return;
       const target = event.target;
       if (target instanceof HTMLElement && (target.closest('input, textarea, select') || target.isContentEditable)) return;
       const key = event.key.toLowerCase();
@@ -200,6 +225,10 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
     };
     window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);
   });
+  if (!authLoaded) return <div className="page"><h1>角色管理</h1><p>正在验证登录状态…</p></div>;
+  if (!canManageChars) {
+    return <PermissionGatePanel title="角色管理" permissionLabel="角色管理" account={account} onOpenAuth={onOpenAuth} />;
+  }
   if (!data) return <div className="page"><h1>角色管理</h1><p>正在读取数据…</p></div>;
   const samples: Record<string, any> = {};
   function collect(value: any) { if (Array.isArray(value)) value.forEach(collect); else if (value && typeof value === 'object') Object.entries(value).forEach(([k, v]) => { samples[k] ??= v; collect(v); }); }
@@ -240,7 +269,7 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
   };
   return <div className="page management-page"><div className="section-heading"><div><h1>角色管理</h1><p className="muted">基础版统一数据 · 属性—值编辑 · {dirty ? '有未保存修改' : '已同步'}{data.needs_training ? ' · 权重需要重新训练' : ''}</p></div>
     <button className="button primary" disabled={busy || !dirty || enabledCount === 0} onClick={saveData}>保存</button><div className="expansion-toolbar management-history"><button className="button" aria-label="&#25764;&#38144;" title="&#25764;&#38144; (Ctrl/&#8984;+Z)" disabled={!undoStack.current.length} onClick={() => { if (!data) return; redoStack.current.push(structuredClone(data)); setData(undoStack.current.pop()!); setDirty(true); }}><Undo2 size={16}/></button><button className="button" aria-label="&#37325;&#20570;" title="&#37325;&#20570; (Ctrl+Y / &#8984;+Shift+Z)" disabled={!redoStack.current.length} onClick={() => { if (!data) return; undoStack.current.push(structuredClone(data)); setData(redoStack.current.pop()!); setDirty(true); }}><Redo2 size={16}/></button></div></div>
-    <div className="tabs"><button onClick={() => setTab('characters')}>魔法少女</button><button onClick={() => setTab('summons')}>召唤物模板</button><button onClick={() => setTab('items')}>物品模板</button><button onClick={() => setTab('backups')}>备份与训练</button><button onClick={() => setTab('allowlist')}>访问白名单</button></div>
+    <div className="tabs"><button className={tab === 'characters' ? 'active' : ''} onClick={() => setTab('characters')}>魔法少女</button><button className={tab === 'summons' ? 'active' : ''} onClick={() => setTab('summons')}>召唤物模板</button><button className={tab === 'items' ? 'active' : ''} onClick={() => setTab('items')}>物品模板</button><button className={tab === 'backups' ? 'active' : ''} onClick={() => setTab('backups')}>备份与训练</button>{canManagePlayers && <button className={tab === 'players' ? 'active' : ''} onClick={() => setTab('players')}>玩家管理</button>}{superAdmin && <button className={tab === 'admins' ? 'active' : ''} onClick={() => setTab('admins')}>管理员管理</button>}</div>
     {data.settings?.GLOBAL_RANGE_OVERRIDE === 1 && <p className="muted">基础数据当前开启全局射程覆盖（攻击射程为 99）；可在“设置 · 全局规则”中关闭。领域半径仍按各效果计算。</p>}
     {message && <p className="save-message" role="status">{message}</p>}
     {enabledCount === 0 && <p className="danger-text" role="alert">至少保留一名启用角色才能保存。</p>}
@@ -260,7 +289,8 @@ export function DataEditor({ onError, onSaved }: Feedback & { onSaved: () => voi
         {enabledCount < 6 && <p className="muted">默认训练包含 3 对 3 抽样，需要至少启用 6 名角色。</p>}
         {training && <><p role="status">训练：{training.status === 'queued' ? '排队中' : training.status}{training.message && ' · ' + training.message}</p><p>训练目标：{training.params?.target_serials?.slice().sort(compareSerials).map((s: string) => `${s} · ${characters.find(ch => ch.serial === s)?.name || s}`).join('、') || '全部启用角色'}</p>{training.params?.enabled_serials && <p>本次固定参战角色池：{training.params.enabled_serials.slice().sort(compareSerials).map((s: string) => `${s} · ${characters.find(ch => ch.serial === s)?.name || s}`).join('、')}</p>}{training.result?.summons && <p>已重训关联召唤物：{training.result.summons.join('、') || '无'}</p>}{training.status === 'completed' && training.params?.target_serials && <p className="muted">指定角色训练完成；全局待训练标记保留，请在需要时执行全量训练。</p>}{training.result?.preserved_characters?.length > 0 && <p>已保留且未重训的角色表：{training.result.preserved_characters.join('、')}</p>}<pre className="verbose-log">{training.logs?.join('\n')}</pre></>}
         <div className="backup-list">{backups.map(b => <div key={b.id}><span>{new Date(b.time * 1000).toLocaleString()} · {backupReasons[b.reason] || b.reason}</span><a className="button subtle" href={`/api/ui/backups/${b.id}/download`}>下载</a><button className="button" disabled={busy} onClick={() => { if (confirm('恢复此备份？当前版本会先自动备份。')) work(async () => { await api(`/backups/${b.id}/restore`, {}); await load(); onSaved(); setMessage('备份已恢复'); }); }}>恢复</button></div>)}</div></section>
-        : tab === 'allowlist' ? <section className="panel editor-content"><h2>数据管理访问白名单</h2><p>每行填写 IP 地址或 CIDR。调试时输入 *.*.*.* 可允许所有 IPv4/IPv6 地址，请勿在公网长期启用。</p><label className="allowlist-editor">白名单<textarea rows={8} spellCheck={false} value={allowlist} onChange={e => setAllowlist(e.target.value)} placeholder={'192.168.1.6\\n*.*.*.*'}/></label><div className="expansion-toolbar"><button className="button primary" disabled={allowlistBusy} onClick={saveAllowlist}>保存白名单</button></div></section>
+        : tab === 'players' ? <PlayerManagementPanel onError={onError} />
+        : tab === 'admins' ? <AdminManagementPanel onError={onError} />
         : <section className="panel editor-content"><Fields value={data[tab]} name={tab} enums={data.enums} samples={samples} change={next => edit({ ...data, [tab]: next })}/></section>}
   </div>;
 }

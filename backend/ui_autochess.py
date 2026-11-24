@@ -22,7 +22,7 @@ _ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 class AutoChessUI:
     """Manages Auto-Chess accounts, PvE saves, multiplayer rooms, and SSE updates."""
 
-    def __init__(self, bp, context, store):
+    def __init__(self, bp, context, store, auth=None):
         self.c = context
         self.store = store
         self.lock = threading.RLock()
@@ -40,7 +40,7 @@ class AutoChessUI:
 
         instance = str(context.get('instance') or '8889')
         auth_cookie = 'autochess_auth' + ('' if instance == '8889' else '_' + instance)
-        self.auth = AutoChessAuthService(store, cookie_name=auth_cookie)
+        self.auth = auth if auth is not None else AutoChessAuthService(store, cookie_name=auth_cookie)
 
         routes = [
             ('/catalog', 'catalog', 'GET'),

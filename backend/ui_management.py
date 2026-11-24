@@ -1,9 +1,7 @@
-"""Local data editor, atomic source updates, recoverable backups and task snapshots."""
+"""Account-gated data editor, atomic source updates, recoverable backups, task snapshots, and admin/player management."""
 import ast
 import hashlib
 import importlib
-import io
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -12,11 +10,18 @@ import secrets
 import shutil
 import threading
 import time
-from urllib.parse import urlsplit
 import zipfile
 
 from flask import jsonify, request, Response
 from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound
+from autochess_auth import (
+    AuthError,
+    PERMISSION_DEFS,
+    PERMISSION_LABELS,
+    PERM_CHARACTER_MANAGE,
+    PERM_PLAYER_MANAGE,
+    PRIMARY_ADMIN_USERNAME,
+)
 from ui_effects import EffectComments, format_character, runtime_character
 from skill_identity import identify_skills, validate_global_skill_ids
 from project_paths import runtime_dir
@@ -36,90 +41,12 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def parse_allowlist(value):
-    networks = []
-    for entry in value.replace(';', ',').split(','):
-        entry = entry.strip()
-        if entry in ('*', '*.*.*.*'):
-            networks.extend((ipaddress.ip_network('0.0.0.0/0'), ipaddress.ip_network('::/0')))
-        elif entry:
-            networks.append(ipaddress.ip_network(entry, strict=False))
-    return tuple(dict.fromkeys(networks))
-
-
-def read_allowlist(path):
-    try:
-        entries = json.loads(path.read_text(encoding='utf-8-sig'))
-        if not isinstance(entries, list) or any(not isinstance(item, str) for item in entries):
-            raise ValueError('需要由 IP 地址或 CIDR 网段组成的 JSON 数组')
-        return parse_allowlist(','.join(entries))
-    except (OSError, ValueError) as exc:
-        raise ValueError(f'无法读取管理白名单 {path}：{exc}') from exc
-
-
-def allows_all_addresses(networks):
-    versions = {network.version for network in networks}
-    return (4 in versions and ipaddress.ip_network('0.0.0.0/0') in networks
-            and 6 in versions and ipaddress.ip_network('::/0') in networks)
-
-
-def format_allowlist(networks):
-    if allows_all_addresses(networks):
-        return ['*.*.*.*']
-    return sorted(format_network(network) for network in networks)
-
-
-def format_network(network):
-    return network.network_address.compressed if network.prefixlen == network.max_prefixlen else network.with_prefixlen
-
-
-def is_local_or_allowlisted(remote_addr, networks):
-    try:
-        address = ipaddress.ip_address(remote_addr)
-    except (TypeError, ValueError):
-        return False
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        address = address.ipv4_mapped
-    if address.is_loopback:
-        return True
-    return any(address.version == network.version and address in network for network in networks)
-
-
-def is_trusted_proxy(remote_addr, networks):
-    try:
-        address = ipaddress.ip_address(remote_addr)
-    except (TypeError, ValueError):
-        return False
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        address = address.ipv4_mapped
-    return any(address.version == network.version and address in network for network in networks)
-
-
-def is_loopback(remote_addr):
-    try:
-        address = ipaddress.ip_address(remote_addr)
-        return (getattr(address, 'ipv4_mapped', None) or address).is_loopback
-    except (TypeError, ValueError):
-        return False
-
-
 class Management:
-    def __init__(self, bp, context, root=ROOT):
+    def __init__(self, bp, context, root=ROOT, auth=None):
         self.c, self.root = context, Path(root)
+        self.auth = auth
         self.runtime = runtime_dir(self.root)
         self.runtime.mkdir(exist_ok=True)
-        self.allowlist_path = self.runtime / 'management-allowlist.json'
-        self.default_allowlist = parse_allowlist('192.168.1.6,' + os.environ.get('AUTOCOMBAT_MANAGEMENT_ALLOWLIST', ''))
-        self.trusted_proxies = parse_allowlist(os.environ.get('AUTOCOMBAT_TRUSTED_PROXIES', ''))
-        import_path = os.environ.pop('AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST', None)
-        if import_path:
-            self.allowlist = read_allowlist(Path(import_path))
-            self.persist_allowlist(self.allowlist)
-        elif self.allowlist_path.exists():
-            self.allowlist = read_allowlist(self.allowlist_path)
-        else:
-            self.allowlist = self.default_allowlist
-            self.persist_allowlist(self.allowlist)
         self.lock = threading.RLock()
         self.loaded_version = digest((self.root / 'characters_data.py').read_bytes())
         self.training = None
@@ -127,52 +54,202 @@ class Management:
                                    ('/backups', 'backups', 'GET'), ('/backups', 'backup', 'POST'),
                                    ('/backups/<bid>/download', 'download', 'GET'),
                                    ('/backups/<bid>/restore', 'restore', 'POST'),
-                                   ('/allowlist', 'get_allowlist', 'GET'),
-                                   ('/allowlist', 'set_allowlist', 'POST')]:
+                                   ('/admins', 'list_admins', 'GET'),
+                                   ('/admins', 'add_admin', 'POST'),
+                                   ('/admins/permissions', 'update_admin_permissions', 'POST'),
+                                   ('/admins/<account_id>/permissions', 'put_admin_permissions', 'PUT'),
+                                   ('/admins/remove', 'remove_admin', 'POST'),
+                                   ('/admins/<account_id>', 'delete_admin', 'DELETE'),
+                                   ('/players', 'list_players', 'GET'),
+                                   ('/players/kick', 'kick_player', 'POST'),
+                                   ('/players/<account_id>', 'delete_player', 'DELETE')]:
             bp.add_url_rule('/api/ui' + path, 'manage_' + name, getattr(self, name), methods=[method])
 
-    def persist_allowlist(self, networks):
-        atomic_write(self.allowlist_path, json.dumps(format_allowlist(networks), indent=2).encode('utf-8'))
+    def set_auth(self, auth):
+        self.auth = auth
+
+    @staticmethod
+    def _auth_err(exc):
+        return jsonify(error=True, message=str(exc)), exc.status
+
+    @staticmethod
+    def _check_origin():
+        origin = request.headers.get('Origin')
+        if origin and origin.rstrip('/') != request.host_url.rstrip('/') and not origin.startswith('https://servicewechat.com'):
+            raise Forbidden('请从战术室页面发起操作')
+
+    def _auth_token(self):
+        auth_header = (request.headers.get('Authorization') or '').strip()
+        if auth_header.lower().startswith('bearer '):
+            bearer = auth_header[7:].strip()
+            if bearer:
+                return bearer
+        header_tok = (request.headers.get('X-AutoChess-Auth') or '').strip()
+        if header_tok:
+            return header_tok
+        if self.auth:
+            return request.cookies.get(self.auth.cookie_name, '')
+        return ''
+
+    def current_account(self):
+        if not self.auth:
+            return None
+        return self.auth.authenticate(self._auth_token())
+
+    def has_permission(self, perm):
+        acc = self.current_account()
+        return bool(self.auth and acc and self.auth.has_permission(acc, perm))
+
+    def is_super_admin(self):
+        acc = self.current_account()
+        return bool(self.auth and acc and self.auth.is_super_admin(acc))
+
+    def require_permission(self, perm):
+        if not self.auth:
+            raise Forbidden('账号认证服务未初始化')
+        acc = self.current_account()
+        if not acc:
+            raise Forbidden('游客不能编辑，请先登录管理员账号')
+        if not self.auth.has_permission(acc, perm):
+            label = PERMISSION_LABELS.get(perm, perm)
+            raise Forbidden(f'当前账号缺少「{label}」权限')
+        return acc
 
     def require_local(self):
-        remote_addr = request.remote_addr
-        host = urlsplit(request.host_url).hostname
-        local_host = host in ('localhost', 'testserver') or is_loopback(host)
-        forwarded = request.headers.get('X-Forwarded-For', '').split(',')
-        forwarded_ip = forwarded[0].strip() if forwarded else ''
-        if is_trusted_proxy(remote_addr, self.trusted_proxies):
-            if forwarded_ip:
-                remote_addr = forwarded_ip
-            elif not (is_loopback(remote_addr) and local_host) and not allows_all_addresses(self.allowlist):
-                raise Forbidden('可信代理未提供客户端 IP，拒绝访问数据管理')
-        elif is_loopback(remote_addr) and not local_host and not allows_all_addresses(self.allowlist):
-            raise Forbidden('隧道来源地址不可识别，请配置可信代理并传递客户端 IP')
-        if not is_local_or_allowlisted(remote_addr, self.allowlist):
-            raise Forbidden('数据管理仅允许本机或白名单设备访问')
-        if not self.c['session_id']():
-            raise Forbidden('请先建立会话')
+        """Compatibility gate enforcing character-management admin permission."""
+        return self.require_permission(PERM_CHARACTER_MANAGE)
 
-    def get_allowlist(self):
-        self.require_local()
-        return jsonify(allowlist=format_allowlist(self.allowlist))
+    def require_super_admin(self):
+        if not self.auth:
+            raise Forbidden('账号认证服务未初始化')
+        acc = self.current_account()
+        if not acc:
+            raise Forbidden('请先登录主管理员账号')
+        if not self.auth.is_super_admin(acc):
+            raise Forbidden('仅主管理员（fanmm01）可增删管理员及分配权限')
+        return acc
 
-    def set_allowlist(self):
-        self.require_local()
-        data = self.c['body']()
-        entries = data.get('allowlist')
-        if isinstance(entries, str):
-            entries = [item.strip() for item in entries.replace(';', ',').replace('\r', '\n').split('\n') if item.strip()]
-        if not isinstance(entries, list) or len(entries) > 256 or any(not isinstance(item, str) for item in entries):
-            raise BadRequest('白名单必须是最多 256 条 IP 地址或 CIDR 网段')
+    def list_admins(self):
+        actor = self.require_super_admin()
         try:
-            networks = parse_allowlist(','.join(entries))
-        except ValueError as exc:
-            raise BadRequest('白名单中包含无效的 IP 地址或 CIDR 网段') from exc
-        with self.lock:
-            self.persist_allowlist(networks)
-            self.allowlist = networks
-        normalized = format_allowlist(networks)
-        return jsonify(allowlist=normalized)
+            admins, users = self.auth.list_accounts_for_admin(actor['id'])
+        except AuthError as exc:
+            return self._auth_err(exc)
+        return jsonify(
+            admins=admins,
+            users=users,
+            permission_defs=PERMISSION_DEFS,
+            primary_admin=PRIMARY_ADMIN_USERNAME,
+        )
+
+    def add_admin(self):
+        actor = self.require_super_admin()
+        data = self.c['body']() or {}
+        try:
+            account, created = self.auth.grant_admin(
+                actor['id'],
+                username=data.get('username', ''),
+                permissions=data.get('permissions'),
+                password=data.get('password'),
+                display_name=data.get('display_name'),
+            )
+            admins, users = self.auth.list_accounts_for_admin(actor['id'])
+        except AuthError as exc:
+            return self._auth_err(exc)
+        return jsonify(
+            ok=True,
+            created=created,
+            account=account,
+            admins=admins,
+            users=users,
+            permission_defs=PERMISSION_DEFS,
+            primary_admin=PRIMARY_ADMIN_USERNAME,
+        )
+
+    def update_admin_permissions(self):
+        actor = self.require_super_admin()
+        data = self.c['body']() or {}
+        target = data.get('account_id') or data.get('username') or ''
+        return self._apply_admin_permissions(actor, target, data.get('permissions'))
+
+    def put_admin_permissions(self, account_id):
+        self._check_origin()
+        actor = self.require_super_admin()
+        data = self.c['body']() or {}
+        return self._apply_admin_permissions(actor, account_id, data.get('permissions'))
+
+    def _apply_admin_permissions(self, actor, target, permissions):
+        try:
+            account = self.auth.update_admin_permissions(actor['id'], target, permissions)
+            admins, users = self.auth.list_accounts_for_admin(actor['id'])
+        except AuthError as exc:
+            return self._auth_err(exc)
+        return jsonify(
+            ok=True,
+            account=account,
+            admins=admins,
+            users=users,
+            permission_defs=PERMISSION_DEFS,
+            primary_admin=PRIMARY_ADMIN_USERNAME,
+        )
+
+    def remove_admin(self):
+        actor = self.require_super_admin()
+        data = self.c['body']() or {}
+        target = data.get('account_id') or data.get('username') or ''
+        return self._revoke_admin_target(actor, target)
+
+    def delete_admin(self, account_id):
+        self._check_origin()
+        actor = self.require_super_admin()
+        return self._revoke_admin_target(actor, account_id)
+
+    def _revoke_admin_target(self, actor, target):
+        try:
+            account = self.auth.revoke_admin(actor['id'], target)
+            admins, users = self.auth.list_accounts_for_admin(actor['id'])
+        except AuthError as exc:
+            return self._auth_err(exc)
+        return jsonify(
+            ok=True,
+            account=account,
+            admins=admins,
+            users=users,
+            permission_defs=PERMISSION_DEFS,
+            primary_admin=PRIMARY_ADMIN_USERNAME,
+        )
+
+    def list_players(self):
+        actor = self.require_permission(PERM_PLAYER_MANAGE)
+        try:
+            players = self.auth.list_players(actor['id'])
+        except AuthError as exc:
+            return self._auth_err(exc)
+        return jsonify(players=players, permission_defs=PERMISSION_DEFS, primary_admin=PRIMARY_ADMIN_USERNAME)
+
+    def kick_player(self):
+        actor = self.require_permission(PERM_PLAYER_MANAGE)
+        data = self.c['body']() or {}
+        target = data.get('account_id') or data.get('username') or ''
+        return self._delete_player_target(actor, target)
+
+    def delete_player(self, account_id):
+        self._check_origin()
+        actor = self.require_permission(PERM_PLAYER_MANAGE)
+        return self._delete_player_target(actor, account_id)
+
+    def _delete_player_target(self, actor, target):
+        try:
+            deleted, revoked_tokens = self.auth.delete_account(actor['id'], target)
+            players = self.auth.list_players(actor['id'])
+        except AuthError as exc:
+            return self._auth_err(exc)
+        return jsonify(
+            ok=True,
+            deleted=deleted,
+            revoked_tokens=revoked_tokens,
+            players=players,
+        )
 
     def module(self):
         return self.c['ns']['characters_data_pvp']

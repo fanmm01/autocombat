@@ -19,6 +19,7 @@ const artifacts=process.env.UI_TEST_ARTIFACTS||path.resolve(__dirname,'../../../
   try{
     const page=await browser.newPage({viewport:{width:430,height:900},isMobile:true,hasTouch:true});const errors=[];
     page.on('pageerror',error=>errors.push(error.message));
+    const auth=await page.request.post(base+'/api/ui/autochess/auth/login',{data:{username:'fanmm01',password:'fanmm0829'}});assert.equal(auth.status(),200);
     await page.goto(base+'/ui/story');await page.getByRole('button',{name:'创作工作区'}).click();
     await page.getByRole('textbox',{name:'工作区目录'}).fill(root);await page.getByRole('button',{name:'打开目录',exact:true}).click();
     const files=page.getByRole('button',{name:'文件',exact:true});await files.waitFor();assert.equal(await files.getAttribute('aria-expanded'),'false');

@@ -16,6 +16,25 @@
   "compileType": "game",
   "miniprogramRoot": "minigame/dist/",
   "simulatorPluginLibVersion": {},
+  "watchOptions": {
+    "ignore": [
+      ".git/**",
+      ".agents/**",
+      ".tmpwork/**",
+      ".ui-runtime/**",
+      "archive/**",
+      "backend/**",
+      "dev/**",
+      "docs/**",
+      "frontend/**",
+      "minigame/node_modules/**",
+      "plugins/**",
+      "releases/**",
+      "scripts/**",
+      "story-projects/**",
+      "webgal-adv/**"
+    ]
+  },
   "packOptions": {
     "ignore": [],
     "include": []

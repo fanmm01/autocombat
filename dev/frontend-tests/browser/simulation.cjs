@@ -18,8 +18,8 @@ const base = process.env.UI_BASE_URL || 'http://127.0.0.1:8895';
     await page.goto(base + '/ui/settings', {waitUntil: 'domcontentloaded'});
     await page.getByRole('heading', {name: '正在连接星序引擎'}).waitFor();
     releaseSession();
-    await page.getByRole('button', {name: '访问管理', exact: true}).click();
-    await page.getByRole('textbox', {name: '数据管理白名单'}).waitFor();
+    await page.getByRole('button', {name: '账号与权限', exact: true}).click();
+    await page.getByText('游客身份', {exact: false}).waitFor();
 
     await page.evaluate(() => localStorage.setItem('combat-simulation', 'missing-release-job'));
     await page.getByRole('button', {name: '模拟实验室', exact: true}).click();

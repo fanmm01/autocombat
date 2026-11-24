@@ -24,6 +24,16 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.route('**/api/ui/catalog',route=>route.fulfill({json:{characters,summon_templates:summons,item_templates:items}}));
     await page.route('**/api/ui/tournaments',route=>route.request().method()==='GET'?route.fulfill({json:{tournaments:[tournament]}}):route.abort());
     await page.route('**/api/ui/session',route=>route.fulfill({json:{id:'ui-preview-test'}}));
+    await page.route('**/api/ui/autochess/auth/me',route=>route.fulfill({json:{
+      authenticated:true,
+      account:{
+        id:'fanmm01',username:'fanmm01',display_name:'fanmm01',
+        role:'super_admin',role_label:'主管理员',
+        permissions:['player_manage','story_manage','server_manage','character_manage'],
+        can_edit:true,is_super_admin:true,token_overrides:{},
+        stats:{games:0,wins:0,top2:0,pve_clears:0},created_at:0,
+      },
+    }}));
     await page.goto(base+'/ui/home');
     await page.locator('.home-roster .character-card').first().waitFor();
     await page.getByRole('button',{name:'进入锦标赛',exact:true}).click();
@@ -137,7 +147,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     // Editor saves use an isolated in-memory API response and never reach the real save endpoints.
     const fixture={version:'preview-version',characters:characters.map(c=>({...c,inventory:[],str_attrs:{}})),
       enabled_serials:characters.map(c=>c.serial),reserved:[],summons:{},items:{},fields:{},enums:{},settings:{}};
-    let data=structuredClone(fixture),saves=0,fail=false,allowlist=['127.0.0.1'],accessSaves=0;
+    let data=structuredClone(fixture),saves=0,fail=false,adminSaves=0;
+    let admins=[{id:'fanmm01',username:'fanmm01',display_name:'fanmm01',role:'super_admin',role_label:'主管理员',permissions:['player_manage','story_manage','server_manage','character_manage'],is_primary:true,created_at:0,stats:{games:0,wins:0,top2:0,pve_clears:0}}];
+    let users=[{id:'player1',username:'player1',display_name:'玩家一',role:'user',role_label:'普通用户',permissions:[],is_primary:false,created_at:0,stats:{games:0,wins:0,top2:0,pve_clears:0}}];
     await page.route('**/api/ui/data',route=>route.fulfill({json:data}));
     await page.route('**/api/ui/backups',route=>route.fulfill({json:{backups:[]}}));
     await page.route('**/api/ui/training',route=>route.fulfill({json:{jobs:[]}}));
@@ -146,9 +158,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       if(fail)return route.fulfill({status:400,json:{message:'preview-save-failed'}});
       data=route.request().postDataJSON();return route.fulfill({json:{backup:'preview',version:data.version}});
     });
-    await page.route('**/api/ui/allowlist',route=>{
-      if(route.request().method()==='POST'){accessSaves++;allowlist=route.request().postDataJSON().allowlist.split('\n');}
-      return route.fulfill({json:{allowlist}});
+    await page.route('**/api/ui/admins',route=>{
+      if(route.request().method()==='POST'){
+        adminSaves++;
+        const payload=route.request().postDataJSON();
+        const promoted={id:payload.username,username:payload.username,display_name:payload.display_name||payload.username,role:'admin',role_label:'管理员',permissions:payload.permissions,is_primary:false,created_at:0,stats:{games:0,wins:0,top2:0,pve_clears:0}};
+        admins=[...admins,promoted];users=users.filter(u=>u.id!==payload.username);
+        return route.fulfill({json:{ok:true,created:false,account:promoted,admins,users,primary_admin:'fanmm01'}});
+      }
+      return route.fulfill({json:{admins,users,primary_admin:'fanmm01'}});
     });
     await page.getByRole('button',{name:'角色管理',exact:true}).click();
     const input=page.locator('.editor-content input[aria-label="名称"]').first();await input.waitFor();
@@ -164,11 +182,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.equal(await input.inputValue(),'preview-renamed');
     fail=true;await input.fill('preview-failure-draft');await page.keyboard.press('Control+s');
     await page.getByText('preview-save-failed',{exact:true}).waitFor();assert.equal(await input.inputValue(),'preview-failure-draft');
-    await page.getByRole('button',{name:'访问白名单',exact:true}).click();
-    await page.locator('.allowlist-editor textarea').fill('127.0.0.1\n192.168.1.0/24');await page.keyboard.press('Control+s');
-    await page.getByText('访问白名单已保存',{exact:true}).waitFor();assert.equal(accessSaves,1);assert.equal(saves,2);
-    await page.keyboard.press('Control+s');await pause(150);assert.equal(accessSaves,1);
-    checks.push('undo/redo buttons and Ctrl/Command shortcuts; Ctrl+S save and allowlist');
+    await page.getByRole('button',{name:'管理员管理',exact:true}).click();
+    await page.getByRole('button',{name:'设为管理员',exact:true}).click();
+    await page.getByText('已将 @player1 设为管理员',{exact:true}).waitFor();assert.equal(adminSaves,1);assert.equal(saves,2);
+    checks.push('undo/redo buttons and Ctrl/Command shortcuts; Ctrl+S save and admin management');
 
     // Local definitions are plain only when nearby and visible with their reference.
     await page.setViewportSize({width:1440,height:1800});

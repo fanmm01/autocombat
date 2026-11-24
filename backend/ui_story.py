@@ -1,10 +1,11 @@
-"""Flask story authoring/playback endpoints; development authoring is session-open."""
+"""Flask story authoring/playback endpoints; authoring requires story_manage admin permission."""
 import copy
 import json
 import time
 from pathlib import Path
 from flask import jsonify,request,Response,send_from_directory
 from werkzeug.exceptions import BadRequest,Conflict,Forbidden,NotFound
+from autochess_auth import PERM_STORY_MANAGE
 from project_paths import PROJECT_ROOT
 from story_models import StoryError
 from story_workspace import Workspaces
@@ -15,8 +16,9 @@ from story_text import compile_scene
 
 
 class Stories:
-    def __init__(self,bp,context,store,runtime):
+    def __init__(self,bp,context,store,runtime,management=None):
         self.c,self.store=context,store
+        self.management=management or context.get('management')
         serials={x['serial'] for x in context['catalog']()}
         self.workspaces=Workspaces(runtime,store,serials);self.runtime=StoryRuntime(self.workspaces,store)
         self.battles=StoryBattles(context,self.runtime);self.runtime.battles=self.battles
@@ -37,10 +39,21 @@ class Stories:
 
     def owner(self):
         sid=self.c['session_id']()
-        if not sid: raise Forbidden('请先建立玩家会话')
-        return sid
+        if sid: return sid
+        acc=self.management.current_account() if self.management else None
+        if isinstance(acc,dict) and acc.get('id'): return f"acc:{acc['id']}"
+        raise Forbidden('请先建立玩家会话')
 
     def body(self): self.owner();return self.c['body']()
+
+    def require_story_manage(self):
+        if self.management is None:
+            raise Forbidden('当前账号缺少「剧情创作管理」权限')
+        return self.management.require_permission(PERM_STORY_MANAGE)
+
+    def author_body(self):
+        self.require_story_manage()
+        return self.c['body']()
 
     def ensure_demo(self):
         demo=PROJECT_ROOT/'story-projects/demo'
@@ -53,10 +66,12 @@ class Stories:
             if project.get('preview'): continue
             result.append(dict(**project,chapters=self.runtime.chapters(project['id'],owner)))
         active=[dict(id=r['id'],project=r['project'],flow=r['flow'],status=r['status']) for r in self.store.list('story_run') if r['owner']==owner]
-        return jsonify(projects=result,runs=active,default_workspace=str(PROJECT_ROOT/'story-projects/demo'))
+        can_author=bool(self.management and self.management.has_permission(PERM_STORY_MANAGE))
+        default_ws=str(PROJECT_ROOT/'story-projects/demo') if can_author else ''
+        return jsonify(projects=result,runs=active,default_workspace=default_ws)
 
     def workspace_list(self):
-        self.owner()
+        self.require_story_manage()
         folder=PROJECT_ROOT/'story-projects'
         for root in sorted(folder.iterdir()) if folder.is_dir() else []:
             if root.is_dir() and (root/'story.project.json').is_file(): self.workspaces.open_workspace(root)
@@ -69,27 +84,27 @@ class Stories:
             result.append(item)
         return jsonify(workspaces=result)
     def workspace_create(self):
-        data=self.body()
+        data=self.author_body()
         return jsonify(self.workspaces.create_workspace(PROJECT_ROOT/'story-projects',data.get('name')))
-    def workspace_open(self): return jsonify(self.workspaces.open_workspace(self.body()['path']))
-    def tree(self,wid): self.owner();return jsonify(files=self.workspaces.scan_files(self.workspaces.lookup(wid)))
-    def file_read(self,wid): self.owner();return jsonify(self.workspaces.read_file(self.workspaces.lookup(wid),request.args.get('path','')))
+    def workspace_open(self): return jsonify(self.workspaces.open_workspace(self.author_body()['path']))
+    def tree(self,wid): self.require_story_manage();return jsonify(files=self.workspaces.scan_files(self.workspaces.lookup(wid)))
+    def file_read(self,wid): self.require_story_manage();return jsonify(self.workspaces.read_file(self.workspaces.lookup(wid),request.args.get('path','')))
     def file_write(self,wid):
-        data=self.body();return jsonify(files=self.workspaces.apply_file_transaction(self.workspaces.lookup(wid),data['changes']))
+        data=self.author_body();return jsonify(files=self.workspaces.apply_file_transaction(self.workspaces.lookup(wid),data['changes']))
     def compile(self,wid):
-        data=self.body();project=self.workspaces.read_project(self.workspaces.lookup(wid),data.get('drafts'))
+        data=self.author_body();project=self.workspaces.read_project(self.workspaces.lookup(wid),data.get('drafts'))
         return jsonify(diagnostics=[],graphs={p:build_graph(f) for p,f in project['flows'].items()},config=project['config'])
     def graph_patch(self,wid):
-        data=self.body();workspace=self.workspaces.lookup(wid)
+        data=self.author_body();workspace=self.workspaces.lookup(wid)
         source=data.get('source')
         if source is None: source=self.workspaces.read_file(workspace,data['path'])['content']
         result=apply_graph_edit(source,data['operation'],data['path'])
         from story_flow import parse_flow
         return jsonify(content=result,graph=build_graph(parse_flow(result,data['path'])))
-    def publish(self,wid): self.body();return jsonify(self.workspaces.publish_version(self.workspaces.lookup(wid)))
+    def publish(self,wid): self.author_body();return jsonify(self.workspaces.publish_version(self.workspaces.lookup(wid)))
 
     def preview(self,wid):
-        data=self.body();workspace=self.workspaces.lookup(wid)
+        data=self.author_body();workspace=self.workspaces.lookup(wid)
         record=self.workspaces.publish_version(workspace,data.get('drafts'),preview=True)
         project,_=self.workspaces.load_version(record['id'])
         flow=data.get('flow')

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, CakeSlice, Check, ChevronDown, ChevronRight, CircleHelp, CirclePause, CirclePlay, Clock3, Compass, Copy, Diamond, Eye, Feather, Flame, Flower2, Gem, Heart, Home, Leaf, Link, LoaderCircle, MapPin, Moon, MoreHorizontal, MousePointer2, Plus, Radio, RotateCcw, Settings2, Shield, Snowflake, Sparkles, Star, StepForward, Sun, Sword, Swords, Users, Waves, Wifi, X, Zap, BarChart3, VolumeX } from 'lucide-react';
+import { Activity, ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, CakeSlice, Check, ChevronDown, ChevronRight, CircleHelp, CirclePause, CirclePlay, Clock3, Compass, Copy, Diamond, Eye, Feather, Flame, Flower2, Gem, Heart, Home, Leaf, Link, LoaderCircle, MapPin, Moon, MoreHorizontal, MousePointer2, Plus, Radio, RotateCcw, Settings2, Shield, Snowflake, Sparkles, Star, StepForward, Sun, Sword, Swords, UserCheck, UserPlus, Users, Waves, Wifi, X, Zap, BarChart3, VolumeX } from 'lucide-react';
 import { api, requestId, sortBySerial, type BattleEvent, type CakeChoice, type Character, type Effect, type Room, type Skill, type Snapshot, type Unit } from './types';
 import './styles.css';
 import pageCopy from './data/pageCopy.json';
@@ -17,6 +17,9 @@ import { AutoReactionControls, DataEditor, SimulationPanel, TournamentPanel } fr
 import { SettingsPage } from './SettingsPage';
 import { StoryApp } from './story/StoryApp';
 import { AutoChessApp } from './autochess/AutoChessApp';
+import { getAuthMe } from './autochess/api';
+import type { AutoChessAccount } from './autochess/types';
+import { ClassicAuthModal, roleLabel } from './AccountUI';
 import { RuntimeSettings, readPreferences, savePreferences, type SettingsResponse, type SettingsValues, type Preferences } from './settings';
 
 const accents = ['#db775a', '#8a78c5', '#5b9b91', '#c88c45', '#c56785', '#6694bc', '#9a80b1', '#cb8b9e', '#658878', '#c29b52', '#688ab6', '#847fc0'];
@@ -82,6 +85,14 @@ function ClassicApp({
   const [defaults, setDefaults] = useState<SettingsValues | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [session, setSession] = useState('');
+  const [account, setAccount] = useState<AutoChessAccount | null>(null);
+  const [authLoaded, setAuthLoaded] = useState(false);
+  const [authModal, setAuthModal] = useState<{ open: boolean; mode: 'login' | 'register'; prompt?: string }>({
+    open: false,
+    mode: 'login',
+  });
+  const openAuthModal = (authMode: 'login' | 'register' = 'login', prompt?: string) =>
+    setAuthModal({ open: true, mode: authMode, prompt });
   const [room, setRoom] = useState<Room | null>(null);
   const [history, setHistory] = useState<BattleEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -227,7 +238,22 @@ function ClassicApp({
     const url = new URL(location.href); url.searchParams.set('room',r.code); window.history.replaceState(window.history.state,'',url);
   }
   useEffect(()=>{
-    Promise.all([api<CatalogResponse>('/catalog'),api<{id:string}>('/session',{name}),api<SettingsResponse>('/settings')]).then(([c,s,config])=>{setCatalog(hydrateCatalog(c));setSession(s.id);setDefaults(config.values);setMapSize(config.values.DEFAULT_MAP_SIZE);setTiming(config.values.DEFAULT_RESTIM_MODE);setFailedReaction(config.values.ALLOW_FAILED_REACTION);setConnected(true);}).catch(e=>setError(e.message));
+    Promise.all([
+      api<CatalogResponse>('/catalog'),
+      api<{id:string}>('/session',{name}),
+      api<SettingsResponse>('/settings'),
+      getAuthMe().catch(() => ({ authenticated: false, account: null })),
+    ]).then(([c,s,config,authState])=>{
+      setCatalog(hydrateCatalog(c));
+      setSession(s.id);
+      setDefaults(config.values);
+      setMapSize(config.values.DEFAULT_MAP_SIZE);
+      setTiming(config.values.DEFAULT_RESTIM_MODE);
+      setFailedReaction(config.values.ALLOW_FAILED_REACTION);
+      setAccount(authState.authenticated ? authState.account : null);
+      setAuthLoaded(true);
+      setConnected(true);
+    }).catch(e=>{setAuthLoaded(true);setError(e.message);});
   },[]);
   useEffect(()=>{
     if (!session || restored.current) return;
@@ -345,7 +371,7 @@ function ClassicApp({
     <main className="main-shell">
       <header className="topbar">
         <div className="breadcrumb"><span>星序 <small>ASTRAL TACTICS</small></span><ChevronRight size={14}/><strong>{({home:'战术大厅',setup:'作战准备',battle:'战术室',sim:'模拟实验室',library:'角色图鉴',editor:'角色管理',tournament:'锦标赛',settings:'设置',story:'章节选择','story/play':'剧情模式','story/editor':'故事创作室','help/mechanics':'机制说明','help/characters':'角色卡帮助'} as Record<string, string>)[page] || '战术大厅'}</strong></div>
-        <div className="topbar-actions"><span className={'connection '+(connected?'online':'')}><i/>{connected?'引擎已连接':'连接恢复中'}</span><span className="topbar-divider"/><button className="profile" onClick={()=>navigate('settings')}><span>{name.slice(0,1)}</span>{name}<ChevronDown size={13}/></button><button type="button" className="button subtle compact-button classic-ac-switch" onClick={handleSwitchToAutoChess}><Diamond size={15}/><span>自走棋模式</span></button></div>
+        <div className="topbar-actions"><span className={'connection '+(connected?'online':'')}><i/>{connected?'引擎已连接':'连接恢复中'}</span><span className="topbar-divider"/><button type="button" className="button subtle compact-button classic-auth-btn" onClick={()=>openAuthModal('login')} title={account ? `已登录 @${account.username}` : '登录或注册星序账号'}>{account ? <UserCheck size={15}/> : <UserPlus size={15}/>}<span>{account ? account.display_name : '登录 / 注册'}</span>{account && <span className={`role-pill role-${account.role || 'user'}`}>{roleLabel(account)}</span>}</button><button className="profile" onClick={()=>navigate('settings')}><span>{name.slice(0,1)}</span>{name}<ChevronDown size={13}/></button><button type="button" className="button subtle compact-button classic-ac-switch" onClick={handleSwitchToAutoChess}><Diamond size={15}/><span>自走棋模式</span></button></div>
       </header>
     {error&&<div className="error-banner" role="alert"><Shield size={17}/><span>{error}</span><button onClick={()=>setError('')} aria-label="关闭错误"><X size={16}/></button></div>}
     {!catalog.length || !defaults?<div className="loading-state"><LoaderCircle size={28} className="spin"/><h2>正在连接星序引擎</h2><p>请确认 Python 后端已启动</p><button className="button" onClick={()=>location.reload()}>重新连接</button></div>:<>
@@ -372,10 +398,10 @@ function ClassicApp({
       <div className="playback-bar"><div><span className="eyebrow">{replay>=0?pageCopy.battle.reviewEyebrow:pageCopy.battle.liveEyebrow}</span>{replay>=0?<><IconButton title="上一步" disabled={replay<=0} onClick={()=>setReplay(i=>i-1)}><ArrowLeft size={17}/></IconButton><IconButton title="下一步" disabled={replay>=history.length-1} onClick={()=>setReplay(i=>i+1)}><StepForward size={18}/></IconButton><span>事件 {replay+1} / {history.length}</span></>:<><IconButton title={room.running?'暂停 AI':'播放 AI'} disabled={!host||busy||isPrep} onClick={()=>control({op:room.running?'pause':'play'})}>{room.running?<CirclePause size={20}/>:<CirclePlay size={20}/>}</IconButton><IconButton title="AI 单步" disabled={!host||busy||isPrep} onClick={()=>control({op:'step'})}><StepForward size={18}/></IconButton><select aria-label="AI 速度" disabled={!host} value={room.speed} onChange={e=>control({op:'speed',speed:Number(e.target.value)})}>{[1,2,4].map(n=><option value={n} key={n}>{n}× 速度</option>)}</select></>}</div><input aria-label="战斗事件时间线" type="range" min="0" max={Math.max(0,history.length-1)} value={replay<0?Math.max(0,history.length-1):replay} onChange={e=>setReplay(Number(e.target.value))}/><button className="text-button" onClick={()=>setReplay(-1)}><Radio size={14}/>{replay>=0?'回到实时':'正在实时'}</button></div>
     </div>}
 
-    <StoryApp page={page} session={session} catalog={catalog} room={room} onNavigate={navigate} onRoom={r=>acceptRoom(r)} onDirty={setSettingsDirty} renderCharacter={c=><CharacterCard character={c} small onClick={()=>setDetail(c)}/>}/>
+    <StoryApp page={page} session={session} catalog={catalog} room={room} account={account} authLoaded={authLoaded} onOpenAuth={openAuthModal} onNavigate={navigate} onRoom={r=>acceptRoom(r)} onDirty={setSettingsDirty} renderCharacter={c=><CharacterCard character={c} small onClick={()=>setDetail(c)}/>}/>
     {page==='sim'&&<div className="page sim-page"><SimulationPanel teamA={teamA} teamB={teamB} catalog={catalog}/><TeamEditor sim/></div>}
-    {page==='editor'&&<DataEditor onError={setError} onSaved={reloadCatalog}/>}
-    {page==='settings'&&<SettingsPage preferences={{name,reduced}} onPreferences={updatePreferences} onSaved={setDefaults} onDirty={setSettingsDirty} catalog={catalog} onError={setError}/>}
+    {page==='editor'&&<DataEditor onError={setError} onSaved={reloadCatalog} account={account} authLoaded={authLoaded} onOpenAuth={openAuthModal}/>}
+    {page==='settings'&&<SettingsPage preferences={{name,reduced}} onPreferences={updatePreferences} onSaved={setDefaults} onDirty={setSettingsDirty} catalog={catalog} account={account} onOpenAuth={openAuthModal} onError={setError}/>}
     {page.startsWith('help/')&&<HelpPage tab={page.split('/')[1]} catalog={catalog} navigate={navigate} anchor={location.hash.slice(1)}/>}
     {page==='battle'&&!room&&<div className="page"><h1>尚未加入战术室</h1><p className="muted">输入房间码加入已有房间，或创建一场自由对战。</p><div className="modal-actions"><button className="button" onClick={()=>setDialog('join')}>输入房间码</button><button className="button primary" onClick={()=>prepare('local')}>自由对战</button></div></div>}
     {page==='tournament'&&<TournamentPanel catalog={catalog} onError={setError} onWatch={r=>acceptRoom(r)} onSettings={()=>{navigate('settings');location.hash='playoff-settings';}}/>}
@@ -419,6 +445,7 @@ function ClassicApp({
     {dialog==='leave'&&<Modal title="离开本次演习？" onClose={()=>setDialog('')}><p>房主离开会暂停 AI 推进；其他玩家离开后，其角色交由房主接管。服务运行期间可通过原房间码重新加入。</p><div className="modal-actions"><button className="button" onClick={()=>setDialog('')}>留在这里</button><button className="button primary" onClick={leave}>离开房间 <ArrowRight size={16}/></button></div></Modal>}
     {dialog==='invite'&&<Modal title="邀请好友" onClose={()=>setDialog('')}><p>请选择好友能够访问的局域网地址。多网卡或 VPN 环境下，请选择与好友处于同一网络的地址。</p><div className="invite-links">{room?.invite_urls?.map(url=><label key={url}><input readOnly aria-label="局域网邀请地址" value={url}/><button className="icon-button" title="复制地址" onClick={async()=>{try{await navigator.clipboard.writeText(url);notice('邀请链接已复制');}catch{notice('请选中地址并手动复制');}}}><Copy size={15}/></button></label>)}</div><label className="field">房间码<input readOnly value={room?.code||''}/></label></Modal>}
     {dialog==='help'&&<Modal title="棋盘操作与规则速览" onClose={()=>setDialog('')} wide><div style={{display:'grid',gap:10,fontSize:'0.92rem',lineHeight:1.6}}><p><strong>坐标与移动：</strong>横向以字母 A–P（可扩展至 Z）标记列，纵向以数字标记行。点击棋盘空格或控制面板可移动，主动作与附加动作在右侧面板独立显示。</p><p><strong>D100 攻防与反应：</strong>攻击成功率按 CoC7 大成功 / 极难 / 困难 / 普通划分等级；受到攻击或可反应法术时，防守方可选择闪避、反击或格挡（需持盾且护盾池 &gt; 0）。</p><p><strong>经典模式与独立自走棋：</strong>自由对战、剧情与锦标赛完整保持经典 10×10 与原有射程规则；若想体验独立的星序自走棋（对称地形、真实射程、商店抽卡升星），可通过顶栏唯一「自走棋模式」按钮切换。</p><div className="modal-actions"><button className="button" onClick={()=>{setDialog('');navigate('help/mechanics');}}>打开完整机制百科</button><button className="button primary" onClick={()=>setDialog('')}>知道了</button></div></div></Modal>}
+    <ClassicAuthModal open={authModal.open} account={account} initialMode={authModal.mode} promptMessage={authModal.prompt} onClose={()=>setAuthModal(prev=>({...prev,open:false}))} onAuthenticated={nextAcc=>setAccount(nextAcc)}/>
   </div></KnowledgeProvider></RuntimeSettings.Provider>;
 }
 

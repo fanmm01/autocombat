@@ -24,6 +24,58 @@ KIND_ACCOUNT = 'autochess_account'
 KIND_TOKEN = 'autochess_auth_token'
 KIND_WX_BIND = 'autochess_wx_bind'
 
+ROLE_USER = 'user'
+ROLE_ADMIN = 'admin'
+ROLE_SUPER_ADMIN = 'super_admin'
+ROLE_LABELS = {
+    ROLE_USER: '普通用户',
+    ROLE_ADMIN: '管理员',
+    ROLE_SUPER_ADMIN: '主管理员',
+}
+
+PERM_PLAYER_MANAGE = 'player_manage'
+PERM_STORY_MANAGE = 'story_manage'
+PERM_SERVER_MANAGE = 'server_manage'
+PERM_CHARACTER_MANAGE = 'character_manage'
+ALL_PERMISSIONS = (
+    PERM_PLAYER_MANAGE,
+    PERM_STORY_MANAGE,
+    PERM_SERVER_MANAGE,
+    PERM_CHARACTER_MANAGE,
+)
+PERMISSION_LABELS = {
+    PERM_PLAYER_MANAGE: '玩家管理',
+    PERM_STORY_MANAGE: '剧情创作管理',
+    PERM_SERVER_MANAGE: '服务器管理',
+    PERM_CHARACTER_MANAGE: '角色管理',
+}
+PERMISSION_DEFS = [
+    {
+        'id': PERM_PLAYER_MANAGE,
+        'label': PERMISSION_LABELS[PERM_PLAYER_MANAGE],
+        'description': '查看已注册用户列表，可选择将普通账户踢出并删除',
+    },
+    {
+        'id': PERM_STORY_MANAGE,
+        'label': PERMISSION_LABELS[PERM_STORY_MANAGE],
+        'description': '访问并编辑剧情创作室（story/editor）工作区、源码、流程图与发布',
+    },
+    {
+        'id': PERM_SERVER_MANAGE,
+        'label': PERMISSION_LABELS[PERM_SERVER_MANAGE],
+        'description': '修改服务器设置（/api/ui/settings）并查看本地敏感路径',
+    },
+    {
+        'id': PERM_CHARACTER_MANAGE,
+        'label': PERMISSION_LABELS[PERM_CHARACTER_MANAGE],
+        'description': '编辑角色数据（/api/ui/data*）、备份恢复（/api/ui/backups*）、AI 重训（/api/ui/training*）及全局规则',
+    },
+]
+
+PRIMARY_ADMIN_USERNAME = 'fanmm01'
+PRIMARY_ADMIN_ID = 'fanmm01'
+PRIMARY_ADMIN_DEFAULT_PASSWORD = 'fanmm0829'
+
 _USERNAME_RE = re.compile(r'^[\w\u4e00-\u9fff-]{3,20}$')
 _DATA_IMAGE_RE = re.compile(r'^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$', re.IGNORECASE)
 _HTTP_URL_RE = re.compile(r'^https?://[^\s<>"\']{4,512}$', re.IGNORECASE)
@@ -48,6 +100,46 @@ def _hash_password(password, salt_hex):
         bytes.fromhex(salt_hex),
         _PBKDF2_ITERATIONS,
     ).hex()
+
+
+def normalize_role(rec):
+    if not rec:
+        return ROLE_USER
+    if rec.get('id') == PRIMARY_ADMIN_ID:
+        return ROLE_SUPER_ADMIN
+    if rec.get('role') == ROLE_ADMIN:
+        return ROLE_ADMIN
+    return ROLE_USER
+
+
+def normalize_permissions(rec, role=None):
+    effective_role = role or normalize_role(rec)
+    if effective_role == ROLE_SUPER_ADMIN:
+        return list(ALL_PERMISSIONS)
+    if effective_role != ROLE_ADMIN:
+        return []
+    raw = (rec or {}).get('permissions')
+    if raw is None:
+        return list(ALL_PERMISSIONS)
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    return [perm for perm in ALL_PERMISSIONS if perm in raw]
+
+
+def validate_permissions(permissions, allow_none=False):
+    if permissions is None:
+        if allow_none:
+            return list(ALL_PERMISSIONS)
+        raise AuthError('请选择至少一项管理员权限', 400)
+    if not isinstance(permissions, (list, tuple)) or any(not isinstance(item, str) for item in permissions):
+        raise AuthError('权限列表格式不正确', 400)
+    unknown = [item for item in permissions if item not in ALL_PERMISSIONS]
+    if unknown:
+        raise AuthError(f'包含未知权限：{unknown[0]}', 400)
+    normalized = [perm for perm in ALL_PERMISSIONS if perm in permissions]
+    if not normalized:
+        raise AuthError('请至少为管理员分配一项权限', 400)
+    return normalized
 
 
 def validate_token_url(token_url):
@@ -93,12 +185,41 @@ def exchange_wechat_code(code, appid=None, secret=None):
 
 
 class AutoChessAuthService:
-    """Manages salted PBKDF2 accounts, cookies, stats, and custom token overrides in ui_store."""
+    """Manages salted PBKDF2 accounts, role permissions, cookies, stats, and custom token overrides in ui_store."""
 
     def __init__(self, store, cookie_name='autochess_auth'):
         self.store = store
         self.cookie_name = cookie_name
         self.lock = threading.RLock()
+        self.ensure_primary_admin()
+
+    def ensure_primary_admin(self):
+        """Ensure the primary administrator account exists without overwriting an updated password."""
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, PRIMARY_ADMIN_ID)
+            if rec is None:
+                salt = secrets.token_hex(16)
+                initial_pw = os.environ.get('AUTOCOMBAT_PRIMARY_ADMIN_PASSWORD') or PRIMARY_ADMIN_DEFAULT_PASSWORD
+                rec = {
+                    'id': PRIMARY_ADMIN_ID,
+                    'username': PRIMARY_ADMIN_USERNAME,
+                    'display_name': PRIMARY_ADMIN_USERNAME,
+                    'role': ROLE_SUPER_ADMIN,
+                    'permissions': list(ALL_PERMISSIONS),
+                    'password_salt': salt,
+                    'password_hash': _hash_password(initial_pw, salt),
+                    'created_at': time.time(),
+                    'token_overrides': {},
+                    'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
+                    'ranked': default_ranked_profile(),
+                }
+                self.store.put(KIND_ACCOUNT, rec)
+                return rec
+            if rec.get('role') != ROLE_SUPER_ADMIN or rec.get('permissions') != list(ALL_PERMISSIONS):
+                rec['role'] = ROLE_SUPER_ADMIN
+                rec['permissions'] = list(ALL_PERMISSIONS)
+                self.store.put(KIND_ACCOUNT, rec)
+            return rec
 
     @staticmethod
     def normalize_username(username):
@@ -112,10 +233,17 @@ class AutoChessAuthService:
         if not rec:
             return None
         stats = rec.get('stats') or {}
+        role = normalize_role(rec)
+        perms = normalize_permissions(rec, role)
         return {
             'id': rec['id'],
             'username': rec.get('username', rec['id']),
             'display_name': rec.get('display_name') or rec.get('username', rec['id']),
+            'role': role,
+            'role_label': ROLE_LABELS[role],
+            'permissions': perms,
+            'can_edit': bool(perms),
+            'is_super_admin': role == ROLE_SUPER_ADMIN,
             'created_at': rec.get('created_at', 0),
             'token_overrides': dict(rec.get('token_overrides') or {}),
             'stats': {
@@ -127,6 +255,26 @@ class AutoChessAuthService:
             'ranked': public_ranked_profile(rec.get('ranked')),
             'wx_bound': bool(rec.get('wx_openid')),
         }
+
+    @staticmethod
+    def is_super_admin(account):
+        return bool(
+            account
+            and account.get('id') == PRIMARY_ADMIN_ID
+            and account.get('role') == ROLE_SUPER_ADMIN
+        )
+
+    @staticmethod
+    def is_admin(account):
+        return bool(account and account.get('role') in (ROLE_ADMIN, ROLE_SUPER_ADMIN))
+
+    @staticmethod
+    def has_permission(account, perm):
+        if not account:
+            return False
+        if AutoChessAuthService.is_super_admin(account):
+            return True
+        return account.get('role') == ROLE_ADMIN and perm in (account.get('permissions') or [])
 
     def _issue_token(self, account_id):
         tok = secrets.token_urlsafe(32)
@@ -157,6 +305,8 @@ class AutoChessAuthService:
                 'id': acc_id,
                 'username': raw_user,
                 'display_name': nick,
+                'role': ROLE_USER,
+                'permissions': [],
                 'password_salt': salt,
                 'password_hash': _hash_password(pw, salt),
                 'created_at': time.time(),
@@ -214,6 +364,8 @@ class AutoChessAuthService:
                 'id': acc_id,
                 'username': acc_id,
                 'display_name': nick,
+                'role': ROLE_USER,
+                'permissions': [],
                 'password_salt': salt,
                 'password_hash': _hash_password(random_pw, salt),
                 'created_at': now,
@@ -410,3 +562,195 @@ class AutoChessAuthService:
             tier_filter=tier_filter,
             limit=limit,
         )
+
+    @staticmethod
+    def _account_summary(rec):
+        role = normalize_role(rec)
+        perms = normalize_permissions(rec, role)
+        stats = rec.get('stats') or {}
+        return {
+            'id': rec['id'],
+            'username': rec.get('username', rec['id']),
+            'display_name': rec.get('display_name') or rec.get('username', rec['id']),
+            'role': role,
+            'role_label': ROLE_LABELS[role],
+            'permissions': perms,
+            'is_primary': rec['id'] == PRIMARY_ADMIN_ID,
+            'created_at': rec.get('created_at', 0),
+            'wx_bound': bool(rec.get('wx_openid')),
+            'stats': {
+                'games': int(stats.get('games', 0) or 0),
+                'wins': int(stats.get('wins', 0) or 0),
+                'top2': int(stats.get('top2', 0) or 0),
+                'pve_clears': int(stats.get('pve_clears', 0) or 0),
+            },
+        }
+
+    def _require_primary_actor(self, actor_account_id):
+        if actor_account_id != PRIMARY_ADMIN_ID:
+            raise AuthError('仅主管理员（fanmm01）可增删管理员及分配权限', 403)
+        actor = self.store.get(KIND_ACCOUNT, PRIMARY_ADMIN_ID)
+        if not actor:
+            raise AuthError('主管理员账号不存在', 404)
+        return actor
+
+    def list_accounts_for_admin(self, actor_account_id):
+        """Return (admins, users) summaries for primary-admin management."""
+        self._require_primary_actor(actor_account_id)
+        accounts = self.store.list(KIND_ACCOUNT)
+        admins, users = [], []
+        for rec in accounts:
+            summary = self._account_summary(rec)
+            if summary['role'] in (ROLE_SUPER_ADMIN, ROLE_ADMIN):
+                admins.append(summary)
+            else:
+                users.append(summary)
+        admins.sort(key=lambda item: (0 if item['is_primary'] else 1, item['username'].lower()))
+        users.sort(key=lambda item: item['username'].lower())
+        return admins, users
+
+    def grant_admin(self, actor_account_id, username, permissions=None, password=None, display_name=None):
+        """Promote an existing account or create a new admin account with selected permissions."""
+        self._require_primary_actor(actor_account_id)
+        raw_user, acc_id = self.normalize_username(username)
+        if acc_id == PRIMARY_ADMIN_ID:
+            raise AuthError('主管理员账号已拥有最高权限', 400)
+        perms = validate_permissions(permissions, allow_none=True)
+
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, acc_id)
+            if rec:
+                if normalize_role(rec) == ROLE_ADMIN:
+                    raise AuthError(f'账号「{rec.get("username", raw_user)}」已是管理员，请直接调整其权限', 409)
+                rec['role'] = ROLE_ADMIN
+                rec['permissions'] = perms
+                self.store.put(KIND_ACCOUNT, rec)
+                return self.public_account(rec), False
+
+            pw = '' if password is None else str(password)
+            if not pw:
+                raise AuthError(f'账号「{raw_user}」不存在，请先注册或填写初始密码直接创建', 404)
+            if len(pw) < 6 or len(pw) > 128:
+                raise AuthError('密码长度需为 6–128 位', 400)
+            nick = str(display_name or raw_user).strip()[:20] or raw_user
+            salt = secrets.token_hex(16)
+            rec = {
+                'id': acc_id,
+                'username': raw_user,
+                'display_name': nick,
+                'role': ROLE_ADMIN,
+                'permissions': perms,
+                'password_salt': salt,
+                'password_hash': _hash_password(pw, salt),
+                'created_at': time.time(),
+                'token_overrides': {},
+                'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
+                'ranked': default_ranked_profile(),
+            }
+            self.store.put(KIND_ACCOUNT, rec)
+            return self.public_account(rec), True
+
+    def update_admin_permissions(self, actor_account_id, target, permissions):
+        """Update the granted permission set for an existing admin account."""
+        self._require_primary_actor(actor_account_id)
+        target_id = str(target or '').strip().lower()
+        if not target_id:
+            raise AuthError('请指定要修改权限的管理员账号', 400)
+        if target_id == PRIMARY_ADMIN_ID:
+            raise AuthError('主管理员权限不可修改', 400)
+        perms = validate_permissions(permissions, allow_none=False)
+
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, target_id)
+            if not rec:
+                raise AuthError('目标账号不存在', 404)
+            if normalize_role(rec) != ROLE_ADMIN:
+                raise AuthError('该账号当前不是管理员', 400)
+            rec['permissions'] = perms
+            self.store.put(KIND_ACCOUNT, rec)
+            return self.public_account(rec)
+
+    def revoke_admin(self, actor_account_id, target):
+        """Demote an admin account back to regular user while keeping Auto-Chess data."""
+        self._require_primary_actor(actor_account_id)
+        target_id = str(target or '').strip().lower()
+        if not target_id:
+            raise AuthError('请指定要移除的管理员账号', 400)
+        if target_id == PRIMARY_ADMIN_ID:
+            raise AuthError('主管理员账号不可移除管理员权限', 400)
+
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, target_id)
+            if not rec:
+                raise AuthError('目标账号不存在', 404)
+            if normalize_role(rec) != ROLE_ADMIN:
+                raise AuthError('该账号当前不是管理员', 400)
+            rec['role'] = ROLE_USER
+            rec['permissions'] = []
+            self.store.put(KIND_ACCOUNT, rec)
+            return self.public_account(rec)
+
+    def _require_player_manager(self, actor_account_id):
+        actor = self.get_account(actor_account_id)
+        if not actor or not self.has_permission(actor, PERM_PLAYER_MANAGE):
+            raise AuthError('当前账号缺少「玩家管理」权限', 403)
+        return actor
+
+    def list_players(self, actor_account_id):
+        """List all registered accounts for player management with per-target kick capability."""
+        actor = self._require_player_manager(actor_account_id)
+        actor_is_super = self.is_super_admin(actor)
+        role_order = {ROLE_SUPER_ADMIN: 0, ROLE_ADMIN: 1, ROLE_USER: 2}
+        players = []
+        for rec in self.store.list(KIND_ACCOUNT):
+            summary = self._account_summary(rec)
+            if rec['id'] == PRIMARY_ADMIN_ID or rec['id'] == actor['id']:
+                can_kick = False
+            elif actor_is_super:
+                can_kick = True
+            else:
+                can_kick = summary['role'] == ROLE_USER
+            summary['can_kick'] = can_kick
+            players.append(summary)
+        players.sort(key=lambda item: (role_order.get(item['role'], 9), item['username'].lower()))
+        return players
+
+    def delete_account(self, actor_account_id, target):
+        """Kick (revoke all tokens) and delete a registered account."""
+        actor = self._require_player_manager(actor_account_id)
+        target_id = str(target or '').strip().lower()
+        if not target_id:
+            raise AuthError('请指定要踢出删除的账号', 400)
+        if target_id == PRIMARY_ADMIN_ID:
+            raise AuthError('不可删除主管理员账号', 400)
+        if target_id == actor['id']:
+            raise AuthError('不可删除当前登录账号', 400)
+
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, target_id)
+            if not rec:
+                raise AuthError('目标账号不存在', 404)
+            target_role = normalize_role(rec)
+            if target_role != ROLE_USER and not self.is_super_admin(actor):
+                raise AuthError('仅主管理员（fanmm01）可移除或删除管理员账号', 403)
+
+            revoked_tokens = 0
+            for tok_doc in self.store.list(KIND_TOKEN):
+                if tok_doc.get('account_id') == target_id and tok_doc.get('id'):
+                    self.store.delete(KIND_TOKEN, tok_doc['id'])
+                    revoked_tokens += 1
+
+            wx_openid = rec.get('wx_openid')
+            if wx_openid:
+                self.store.delete(KIND_WX_BIND, wx_openid)
+            for bind_doc in self.store.list(KIND_WX_BIND):
+                if bind_doc.get('account_id') == target_id and bind_doc.get('id'):
+                    self.store.delete(KIND_WX_BIND, bind_doc['id'])
+
+            deleted_info = {
+                'id': rec['id'],
+                'username': rec.get('username', rec['id']),
+                'display_name': rec.get('display_name') or rec.get('username', rec['id']),
+            }
+            self.store.delete(KIND_ACCOUNT, target_id)
+            return deleted_info, revoked_tokens

@@ -16,6 +16,13 @@ from unittest.mock import patch
 
 from flask import Blueprint, Flask, request
 
+from autochess_auth import (
+    AutoChessAuthService,
+    PERM_CHARACTER_MANAGE,
+    PERM_SERVER_MANAGE,
+    PRIMARY_ADMIN_DEFAULT_PASSWORD,
+    PRIMARY_ADMIN_USERNAME,
+)
 from combat_defaults import DEFAULTS
 from combat_settings import (SettingsStore, configure, default_store, metadata,
                              settings_scope, snapshot, validate, value)
@@ -43,11 +50,15 @@ class SettingsTests(unittest.TestCase):
         self.context = dict(body=lambda: request.get_json(), session_id=lambda: 'owner',
                             guard=threading.RLock(), ns={'characters_data_pvp': module, '_lock': threading.RLock()})
         self.management = Management(bp, self.context, self.root)
-        self.settings = Settings(bp, self.context, self.management, '8889')
         self.store = Store(self.management.runtime/'test.sqlite3')
+        self.auth = AutoChessAuthService(self.store)
+        self.management.set_auth(self.auth)
+        self.settings = Settings(bp, self.context, self.management, '8889')
         self.tournaments = Tournaments(bp, self.context, self.management, self.store)
         self.app.register_blueprint(bp)
         self.client = self.app.test_client()
+        _, admin_token = self.auth.login(PRIMARY_ADMIN_USERNAME, PRIMARY_ADMIN_DEFAULT_PASSWORD)
+        self.client.set_cookie(self.auth.cookie_name, admin_token)
 
     def tearDown(self):
         configure(self.previous_store)
@@ -72,12 +83,59 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(self.settings.store.read(), original['values'])
 
     def test_permission_and_atomic_validation(self):
-        denied = {'REMOTE_ADDR': '192.168.15.19'}
-        public = self.client.get('/api/ui/settings', environ_overrides=denied).get_json()
+        # Guest (even from 127.0.0.1) is strictly read-only
+        guest = self.app.test_client()
+        local_env = {'REMOTE_ADDR': '127.0.0.1'}
+        public = guest.get('/api/ui/settings', environ_overrides=local_env).get_json()
         self.assertFalse(public['can_manage'])
+        self.assertFalse(public['can_manage_admins'])
         self.assertNotIn('settings_file', public['runtime'])
         self.assertNotIn('LOG_FILE', public['values'])
-        self.assertEqual(self.save({'BO_N_FINAL': 3}, environ_overrides=denied).status_code, 403)
+        self.assertNotIn('all_characters', public)
+        self.assertEqual(self.client.post('/api/ui/settings', json={'version': public['version'], 'values': {'BO_N_FINAL': 3}}).status_code, 200)
+        self.assertEqual(guest.post('/api/ui/settings', json={'version': public['version'], 'values': {'BO_N_FINAL': 3}}, environ_overrides=local_env).status_code, 403)
+
+        # Regular user is read-only
+        self.auth.register('regular_user', 'pw_reg_123')
+        _, reg_tok = self.auth.login('regular_user', 'pw_reg_123')
+        reg_cli = self.app.test_client()
+        reg_cli.set_cookie(self.auth.cookie_name, reg_tok)
+        reg_info = reg_cli.get('/api/ui/settings').get_json()
+        self.assertFalse(reg_info['can_manage'])
+        self.assertFalse(reg_info['can_manage_admins'])
+        self.assertEqual(reg_cli.post('/api/ui/settings', json={'version': reg_info['version'], 'values': {'BO_N_FINAL': 3}}).status_code, 403)
+
+        # Admin with only character_manage cannot edit server settings
+        self.auth.grant_admin(PRIMARY_ADMIN_USERNAME, 'char_only', permissions=[PERM_CHARACTER_MANAGE], password='pw_char_123')
+        _, char_tok = self.auth.login('char_only', 'pw_char_123')
+        char_cli = self.app.test_client()
+        char_cli.set_cookie(self.auth.cookie_name, char_tok)
+        char_info = char_cli.get('/api/ui/settings').get_json()
+        self.assertFalse(char_info['can_manage'])
+        self.assertTrue(char_info['can_manage_characters'])
+        self.assertFalse(char_info['can_manage_admins'])
+        self.assertEqual(char_cli.post('/api/ui/settings', json={'version': char_info['version'], 'values': {'BO_N_FINAL': 3}}).status_code, 403)
+
+        # Admin with server_manage CAN edit server settings and gets all_characters, but not can_manage_admins
+        self.auth.grant_admin(PRIMARY_ADMIN_USERNAME, 'srv_admin', permissions=[PERM_SERVER_MANAGE], password='pw_srv_123')
+        _, srv_tok = self.auth.login('srv_admin', 'pw_srv_123')
+        srv_cli = self.app.test_client()
+        srv_cli.set_cookie(self.auth.cookie_name, srv_tok)
+        srv_info = srv_cli.get('/api/ui/settings').get_json()
+        self.assertTrue(srv_info['can_manage'])
+        self.assertFalse(srv_info['can_manage_characters'])
+        self.assertFalse(srv_info['can_manage_admins'])
+        self.assertIn('all_characters', srv_info)
+        self.assertEqual(srv_cli.post('/api/ui/settings', json={'version': srv_info['version'], 'values': {'BO_N_FINAL': 5}}).status_code, 200)
+
+        # Primary admin gets all capability flags
+        super_info = self.client.get('/api/ui/settings').get_json()
+        self.assertTrue(super_info['can_manage'])
+        self.assertTrue(super_info['can_manage_characters'])
+        self.assertTrue(super_info['can_manage_players'])
+        self.assertTrue(super_info['can_manage_story'])
+        self.assertTrue(super_info['can_manage_admins'])
+
         initial = self.settings.store.read()
         for changes in ({'BO_N_FINAL': 2}, {'TOURNAMENT_EVENT_DELAY': -1}, {'TOURNAMENT_EVENT_DELAY': float('nan')},
                         {'PRELIM_WORKERS': 33}, {'SEASON_AVG_STATUS': 101}, {'SEASON_AVG_STATUS': 'random'},

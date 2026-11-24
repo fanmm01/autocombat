@@ -12,7 +12,20 @@ import unittest
 from unittest.mock import Mock, patch
 
 from flask import Flask, Blueprint, request
-from ui_management import Management, digest, format_allowlist, format_network, parse_allowlist
+from autochess_auth import (
+    ALL_PERMISSIONS,
+    AutoChessAuthService,
+    PERM_CHARACTER_MANAGE,
+    PERM_PLAYER_MANAGE,
+    PERM_SERVER_MANAGE,
+    PERM_STORY_MANAGE,
+    PRIMARY_ADMIN_DEFAULT_PASSWORD,
+    PRIMARY_ADMIN_USERNAME,
+    ROLE_ADMIN,
+    ROLE_SUPER_ADMIN,
+    ROLE_USER,
+)
+from ui_management import Management, digest
 from ui_store import Store
 from ui_effects import START
 from ui_tournaments import Tournaments, bracket, participant
@@ -52,9 +65,13 @@ class ManagementTests(unittest.TestCase):
                       ns={'characters_data_pvp': self.module, '_lock': threading.RLock()})
         self.management = Management(bp, self.c, self.root)
         self.store = Store(self.management.runtime/'test.sqlite3')
+        self.auth = AutoChessAuthService(self.store)
+        self.management.set_auth(self.auth)
         self.tournaments = Tournaments(bp, self.c, self.management, self.store)
         self.app.register_blueprint(bp)
         self.client = self.app.test_client()
+        _, admin_token = self.auth.login(PRIMARY_ADMIN_USERNAME, PRIMARY_ADMIN_DEFAULT_PASSWORD)
+        self.client.set_cookie(self.auth.cookie_name, admin_token)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -326,94 +343,155 @@ class ManagementTests(unittest.TestCase):
         restored = self.client.get('/api/ui/data').get_json()
         self.assertTrue(restored['characters'][0]['spells'][0]['effects'][0]['_disabled'])
 
-    def test_management_allowlist_defaults_persists_and_can_be_changed_by_allowed_client(self):
-        self.assertIn('192.168.1.6', self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '192.168.1.6'}).get_json()['allowlist'])
-        self.assertEqual(self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '192.168.1.10'}).status_code, 403)
-        saved = self.client.post('/api/ui/allowlist', json={'allowlist': '192.168.1.6\n192.168.1.0/24'},
-                                 environ_overrides={'REMOTE_ADDR': '192.168.1.6'})
-        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
-        self.assertEqual(saved.get_json()['allowlist'], ['192.168.1.0/24', '192.168.1.6'])
-        self.assertTrue((self.management.runtime/'management-allowlist.json').exists())
-        self.assertEqual(self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '192.168.1.10'}).status_code, 200)
-        self.assertEqual(self.client.post('/api/ui/allowlist', json={'allowlist': 'not-an-ip'},
-                                          environ_overrides={'REMOTE_ADDR': '192.168.1.6'}).status_code, 400)
-        removed_default = self.client.post('/api/ui/allowlist', json={'allowlist': '192.168.1.10'},
-                                           environ_overrides={'REMOTE_ADDR': '192.168.1.6'})
-        self.assertEqual(removed_default.status_code, 200)
-        self.assertEqual(removed_default.get_json()['allowlist'], ['192.168.1.10'])
-        self.assertEqual(self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '192.168.1.6'}).status_code, 403)
-        reload_bp = Blueprint('test_management_reload', __name__)
-        reloaded = Management(reload_bp, self.c, self.root)
-        self.assertNotIn('192.168.1.6', [format_network(network) for network in reloaded.allowlist])
+    def _client_for(self, username, password):
+        _, token = self.auth.login(username, password)
+        cli = self.app.test_client()
+        cli.set_cookie(self.auth.cookie_name, token)
+        return cli, token
 
-    def test_management_allowlist_honors_forwarded_ip_only_from_configured_proxy(self):
-        self.management.trusted_proxies = parse_allowlist('127.0.0.1')
-        allowed = self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '127.0.0.1',
-            'HTTP_X_FORWARDED_FOR': '192.168.1.6'})
-        self.assertEqual(allowed.status_code, 200)
-        denied = self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '192.168.1.10',
-            'HTTP_X_FORWARDED_FOR': '192.168.1.6'})
-        self.assertEqual(denied.status_code, 403)
-        tunneled = self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '127.0.0.1',
-            'HTTP_HOST': 'public-tunnel.example:443'})
-        self.assertEqual(tunneled.status_code, 403)
+    def test_primary_admin_seeded_and_guest_or_regular_user_cannot_edit(self):
+        primary_doc = self.store.get('autochess_account', PRIMARY_ADMIN_USERNAME)
+        self.assertIsNotNone(primary_doc)
+        self.assertEqual(primary_doc['role'], ROLE_SUPER_ADMIN)
+        self.assertNotIn(PRIMARY_ADMIN_DEFAULT_PASSWORD, primary_doc['password_hash'])
+        self.assertEqual(set(primary_doc['permissions']), set(ALL_PERMISSIONS))
 
-    def test_management_allowlist_import_validates_before_replacing_and_persists(self):
-        source = self.root / 'previous-allowlist.json'
-        saved = self.management.allowlist_path
-        source.write_text('["invalid"]', encoding='utf-8')
-        original = saved.read_bytes()
-        with patch.dict(os.environ, AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST=str(source)):
-            with self.assertRaisesRegex(ValueError, '无法读取管理白名单'):
-                Management(Blueprint('invalid_import', __name__), self.c, self.root)
-        self.assertEqual(saved.read_bytes(), original)
+        # Re-registering primary admin fails; password check rejects wrong password
+        from autochess_auth import AuthError
+        with self.assertRaises(AuthError):
+            self.auth.register(PRIMARY_ADMIN_USERNAME, 'another_pw')
+        with self.assertRaises(AuthError):
+            self.auth.login(PRIMARY_ADMIN_USERNAME, 'wrong_pw')
 
-        source.write_text('["198.51.100.7/24", "2001:db8::7"]', encoding='utf-8-sig')
-        with patch.dict(os.environ, AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST=str(source)):
-            imported = Management(Blueprint('valid_import', __name__), self.c, self.root)
-            self.assertNotIn('AUTOCOMBAT_IMPORT_MANAGEMENT_ALLOWLIST', os.environ)
-        expected = ['198.51.100.0/24', '2001:db8::7']
-        self.assertEqual(json.loads(saved.read_text(encoding='utf-8')), expected)
-        self.assertEqual(format_allowlist(imported.allowlist), expected)
-        reloaded = Management(Blueprint('persistent_import', __name__), self.c, self.root)
-        self.assertEqual(format_allowlist(reloaded.allowlist), expected)
+        # Guest is denied on every management endpoint EVEN from 127.0.0.1 / localhost
+        guest = self.app.test_client()
+        local_env = {'REMOTE_ADDR': '127.0.0.1'}
+        for method, path in [
+            ('get', '/api/ui/data'),
+            ('post', '/api/ui/data/save'),
+            ('get', '/api/ui/backups'),
+            ('post', '/api/ui/backups'),
+            ('get', '/api/ui/admins'),
+            ('post', '/api/ui/admins'),
+            ('get', '/api/ui/players'),
+            ('post', '/api/ui/players/kick'),
+        ]:
+            resp = getattr(guest, method)(path, json={}, environ_overrides=local_env)
+            self.assertEqual(resp.status_code, 403, f'guest {method} {path} should be 403')
 
-    def test_management_recognizes_ipv6_loopback_host_and_denies_tunnel_host(self):
-        remote = {'REMOTE_ADDR': '::1'}
-        localhost = self.client.get('/api/ui/allowlist', base_url='http://[::1]:8889', environ_overrides=remote)
-        self.assertEqual(localhost.status_code, 200)
-        tunnel = self.client.get('/api/ui/allowlist', base_url='http://tunnel.example', environ_overrides=remote)
-        self.assertEqual(tunnel.status_code, 403)
+        # Regular user defaults to role='user', empty permissions, cannot edit
+        reg_acc, _ = self.auth.register('normal_player', 'pw_user_123')
+        self.assertEqual(reg_acc['role'], ROLE_USER)
+        self.assertEqual(reg_acc['permissions'], [])
+        self.assertFalse(reg_acc['can_edit'])
+        self.assertFalse(reg_acc['is_super_admin'])
+        user_cli, _ = self._client_for('normal_player', 'pw_user_123')
+        self.assertEqual(user_cli.get('/api/ui/data', environ_overrides=local_env).status_code, 403)
+        self.assertEqual(user_cli.post('/api/ui/data/save', json={}, environ_overrides=local_env).status_code, 403)
+        self.assertEqual(user_cli.get('/api/ui/admins').status_code, 403)
+        self.assertEqual(user_cli.get('/api/ui/players').status_code, 403)
 
-    def test_wildcard_allowlist_allows_ipv4_ipv6_and_tunnel_debug_access(self):
-        wildcard = parse_allowlist('*.*.*.*')
-        self.assertEqual(format_allowlist(wildcard), ['*.*.*.*'])
-        import ipaddress
-        for addr in ('192.168.5.23', '203.0.113.99', '2001:db8::50', '::ffff:203.0.113.99'):
-            parsed = ipaddress.ip_address(addr)
-            if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped:
-                parsed = parsed.ipv4_mapped
-            self.assertTrue(any(parsed in network for network in wildcard))
-        self.management.allowlist = wildcard
-        self.assertEqual(self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '10.20.30.40'}).status_code, 200)
-        self.assertEqual(self.client.get('/api/ui/allowlist', environ_overrides={'REMOTE_ADDR': '127.0.0.1',
-            'HTTP_HOST': 'public-tunnel.example:443'}).status_code, 200)
-        saved = self.client.post('/api/ui/allowlist', json={'allowlist': '*.*.*.*'},
-            environ_overrides={'REMOTE_ADDR': '198.51.100.77'})
-        self.assertEqual(saved.status_code, 200, saved.get_data(as_text=True))
-        self.assertEqual(saved.get_json()['allowlist'], ['*.*.*.*'])
-        self.assertEqual(json.loads(self.management.allowlist_path.read_text(encoding='utf-8')), ['*.*.*.*'])
-        reload_bp = Blueprint('test_management_wildcard_reload', __name__)
-        reloaded = Management(reload_bp, self.c, self.root)
-        self.assertEqual(format_allowlist(reloaded.allowlist), ['*.*.*.*'])
+    def test_primary_admin_assigns_granular_permissions_and_revokes_admins(self):
+        self.auth.register('alice_user', 'pw_alice_123', display_name='爱丽丝')
+        self.auth.register('bob_user', 'pw_bob_123', display_name='鲍勃')
 
-    def test_invalid_save_is_atomic_and_remote_management_is_denied(self):
+        # Promote existing user with ONLY character_manage
+        res_add = self.client.post('/api/ui/admins', json={
+            'username': 'alice_user',
+            'permissions': [PERM_CHARACTER_MANAGE],
+        })
+        self.assertEqual(res_add.status_code, 200, res_add.get_data(as_text=True))
+        body = res_add.get_json()
+        self.assertFalse(body['created'])
+        self.assertEqual(body['account']['role'], ROLE_ADMIN)
+        self.assertEqual(body['account']['permissions'], [PERM_CHARACTER_MANAGE])
+
+        # Directly create a new admin with ONLY player_manage
+        res_new = self.client.post('/api/ui/admins', json={
+            'username': 'moderator_one',
+            'password': 'pw_mod_123',
+            'display_name': '风纪委员',
+            'permissions': [PERM_PLAYER_MANAGE],
+        })
+        self.assertEqual(res_new.status_code, 200, res_new.get_data(as_text=True))
+        self.assertTrue(res_new.get_json()['created'])
+        self.assertEqual(res_new.get_json()['account']['permissions'], [PERM_PLAYER_MANAGE])
+
+        alice_cli, _ = self._client_for('alice_user', 'pw_alice_123')
+        mod_cli, _ = self._client_for('moderator_one', 'pw_mod_123')
+
+        # Alice has character_manage only: can read/save data, denied on players/admins
+        self.assertEqual(alice_cli.get('/api/ui/data').status_code, 200)
+        self.assertEqual(alice_cli.get('/api/ui/backups').status_code, 200)
+        self.assertEqual(alice_cli.get('/api/ui/players').status_code, 403)
+        self.assertEqual(alice_cli.get('/api/ui/admins').status_code, 403)
+        self.assertEqual(alice_cli.post('/api/ui/admins', json={'username': 'bob_user', 'permissions': [PERM_CHARACTER_MANAGE]}).status_code, 403)
+        self.assertEqual(alice_cli.post('/api/ui/admins/remove', json={'account_id': 'moderator_one'}).status_code, 403)
+
+        # Moderator has player_manage only: can list & kick regular players, denied on data & admins
+        self.assertEqual(mod_cli.get('/api/ui/data').status_code, 403)
+        self.assertEqual(mod_cli.get('/api/ui/admins').status_code, 403)
+        plist = mod_cli.get('/api/ui/players')
+        self.assertEqual(plist.status_code, 200)
+        by_id = {p['id']: p for p in plist.get_json()['players']}
+        self.assertTrue(by_id['bob_user']['can_kick'])
+        self.assertFalse(by_id['alice_user']['can_kick'])
+        self.assertFalse(by_id[PRIMARY_ADMIN_USERNAME]['can_kick'])
+        self.assertFalse(by_id['moderator_one']['can_kick'])
+
+        # Moderator CANNOT kick another admin or primary admin or self
+        self.assertEqual(mod_cli.post('/api/ui/players/kick', json={'account_id': 'alice_user'}).status_code, 403)
+        self.assertEqual(mod_cli.post('/api/ui/players/kick', json={'account_id': PRIMARY_ADMIN_USERNAME}).status_code, 400)
+        self.assertEqual(mod_cli.post('/api/ui/players/kick', json={'account_id': 'moderator_one'}).status_code, 400)
+
+        # Moderator CAN kick/delete regular user bob_user, invalidating bob's token immediately
+        _, bob_token = self._client_for('bob_user', 'pw_bob_123')
+        self.assertIsNotNone(self.auth.authenticate(bob_token))
+        kicked = mod_cli.post('/api/ui/players/kick', json={'account_id': 'bob_user'})
+        self.assertEqual(kicked.status_code, 200, kicked.get_data(as_text=True))
+        self.assertIsNone(self.store.get('autochess_account', 'bob_user'))
+        self.assertIsNone(self.auth.authenticate(bob_token))
+
+        # Primary admin updates Alice's permissions (adds server_manage, removes character_manage)
+        upd = self.client.post('/api/ui/admins/permissions', json={
+            'account_id': 'alice_user',
+            'permissions': [PERM_SERVER_MANAGE, PERM_STORY_MANAGE],
+        })
+        self.assertEqual(upd.status_code, 200, upd.get_data(as_text=True))
+        self.assertEqual(alice_cli.get('/api/ui/data').status_code, 403)
+
+        # Primary admin revokes Alice back to regular user, preserving stats
+        raw_alice = self.store.get('autochess_account', 'alice_user')
+        raw_alice['stats']['wins'] = 3
+        self.store.put('autochess_account', raw_alice)
+        revoked = self.client.post('/api/ui/admins/remove', json={'account_id': 'alice_user'})
+        self.assertEqual(revoked.status_code, 200, revoked.get_data(as_text=True))
+        self.assertEqual(revoked.get_json()['account']['role'], ROLE_USER)
+        self.assertEqual(revoked.get_json()['account']['stats']['wins'], 3)
+        self.assertEqual(self.auth.get_account('alice_user')['permissions'], [])
+
+        # Primary admin cannot be demoted or deleted; at least 1 permission required
+        self.assertEqual(self.client.post('/api/ui/admins/remove', json={'account_id': PRIMARY_ADMIN_USERNAME}).status_code, 400)
+        self.assertEqual(self.client.delete(f'/api/ui/players/{PRIMARY_ADMIN_USERNAME}').status_code, 400)
+        self.assertEqual(self.client.post('/api/ui/admins/permissions', json={'account_id': 'moderator_one', 'permissions': []}).status_code, 400)
+
+        # Primary admin CAN delete another admin via player management; roles persist across reload
+        self.assertEqual(self.client.delete('/api/ui/players/moderator_one').status_code, 200)
+        self.assertIsNone(self.store.get('autochess_account', 'moderator_one'))
+
+        reloaded_auth = AutoChessAuthService(Store(self.store.path))
+        self.assertTrue(reloaded_auth.is_super_admin(reloaded_auth.get_account(PRIMARY_ADMIN_USERNAME)))
+        self.assertEqual(reloaded_auth.get_account('alice_user')['role'], ROLE_USER)
+
+    def test_invalid_save_is_atomic_and_unauthenticated_management_is_denied(self):
         original = (self.root/'characters_data.py').read_bytes()
         data = self.client.get('/api/ui/data').get_json()
         data['characters'][0]['spells'][0]['effects'][0]['type'] = 500
         self.assertEqual(self.client.post('/api/ui/data/save', json=data).status_code, 400)
         self.assertEqual((self.root/'characters_data.py').read_bytes(), original)
-        self.assertEqual(self.client.get('/api/ui/data', environ_overrides={'REMOTE_ADDR': '192.168.1.10'}).status_code, 403)
+        guest = self.app.test_client()
+        self.assertEqual(guest.get('/api/ui/data', environ_overrides={'REMOTE_ADDR': '127.0.0.1'}).status_code, 403)
+        self.assertEqual(guest.get('/api/ui/data', environ_overrides={'REMOTE_ADDR': '192.168.1.10'}).status_code, 403)
 
     def test_legacy_data_star_import_uses_the_canonical_registry(self):
         import characters_data

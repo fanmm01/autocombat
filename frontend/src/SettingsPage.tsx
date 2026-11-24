@@ -5,6 +5,8 @@ import { api, type Character, type Effect } from './types';
 import { type Preferences, type SettingsResponse, type SettingsValues, type SettingField } from './settings';
 import './settings.css';
 import { PlayoffSettings } from './Playoffs';
+import { AdminManagementPanel, PERMISSION_LABELS, PlayerManagementPanel, roleLabel } from './AccountUI';
+import type { AutoChessAccount } from './autochess/types';
 
 const applyLabels = { live: '立即生效', new_task: '新任务生效', startup: '启动时读取 · 只读' };
 const choiceLabels: Record<string, string> = { single: '批量对战', verbose: '详细单场', table: '胜率矩阵', prelim: '多轮预赛', dodge: '闪避', counter: '反击', block: '格挡' };
@@ -45,8 +47,8 @@ function SettingInput({ id, field, value, change, characters, seasonFallback }: 
   return <input aria-label={field.label} value={value} onChange={e => change(e.target.value)}/>;
 }
 
-export function SettingsPage({ preferences, onPreferences, onSaved, onDirty, catalog, onError }: {
-  preferences: Preferences; onPreferences: (prefs: Preferences) => Promise<void>; onSaved: (values: SettingsValues) => void; onDirty: (dirty: boolean) => void; catalog: Character[]; onError: (message: string) => void;
+export function SettingsPage({ preferences, onPreferences, onSaved, onDirty, catalog, account, onOpenAuth, onError }: {
+  preferences: Preferences; onPreferences: (prefs: Preferences) => Promise<void>; onSaved: (values: SettingsValues) => void; onDirty: (dirty: boolean) => void; catalog: Character[]; account: AutoChessAccount | null; onOpenAuth: (mode?: 'login' | 'register', prompt?: string) => void; onError: (message: string) => void;
 }) {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [draft, setDraft] = useState<SettingsValues>({});
@@ -55,46 +57,64 @@ export function SettingsPage({ preferences, onPreferences, onSaved, onDirty, cat
   const [characters, setCharacters] = useState<Effect[]>(catalog);
   const [rules, setRules] = useState<Effect | null>(null);
   const [range, setRange] = useState(false);
-  const [allowlist, setAllowlist] = useState('');
-  const [savedAllowlist, setSavedAllowlist] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [loadError, setLoadError] = useState('');
+  const authScope = `${account?.id ?? ''}:${account?.role ?? ''}:${(account?.permissions ?? []).join(',')}`;
   const configDirty = !!data && !equal(draft, data.values);
-  const dirty = configDirty || !equal(personal, preferences) || allowlist !== savedAllowlist || !!rules && range !== !!rules.settings.GLOBAL_RANGE_OVERRIDE;
+  const dirty = configDirty || !equal(personal, preferences) || (!!rules && range !== !!rules.settings.GLOBAL_RANGE_OVERRIDE);
   useEffect(() => { onDirty(dirty); const handler = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload', handler); return () => { window.removeEventListener('beforeunload', handler); }; }, [dirty]);
   useEffect(() => () => onDirty(false), []);
   async function load() {
     setBusy(true); setLoadError('');
     try {
       const result = await api<SettingsResponse>('/settings'); setData(result); setDraft(result.values); onSaved(result.values);
-      if (result.can_manage) {
-        const [d, a] = await Promise.all([api<Effect>('/data'), api<{allowlist: string[]}>('/allowlist')]);
+      setCharacters(result.all_characters || catalog);
+      if (result.can_manage_characters) {
+        const d = await api<Effect>('/data');
         setRules(d); setRange(!!d.settings.GLOBAL_RANGE_OVERRIDE); setCharacters(d.characters.map((c: Effect) => ({...c, disabled: !d.enabled_serials.includes(c.serial)})));
-        setAllowlist(a.allowlist.join('\n')); setSavedAllowlist(a.allowlist.join('\n'));
+      } else {
+        setRules(null);
       }
     } catch (e) { setLoadError((e as Error).message); } finally { setBusy(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, [authScope]);
   useEffect(() => {
     if (!data || location.hash !== '#playoff-settings') return;
     const group = data.fields.PLAYOFF_CONFIG?.group;
     if (group) setSection(group);
   }, [data]);
+  const groups = data ? [...new Set(Object.values(data.fields).map(f => f.group))] : [];
+  const sections = data
+    ? [
+        '个人偏好',
+        '账号与权限',
+        ...groups,
+        ...(data.can_manage_characters ? ['全局规则'] : []),
+        ...(data.can_manage_players ? ['玩家管理'] : []),
+        ...(data.can_manage_admins ? ['管理员管理'] : []),
+      ]
+    : ['个人偏好', '账号与权限'];
+  useEffect(() => {
+    if (data && !sections.includes(section)) {
+      setSection('账号与权限');
+      setMessage('');
+    }
+  }, [data, section, sections.join('|')]);
   async function work(fn: () => Promise<void>) { setBusy(true); setMessage(''); try { await fn(); } catch (e) { onError((e as Error).message); } finally { setBusy(false); } }
   if (!data) return <div className="page"><h1>设置</h1><p role={loadError ? 'alert' : 'status'}>{loadError || '正在读取设置…'}</p>{loadError && <button className="button" onClick={load}>重新加载</button>}</div>;
-  const groups = [...new Set(Object.values(data.fields).map(f => f.group))];
-  const sections = ['个人偏好', ...groups, ...(data.can_manage ? ['全局规则', '访问管理'] : [])];
   const saveConfig = () => work(async () => { const result = await api<SettingsResponse>('/settings', {version: data.version, values: draft}); setData(result); setDraft(result.values); onSaved(result.values); setMessage('服务器设置已保存；播放等待立即生效，其余规则用于新任务。'); });
   return <div className="page settings-page"><div className="section-heading"><div><span className="eyebrow">{pageCopy.settings.eyebrow}</span><h1><Settings2 size={26}/>设置</h1><p className="muted">{pageCopy.settings.description}{dirty ? '有未保存修改' : '已同步'}</p></div><button className="button" disabled={busy} onClick={() => { if (!dirty || confirm('放弃未保存修改并重新加载？')) { setPersonal(preferences); load(); } }}>重新加载</button></div>
     {loadError && <p className="danger-text" role="alert">{loadError}</p>}{message && <p className="save-message" role="status"><Check size={16}/>{message}</p>}
     <div className="settings-layout"><nav className="settings-nav" aria-label="设置分类">{sections.map(s => <button key={s} className={s === section ? 'active' : ''} onClick={() => { setSection(s); setMessage(''); }}>{s}</button>)}</nav>
       <section className="panel settings-content"><h2>{section}</h2>
       {section === '个人偏好' ? <form onSubmit={e => { e.preventDefault(); work(async () => { await onPreferences(personal); setPersonal({...personal, name: personal.name.trim()}); setMessage('个人偏好已保存到当前浏览器。'); }); }}><label className="field">你的称呼<input required maxLength={20} value={personal.name} onChange={e => setPersonal({...personal, name: e.target.value})}/></label><label className="settings-row"><span><strong>减少动态效果</strong><small>保留必要反馈，减少过渡与位移动画</small></span><input type="checkbox" checked={personal.reduced} onChange={e => setPersonal({...personal, reduced: e.target.checked})}/></label><p className="muted">个人偏好仅保存在当前浏览器。当前版本无背景音乐和音效。</p><button className="button primary" disabled={busy || equal(personal, preferences)}><Save size={15}/>保存个人偏好</button></form>
+      : section === '账号与权限' ? <div className="settings-account-panel">{!account ? <><p className="muted">当前为<strong>游客身份</strong>，游客不能编辑服务器设置、角色数据、剧情工作区或玩家账号。经典模式与自走棋使用同一套账号体系。</p><div className="expansion-toolbar"><button type="button" className="button primary" onClick={() => onOpenAuth('login')}>登录账号</button><button type="button" className="button" onClick={() => onOpenAuth('register')}>注册新账号</button></div></> : <><div className="auth-summary-card"><div className="auth-summary-head"><span>{account.display_name}（@{account.username}）</span><span className={`role-pill role-${account.role || 'user'}`}>{roleLabel(account)}</span></div><div className="perm-pill-row">{account.permissions?.length ? account.permissions.map(perm => <span key={perm} className="perm-pill">{PERMISSION_LABELS[perm] || perm}</span>) : <span className="muted">当前账号为普通用户，无后台编辑权限。</span>}</div></div><p className="muted">仅有主管理员（fanmm01）可增删管理员及分配「玩家管理」「剧情创作管理」「服务器管理」「角色管理」权限。</p><div className="expansion-toolbar"><button type="button" className="button" onClick={() => onOpenAuth('login')}>账号中心 / 退出登录</button></div></>}</div>
       : section === '全局规则' ? <><p>沿用角色数据的版本校验与保存前备份。已有对局保留创建时的规则。</p><label className="settings-row"><span><strong>全局攻击射程覆盖</strong><small>覆盖攻击射程；领域半径仍按技能效果计算。</small></span><input aria-label="全局攻击射程覆盖" type="checkbox" checked={range} onChange={e => setRange(e.target.checked)}/></label><button className="button primary" disabled={busy || !rules || range === !!rules.settings.GLOBAL_RANGE_OVERRIDE} onClick={() => work(async () => { const saved = await api<Effect>('/data/save', {...rules, settings: {...rules!.settings, GLOBAL_RANGE_OVERRIDE: range ? 1 : 0}}); setRules({...rules!, version: saved.version, settings: {...rules!.settings, GLOBAL_RANGE_OVERRIDE: range ? 1 : 0}}); setMessage('全局规则已保存。'); })}>保存全局规则</button></>
-      : section === '访问管理' ? <><p>每行一个 IP 地址或 CIDR 网段，保存后立即生效。</p><label className="field">数据管理白名单<textarea aria-label="数据管理白名单" rows={8} value={allowlist} onChange={e => setAllowlist(e.target.value)}/></label><button className="button primary" disabled={busy || allowlist === savedAllowlist} onClick={() => work(async () => { const result = await api<{allowlist: string[]}>('/allowlist', {allowlist}); setAllowlist(result.allowlist.join('\n')); setSavedAllowlist(result.allowlist.join('\n')); setMessage('访问白名单已保存。'); })}>保存白名单</button></>
+      : section === '玩家管理' ? <PlayerManagementPanel onError={onError} />
+      : section === '管理员管理' ? <AdminManagementPanel onError={onError} />
       : <form onSubmit={e => { e.preventDefault(); saveConfig(); }}><div className="settings-fields"><fieldset disabled={busy || !data.can_manage}>{Object.entries(data.fields).filter(([k,f]) => f.group === section && k !== 'BO_N_BRONZE').map(([key, field]) => <div className={'setting-field ' + (['teams', 'matrix', 'season', 'playoff'].includes(field.kind) ? 'setting-wide' : '')} key={key}><div className="setting-label"><label>{field.label}</label><small>{applyLabels[field.apply]}</small></div>{field.kind === 'playoff' ? <PlayoffSettings value={draft[key]} change={value => setDraft({...draft, [key]: value})} bo={Object.fromEntries(['BO_N_PLAYIN', 'BO_N_QF', 'BO_N_SF', 'BO_N_FINAL'].map(k => [k, draft[k]]))} onError={onError}/> : <SettingInput id={key} field={field} value={draft[key]} change={value => setDraft({...draft, [key]: value})} characters={characters} seasonFallback={draft.SEASON_FALLBACK_STATUS}/>}<code>{key}</code></div>)}</fieldset></div>
-      {data.can_manage ? <div className="settings-actions"><button className="button primary" disabled={busy || !configDirty}><Save size={15}/>保存服务器设置</button><button type="button" className="button" disabled={busy || !configDirty} onClick={() => setDraft(data.values)}>放弃服务器修改</button><button type="button" className="text-button" disabled={busy || !Object.values(data.fields).some(f => f.group === section && !f.readonly)} onClick={() => { if (confirm(`恢复“${section}”的默认值？保存后生效。`)) setDraft(old => ({...old, ...Object.fromEntries(Object.entries(data.fields).filter(([,f]) => f.group === section && !f.readonly).map(([k,f]) => [k, structuredClone(f.default)]))})); }}><RotateCcw size={14}/>恢复本组默认值</button></div> : <p className="muted">服务器设置只读。修改需要本机或白名单设备访问。</p>}
+      {data.can_manage ? <div className="settings-actions"><button className="button primary" disabled={busy || !configDirty}><Save size={15}/>保存服务器设置</button><button type="button" className="button" disabled={busy || !configDirty} onClick={() => setDraft(data.values)}>放弃服务器修改</button><button type="button" className="text-button" disabled={busy || !Object.values(data.fields).some(f => f.group === section && !f.readonly)} onClick={() => { if (confirm(`恢复“${section}”的默认值？保存后生效。`)) setDraft(old => ({...old, ...Object.fromEntries(Object.entries(data.fields).filter(([,f]) => f.group === section && !f.readonly).map(([k,f]) => [k, structuredClone(f.default)]))})); }}><RotateCcw size={14}/>恢复本组默认值</button></div> : <p className="muted">{account ? '服务器设置只读。当前账号缺少「服务器管理」权限。' : <>服务器设置只读。游客不能编辑，请先 <button type="button" className="text-button" onClick={() => onOpenAuth('login', '请登录拥有「服务器管理」权限的管理员账号')}>登录管理员账号</button>。</>}</p>}
       {section === '对战默认值' && <p className="muted">自定义战斗延迟兼容旧名称 CUSTOM_BATTLE_DELAY，统一使用 DELAY_CUSTOM_TURN。</p>}
       {section === '播放与等待' && <p className="muted">锦标赛逐回合实际等待 = 基础等待 ÷ 当前倍率。设为 0 可连续推进；修改从下一次等待开始生效。</p>}
       {section === '启动与兼容信息' && <div className="settings-runtime"><p>当前 Web 服务：{data.runtime.web_address}</p>{data.runtime.settings_file && <p>配置文件：{data.runtime.settings_file}</p>}{Object.entries(data.runtime.files || {}).map(([k,v]) => <p key={k}>{data.fields[k]?.label}：{v}</p>)}</div>}</form>}

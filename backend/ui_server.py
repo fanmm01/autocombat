@@ -894,22 +894,28 @@ def register_ui(app, ns):
     from ui_store import Store
     from ui_tasks import Tasks
     from ui_simulation_queue import SimulationQueue
-    management = Management(bp, locals())
+    from project_paths import runtime_dir
+    from autochess_auth import AutoChessAuthService
+    runtime = runtime_dir()
+    runtime.mkdir(exist_ok=True)
+    store = Store(runtime / ('browser.sqlite3' if instance == '8889' else f'browser-{instance}.sqlite3'))
+    auth_cookie = 'autochess_auth' + ('' if instance == '8889' else '_' + instance)
+    auth = AutoChessAuthService(store, cookie_name=auth_cookie)
+    management = Management(bp, locals(), auth=auth)
     from ui_settings import Settings
     settings = Settings(bp, locals(), management, instance)
     app.extensions['combat_ui']['settings'] = settings
-    store = Store(management.runtime / ('browser.sqlite3' if instance == '8889' else f'browser-{instance}.sqlite3'))
     simulation_queue = SimulationQueue()
     tasks = Tasks(bp, locals(), management, store)
-    app.extensions['combat_ui'].update(management=management, store=store, tasks=tasks, simulation_queue=simulation_queue)
+    app.extensions['combat_ui'].update(management=management, store=store, tasks=tasks, simulation_queue=simulation_queue, auth=auth)
     from ui_tournaments import Tournaments
     tournaments = Tournaments(bp, locals(), management, store)
     app.extensions['combat_ui']['tournaments'] = tournaments
     from ui_story import Stories
-    stories = Stories(bp, locals(), store, management.runtime)
+    stories = Stories(bp, locals(), store, management.runtime, management=management)
     app.extensions['combat_ui']['stories'] = stories
     from ui_autochess import AutoChessUI
-    autochess = AutoChessUI(bp, locals(), store)
+    autochess = AutoChessUI(bp, locals(), store, auth=auth)
     app.extensions['combat_ui']['autochess'] = autochess
     from ui_utilities import register_utilities
     register_utilities(bp, locals())
