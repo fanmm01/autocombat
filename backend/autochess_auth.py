@@ -2,10 +2,15 @@
 
 import hashlib
 import hmac
+import json
+import os
 import re
 import secrets
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from autochess_catalog import UNIT_CATALOG
 from autochess_ranked import (
@@ -17,6 +22,7 @@ from autochess_ranked import (
 
 KIND_ACCOUNT = 'autochess_account'
 KIND_TOKEN = 'autochess_auth_token'
+KIND_WX_BIND = 'autochess_wx_bind'
 
 _USERNAME_RE = re.compile(r'^[\w\u4e00-\u9fff-]{3,20}$')
 _DATA_IMAGE_RE = re.compile(r'^data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$', re.IGNORECASE)
@@ -57,6 +63,35 @@ def validate_token_url(token_url):
     raise AuthError('头图仅支持本地图片上传、标准 HTTP(S) 图片链接或内置徽章路径', 400)
 
 
+def exchange_wechat_code(code, appid=None, secret=None):
+    """Exchange a WeChat Mini Game/Program wx.login code for openid via jscode2session."""
+    clean_code = str(code or '').strip()
+    if not clean_code:
+        raise AuthError('缺少微信登录 code', 400)
+    wx_appid = (appid or os.environ.get('AUTOCOMBAT_WX_APPID') or '').strip()
+    wx_secret = (secret or os.environ.get('AUTOCOMBAT_WX_SECRET') or '').strip()
+    if not wx_appid or not wx_secret:
+        raise AuthError('服务端未配置微信小程序 AppID/Secret（非云托管环境需配置 AUTOCOMBAT_WX_APPID 与 AUTOCOMBAT_WX_SECRET）', 503)
+    query = urllib.parse.urlencode({
+        'appid': wx_appid,
+        'secret': wx_secret,
+        'js_code': clean_code,
+        'grant_type': 'authorization_code',
+    })
+    url = f'https://api.weixin.qq.com/sns/jscode2session?{query}'
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise AuthError(f'微信登录凭证校验失败：{exc}', 502) from exc
+    if data.get('errcode'):
+        raise AuthError(f"微信登录校验失败：{data.get('errmsg') or data.get('errcode')}", 401)
+    openid = str(data.get('openid') or '').strip()
+    if not openid:
+        raise AuthError('微信登录未返回有效的 openid', 502)
+    return openid
+
+
 class AutoChessAuthService:
     """Manages salted PBKDF2 accounts, cookies, stats, and custom token overrides in ui_store."""
 
@@ -90,6 +125,7 @@ class AutoChessAuthService:
                 'pve_clears': int(stats.get('pve_clears', 0) or 0),
             },
             'ranked': public_ranked_profile(rec.get('ranked')),
+            'wx_bound': bool(rec.get('wx_openid')),
         }
 
     def _issue_token(self, account_id):
@@ -154,6 +190,102 @@ class AutoChessAuthService:
         if token:
             with self.lock:
                 self.store.delete(KIND_TOKEN, token)
+
+    def login_or_register_wechat(self, openid, display_name=None):
+        """Authenticate via WeChat OpenID, creating an auto-account on first login."""
+        clean_openid = str(openid or '').strip()
+        if not 4 <= len(clean_openid) <= 128:
+            raise AuthError('无效的微信 OpenID', 400)
+
+        with self.lock:
+            bind = self.store.get(KIND_WX_BIND, clean_openid)
+            if bind:
+                rec = self.store.get(KIND_ACCOUNT, bind.get('account_id', ''))
+                if rec:
+                    tok = self._issue_token(rec['id'])
+                    return self.public_account(rec), tok, False
+
+            acc_id = 'wx_' + secrets.token_hex(6)
+            nick = str(display_name or '').strip()[:20] or f'星序棋手{acc_id[-4:].upper()}'
+            salt = secrets.token_hex(16)
+            random_pw = secrets.token_urlsafe(32)
+            now = time.time()
+            rec = {
+                'id': acc_id,
+                'username': acc_id,
+                'display_name': nick,
+                'password_salt': salt,
+                'password_hash': _hash_password(random_pw, salt),
+                'created_at': now,
+                'wx_openid': clean_openid,
+                'wx_auto_created': True,
+                'token_overrides': {},
+                'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
+                'ranked': default_ranked_profile(),
+            }
+            self.store.put(KIND_ACCOUNT, rec)
+            self.store.put(
+                KIND_WX_BIND,
+                {
+                    'id': clean_openid,
+                    'account_id': acc_id,
+                    'created_at': now,
+                    'updated_at': now,
+                },
+            )
+            tok = self._issue_token(acc_id)
+            return self.public_account(rec), tok, True
+
+    def bind_wechat(self, openid, username, password):
+        """Bind a WeChat OpenID to an existing username/password Auto-Chess account."""
+        clean_openid = str(openid or '').strip()
+        if not 4 <= len(clean_openid) <= 128:
+            raise AuthError('无效的微信 OpenID', 400)
+        _, acc_id = self.normalize_username(username)
+        pw = str(password or '')
+        if not pw:
+            raise AuthError('请输入密码', 400)
+
+        with self.lock:
+            rec = self.store.get(KIND_ACCOUNT, acc_id)
+            if not rec:
+                raise AuthError('账号或密码错误', 401)
+            expected = rec.get('password_hash', '')
+            salt = rec.get('password_salt', '')
+            actual = _hash_password(pw, salt) if salt else ''
+            if not expected or not hmac.compare_digest(actual, expected):
+                raise AuthError('账号或密码错误', 401)
+
+            existing_openid = rec.get('wx_openid')
+            if existing_openid and existing_openid != clean_openid:
+                raise AuthError('该账号已绑定其他微信', 409)
+
+            old_bind = self.store.get(KIND_WX_BIND, clean_openid)
+            if old_bind and old_bind.get('account_id') != acc_id:
+                old_rec = self.store.get(KIND_ACCOUNT, old_bind.get('account_id', ''))
+                if old_rec:
+                    old_games = int((old_rec.get('stats') or {}).get('games', 0) or 0)
+                    old_ranked_games = int((old_rec.get('ranked') or {}).get('games', 0) or 0)
+                    if old_rec.get('wx_auto_created') and old_games == 0 and old_ranked_games == 0:
+                        old_rec.pop('wx_openid', None)
+                        self.store.put(KIND_ACCOUNT, old_rec)
+                    else:
+                        raise AuthError('当前微信已绑定其他已有战绩的账号', 409)
+
+            now = time.time()
+            rec['wx_openid'] = clean_openid
+            self.store.put(KIND_ACCOUNT, rec)
+            self.store.put(
+                KIND_WX_BIND,
+                {
+                    'id': clean_openid,
+                    'account_id': acc_id,
+                    'created_at': (old_bind or {}).get('created_at', now),
+                    'updated_at': now,
+                },
+            )
+            tok = self._issue_token(acc_id)
+            return self.public_account(rec), tok
 
     def authenticate(self, token):
         if not token:

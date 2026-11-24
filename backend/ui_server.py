@@ -44,8 +44,12 @@ def register_ui(app, ns):
     def clean(value):
         return json.loads(json.dumps(value, ensure_ascii=False, default=lambda v: list(v) if isinstance(v, set) else str(v)))
 
+    def _session_token():
+        header_tok = (request.headers.get('X-Combat-Session') or '').strip()
+        return header_tok or request.cookies.get(cookie_name, '')
+
     def session_id():
-        token = request.cookies.get(cookie_name, '')
+        token = _session_token()
         saved = store.get('identity', token) if token else None
         return identities.get(token, saved['player'] if saved else '')
 
@@ -60,9 +64,9 @@ def register_ui(app, ns):
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             raise BadRequest('请求必须为 JSON 对象')
-        # Same-origin UI writes; LAN users receive the UI from this same host.
+        # Same-origin UI writes; also allow WeChat Mini Game/Program client origins.
         origin = request.headers.get('Origin')
-        if origin and origin.rstrip('/') != request.host_url.rstrip('/'):
+        if origin and origin.rstrip('/') != request.host_url.rstrip('/') and not origin.startswith('https://servicewechat.com'):
             raise Forbidden('请从战术室页面发起操作')
         return data
 
@@ -453,7 +457,7 @@ def register_ui(app, ns):
     @bp.post('/api/ui/session')
     def get_session():
         data = body()
-        token = request.cookies.get(cookie_name, '')
+        token = _session_token()
         sid = session_id()
         if not sid:
             token = secrets.token_urlsafe(32)
@@ -461,7 +465,7 @@ def register_ui(app, ns):
             identities[token] = sid
             store.put('identity', dict(id=token, player=sid))
         name = str(data.get('name', '指挥官')).strip()[:20] or '指挥官'
-        response = jsonify(id=sid, name=name)
+        response = jsonify(id=sid, name=name, session_token=token)
         response.set_cookie(cookie_name, token, httponly=True, samesite='Strict', max_age=86400 * 7)
         return response
 
@@ -568,6 +572,43 @@ def register_ui(app, ns):
                     yield ': heartbeat\n\n'
                 room['updated'].wait(2)
         return Response(stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+    @bp.get('/api/ui/rooms/<code>/poll')
+    def room_poll(code):
+        try:
+            after = int(request.args.get('after', '0'))
+        except (TypeError, ValueError):
+            raise BadRequest('无效的事件序号')
+        try:
+            timeout = max(0.0, min(10.0, float(request.args.get('timeout', '8.0'))))
+        except (TypeError, ValueError):
+            timeout = 8.0
+
+        deadline = time.monotonic() + timeout
+        while True:
+            with guard:
+                room = room_for(code)
+                room['touched'] = time.time()
+                history = room['history']
+                meta = dict(
+                    revision=room['revision'],
+                    running=room['running'],
+                    speed=room['speed'],
+                    members=list(room['members'].values()),
+                    controls=room['controls'],
+                    tournament=tournaments.room_context(room),
+                    story=room.get('story'),
+                )
+                if history and after < history[0]['id'] - 1:
+                    return jsonify(events=[], reset=True, **meta)
+                events = [e for e in history if e['id'] > after]
+                if events:
+                    return jsonify(events=events, reset=False, **meta)
+                room['updated'].clear()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return jsonify(events=[], reset=False, **meta)
+            room['updated'].wait(min(remaining, 1.5))
 
     @bp.post('/api/ui/rooms/<code>/control')
     def control_room(code):

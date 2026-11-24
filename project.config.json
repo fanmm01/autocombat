@@ -14,6 +14,7 @@
     "useCompilerPlugins": false
   },
   "compileType": "game",
+  "miniprogramRoot": "minigame/dist/",
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [],

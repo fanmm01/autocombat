@@ -1,6 +1,7 @@
 """Flask Auto-Chess blueprint (/api/ui/autochess/*): SQLite persistence, auth, tokens, PvE & PvP rooms."""
 
 import json
+import os
 import secrets
 import threading
 import time
@@ -9,7 +10,7 @@ from flask import Response, has_request_context, jsonify, request
 from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound
 
 from arena_presets import ARENA_PRESETS, TERRAIN_DESCRIPTIONS
-from autochess_auth import AuthError, AutoChessAuthService
+from autochess_auth import AuthError, AutoChessAuthService, exchange_wechat_code
 from autochess_catalog import catalog_summary
 from autochess_match import AutoChessMatch
 
@@ -48,6 +49,8 @@ class AutoChessUI:
             ('/auth/login', 'auth_login', 'POST'),
             ('/auth/logout', 'auth_logout', 'POST'),
             ('/auth/profile', 'auth_profile', 'POST'),
+            ('/auth/wechat', 'auth_wechat', 'POST'),
+            ('/auth/wechat/bind', 'auth_wechat_bind', 'POST'),
             ('/tokens/<serial>', 'token_set', 'POST'),
             ('/tokens/<serial>', 'token_delete', 'DELETE'),
             ('/matches', 'match_list', 'GET'),
@@ -58,6 +61,7 @@ class AutoChessUI:
             ('/matches/<mid>', 'match_delete', 'DELETE'),
             ('/matches/<mid>/action', 'match_action', 'POST'),
             ('/matches/<mid>/events', 'match_events', 'GET'),
+            ('/matches/<mid>/poll', 'match_poll', 'GET'),
             ('/rooms', 'room_list', 'GET'),
             ('/rooms', 'room_create', 'POST'),
             ('/rooms/<code>/join', 'room_join', 'POST'),
@@ -65,6 +69,7 @@ class AutoChessUI:
             ('/rooms/<code>/control', 'room_control', 'POST'),
             ('/rooms/<code>/action', 'room_action', 'POST'),
             ('/rooms/<code>/events', 'room_events', 'GET'),
+            ('/rooms/<code>/poll', 'room_poll', 'GET'),
         ]
         for route, name, method in routes:
             bp.add_url_rule('/api/ui/autochess' + route, 'autochess_' + name, getattr(self, name), methods=[method])
@@ -78,11 +83,22 @@ class AutoChessUI:
     @staticmethod
     def _check_origin():
         origin = request.headers.get('Origin')
-        if origin and origin.rstrip('/') != request.host_url.rstrip('/'):
+        if origin and origin.rstrip('/') != request.host_url.rstrip('/') and not origin.startswith('https://servicewechat.com'):
             raise Forbidden('请从自走棋页面发起操作')
 
+    def _auth_token(self):
+        auth_header = (request.headers.get('Authorization') or '').strip()
+        if auth_header.lower().startswith('bearer '):
+            bearer = auth_header[7:].strip()
+            if bearer:
+                return bearer
+        header_tok = (request.headers.get('X-AutoChess-Auth') or '').strip()
+        if header_tok:
+            return header_tok
+        return request.cookies.get(self.auth.cookie_name, '')
+
     def _current_account(self):
-        token = request.cookies.get(self.auth.cookie_name, '')
+        token = self._auth_token()
         return self.auth.authenticate(token)
 
     def _require_account(self, message='请先登录自走棋账号后再使用多人联机功能'):
@@ -142,7 +158,7 @@ class AutoChessUI:
             )
         except AuthError as exc:
             return self._auth_err(exc)
-        resp = jsonify(authenticated=True, account=acc)
+        resp = jsonify(authenticated=True, account=acc, auth_token=token)
         resp.set_cookie(self.auth.cookie_name, token, httponly=True, samesite='Strict', max_age=86400 * 30)
         return resp
 
@@ -155,16 +171,61 @@ class AutoChessUI:
             )
         except AuthError as exc:
             return self._auth_err(exc)
-        resp = jsonify(authenticated=True, account=acc)
+        resp = jsonify(authenticated=True, account=acc, auth_token=token)
         resp.set_cookie(self.auth.cookie_name, token, httponly=True, samesite='Strict', max_age=86400 * 30)
         return resp
 
     def auth_logout(self):
         self._check_origin()
-        token = request.cookies.get(self.auth.cookie_name, '')
+        token = self._auth_token()
         self.auth.logout(token)
         resp = jsonify(ok=True, authenticated=False, account=None)
         resp.delete_cookie(self.auth.cookie_name)
+        return resp
+
+    @staticmethod
+    def _resolve_wechat_openid(payload):
+        trust_cloud = os.environ.get('AUTOCOMBAT_TRUST_WX_CLOUD_HEADERS', '').strip().lower() in ('1', 'true', 'yes')
+        if trust_cloud:
+            cloud_openid = (request.headers.get('X-WX-OPENID') or '').strip()
+            if cloud_openid:
+                return cloud_openid
+        code = str((payload or {}).get('code') or '').strip()
+        if code:
+            dev_login = os.environ.get('AUTOCOMBAT_WX_DEV_LOGIN', '').strip().lower() in ('1', 'true', 'yes')
+            if dev_login and code.startswith('dev:') and len(code) > 4:
+                return 'dev_' + code[4:68]
+            return exchange_wechat_code(code)
+        raise AuthError('缺少微信登录凭证（请在微信云托管环境调用或提供有效 wx.login code）', 400)
+
+    def auth_wechat(self):
+        payload = self.c['body']() or {}
+        try:
+            openid = self._resolve_wechat_openid(payload)
+            acc, token, created = self.auth.login_or_register_wechat(
+                openid,
+                display_name=payload.get('display_name'),
+            )
+        except AuthError as exc:
+            return self._auth_err(exc)
+        resp = jsonify(authenticated=True, account=acc, auth_token=token, created=created)
+        resp.set_cookie(self.auth.cookie_name, token, httponly=True, samesite='Strict', max_age=86400 * 30)
+        return resp
+
+    def auth_wechat_bind(self):
+        payload = self.c['body']() or {}
+        try:
+            openid = self._resolve_wechat_openid(payload)
+            acc, token = self.auth.bind_wechat(
+                openid,
+                username=payload.get('username', ''),
+                password=payload.get('password', ''),
+            )
+        except AuthError as exc:
+            return self._auth_err(exc)
+        self._sync_account_tokens_to_live_matches(acc)
+        resp = jsonify(authenticated=True, account=acc, auth_token=token)
+        resp.set_cookie(self.auth.cookie_name, token, httponly=True, samesite='Strict', max_age=86400 * 30)
         return resp
 
     def auth_profile(self):
@@ -433,6 +494,35 @@ class AutoChessUI:
                     yield ': keepalive\n\n'
 
         return Response(_stream(), mimetype='text/event-stream')
+
+    def match_poll(self, mid):
+        owner = self._owner()
+        self._load_match(mid, owner)
+        try:
+            since = int(request.args.get('since', '-1'))
+        except (TypeError, ValueError):
+            raise BadRequest('无效的版本号 since')
+        try:
+            timeout = max(0.0, min(10.0, float(request.args.get('timeout', '8.0'))))
+        except (TypeError, ValueError):
+            timeout = 8.0
+
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while True:
+                if mid not in self.matches:
+                    rec = self.store.get(_STORE_KIND, mid)
+                    if not rec:
+                        raise NotFound(f'对局 {mid} 不存在')
+                    self._load_match(mid, owner)
+                ver = self.versions.get(mid, 0)
+                if ver != since:
+                    pub = self.matches[mid].to_public_dict()
+                    return jsonify(changed=True, version=ver, match=pub)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return jsonify(changed=False, version=ver, match=None)
+                self.cond.wait(timeout=min(remaining, 1.5))
 
     # ── Multiplayer Rooms (Login Required) ──────────────────────────────────
 
@@ -916,3 +1006,42 @@ class AutoChessUI:
                     yield ': keepalive\n\n'
 
         return Response(_stream(), mimetype='text/event-stream')
+
+    def room_poll(self, code):
+        try:
+            acc = self._require_account()
+        except AuthError as exc:
+            return self._auth_err(exc)
+        norm = str(code or '').strip().upper()
+        spectate_cid = request.args.get('spectate') or None
+        try:
+            since = int(request.args.get('since', '-1'))
+        except (TypeError, ValueError):
+            raise BadRequest('无效的版本号 since')
+        try:
+            timeout = max(0.0, min(10.0, float(request.args.get('timeout', '8.0'))))
+        except (TypeError, ValueError):
+            timeout = 8.0
+
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while True:
+                room_cur, match_cur = self._load_room_locked(norm)
+                if not room_cur:
+                    raise NotFound('联机房间不存在')
+                if not self._find_member(room_cur, acc['id']):
+                    raise Forbidden('请先加入该联机房间')
+                self._maybe_advance_prep_deadline_locked(room_cur, match_cur)
+                ver = self.room_versions.get(norm, 0)
+                if ver != since:
+                    pub = self._public_room(
+                        room_cur,
+                        match_cur,
+                        acc['id'],
+                        spectate_cid=spectate_cid,
+                    )
+                    return jsonify(changed=True, version=ver, room=pub)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return jsonify(changed=False, version=ver, room=None)
+                self.cond.wait(timeout=min(remaining, 1.5))

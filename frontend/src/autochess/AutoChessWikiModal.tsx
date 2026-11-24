@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Compass, Search, Shield, Sparkles, Star, Trophy, Wind, X } from 'lucide-react';
 import {
   AUTOCHESS_ROLE_LABELS,
@@ -32,6 +32,23 @@ export function AutoChessWikiModal({
   const [search, setSearch] = useState<string>('');
   const [phaseFilter, setPhaseFilter] = useState<string>('all');
   const [augFilter, setAugFilter] = useState<string>('');
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLElement | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
+
+  const selectUnit = (serial: string) => {
+    setActiveSerial(serial);
+    window.requestAnimationFrame(() => {
+      const article = articleRef.current;
+      const body = bodyRef.current;
+      const list = listRef.current;
+      if (!article) return;
+      article.scrollTop = 0;
+      if (body && list && article.offsetTop >= list.offsetTop + list.offsetHeight - 4) {
+        body.scrollTo({ top: Math.max(0, article.offsetTop - body.offsetTop), behavior: 'smooth' });
+      }
+    });
+  };
 
   useEffect(() => {
     if (!initialTarget) return;
@@ -149,7 +166,7 @@ export function AutoChessWikiModal({
         </nav>
 
         {tab === 'units' && (
-          <div className="ac-wiki-body">
+          <div className="ac-wiki-body" ref={bodyRef}>
             <div className="ac-wiki-filters">
               <div className="ac-wiki-search-wrap">
                 <Search size={14} />
@@ -185,7 +202,7 @@ export function AutoChessWikiModal({
             </div>
 
             <div className="ac-wiki-split">
-              <aside className="ac-wiki-list" aria-label="自走棋棋子目录">
+              <aside className="ac-wiki-list" ref={listRef} aria-label="自走棋棋子目录">
                 {!filteredUnits.length ? (
                   <div className="muted" style={{ padding: 12, fontSize: '0.84rem' }}>没有匹配的棋子词条</div>
                 ) : (
@@ -194,7 +211,7 @@ export function AutoChessWikiModal({
                       key={u.serial}
                       type="button"
                       className={`ac-wiki-list-item cost-${u.cost} ${currentUnit?.serial === u.serial ? 'active' : ''}`}
-                      onClick={() => setActiveSerial(u.serial)}
+                      onClick={() => selectUnit(u.serial)}
                     >
                       <div className="ac-wiki-list-top">
                         <span><b>{u.serial}</b> {u.name}</span>
@@ -206,7 +223,7 @@ export function AutoChessWikiModal({
                 )}
               </aside>
 
-              <article className="ac-wiki-article">
+              <article className="ac-wiki-article" ref={articleRef}>
                 {currentUnit && (
                   <>
                     <div className={`ac-wiki-infobox cost-${currentUnit.cost}`}>
@@ -264,7 +281,7 @@ export function AutoChessWikiModal({
                                     key={pt.serial}
                                     type="button"
                                     className="ac-wiki-chip"
-                                    onClick={() => setActiveSerial(pt.serial)}
+                                    onClick={() => selectUnit(pt.serial)}
                                   >
                                     {pt.name} ({pt.cost}G)
                                   </button>

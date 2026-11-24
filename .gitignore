@@ -21,6 +21,8 @@ test-results/
 node_modules/
 *.tsbuildinfo
 /frontend/dist/
+/minigame/dist/
+/minigame/node_modules/
 /webgal-adv/engine/packages/*/dist/
 /webgal-adv/engine/packages/*/build/
 /webgal-adv/engine/packages/webgal/public/game/

@@ -543,6 +543,7 @@ export interface AutoChessAccount {
   stats: AutoChessAccountStats;
   ranked?: AutoChessRankedProfile;
   created_at: number;
+  wx_bound?: boolean;
 }
 
 export interface AutoChessAuthState {
