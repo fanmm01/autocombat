@@ -9,6 +9,8 @@ import type {
   AutoChessRankedSettlement,
   AutoChessRoomState,
   AutoChessRoomSummary,
+  AutoChessStoryDetail,
+  AutoChessStoryIndexItem,
 } from './types';
 
 async function withSession<T>(fn: () => Promise<T>, playerName = '指挥官'): Promise<T> {
@@ -25,6 +27,30 @@ async function withSession<T>(fn: () => Promise<T>, playerName = '指挥官'): P
 
 export function fetchAutoChessCatalog(): Promise<AutoChessCatalog> {
   return api<AutoChessCatalog>('/autochess/catalog');
+}
+
+const storyCache = new Map<string, AutoChessStoryDetail>();
+
+export async function fetchAutoChessStories(): Promise<AutoChessStoryIndexItem[]> {
+  const res = await api<{ stories: AutoChessStoryIndexItem[] }>('/autochess/stories');
+  return res.stories || [];
+}
+
+export async function fetchAutoChessStory(
+  storyId: string,
+  chapterId?: string,
+): Promise<AutoChessStoryDetail> {
+  const key = `${storyId}::${chapterId || ''}`;
+  const cached = storyCache.get(key);
+  if (cached) return cached;
+  const qs = chapterId ? `?chapter=${encodeURIComponent(chapterId)}` : '';
+  const res = await api<{ story: AutoChessStoryDetail }>(
+    `/autochess/stories/${encodeURIComponent(storyId)}${qs}`,
+  );
+  if (res.story) {
+    storyCache.set(key, res.story);
+  }
+  return res.story;
 }
 
 export async function listAutoChessMatches(playerName?: string): Promise<AutoChessMatchSummary[]> {

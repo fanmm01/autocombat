@@ -244,23 +244,29 @@ export class LobbyScene {
 
     // Right actions (anchored clear of WeChat capsule + "更多游戏" floating pill)
     let rx = stage.topbarRightEdge;
-    rx -= 96;
-    drawButton(stage, ctx, { x: rx, y: 15, w: 96, h: 38 }, '百科图鉴', () => {
+    rx -= 88;
+    drawButton(stage, ctx, { x: rx, y: 15, w: 88, h: 38 }, '百科图鉴', () => {
       this.modal = 'none';
       this.wikiModal.open('units');
-    }, { fontSize: 14 });
+    }, { fontSize: 13 });
 
     rx -= 96;
-    drawButton(stage, ctx, { x: rx, y: 15, w: 88, h: 38 }, '排行榜', () => {
-      void this.loadLeaderboard('all');
-    }, { fontSize: 14, border: PALETTE.goldSoft, color: PALETTE.gold, disabled: !this.connected || this.busy });
+    drawButton(stage, ctx, { x: rx, y: 15, w: 88, h: 38 }, '故事阅读', () => {
+      this.modal = 'none';
+      this.wikiModal.open('stories');
+    }, { fontSize: 13, border: PALETTE.cyan, color: PALETTE.cyan });
 
-    rx -= 164;
+    rx -= 86;
+    drawButton(stage, ctx, { x: rx, y: 15, w: 78, h: 38 }, '排行榜', () => {
+      void this.loadLeaderboard('all');
+    }, { fontSize: 13, border: PALETTE.goldSoft, color: PALETTE.gold, disabled: !this.connected || this.busy });
+
+    rx -= 148;
     const accLabel = acc ? `${acc.display_name}${acc.wx_bound ? ' [微信]' : ''}` : '登录 / 绑定';
-    drawButton(stage, ctx, { x: rx, y: 15, w: 156, h: 38 }, accLabel, () => {
+    drawButton(stage, ctx, { x: rx, y: 15, w: 140, h: 38 }, accLabel, () => {
       this.modal = 'auth';
     }, {
-      fontSize: 14,
+      fontSize: 13,
       bg: acc ? '#20294c' : PALETTE.violetDark,
       border: acc ? PALETTE.violet : '#a995ff',
       disabled: !this.connected || this.busy,
@@ -617,7 +623,7 @@ export class LobbyScene {
         drawClippedText(ctx, e.display_name, listRect.x + 76, y + 23, 210, PALETTE.textMain, '700 15px "PingFang SC", sans-serif');
         drawClippedText(ctx, e.rank_info.full_label, listRect.x + 310, y + 23, 160, tierColor(e.rank_info.tier_id), '700 14px "PingFang SC", sans-serif');
         drawClippedText(ctx, `${e.total_lp} LP`, listRect.x + 490, y + 23, 110, PALETTE.textMain, '600 14px sans-serif');
-        drawClippedText(ctx, `胜率 ${Math.round(e.win_rate * 100)}% (${e.wins}/${e.games})`, listRect.x + 620, y + 23, 200, PALETTE.textSub, '13px "PingFang SC", sans-serif');
+        drawClippedText(ctx, `胜率 ${Number((e.win_rate || 0).toFixed(1))}% (${e.wins}/${e.games})`, listRect.x + 620, y + 23, 200, PALETTE.textSub, '13px "PingFang SC", sans-serif');
       });
     }
     ctx.restore();

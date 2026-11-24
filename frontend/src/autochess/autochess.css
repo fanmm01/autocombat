@@ -1530,6 +1530,364 @@
   }
 }
 
+/* ── Unit Lore Profile & Pure-Text Story Reader ───────────────────────────── */
+
+.ac-wiki-lore-sec h4 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ac-wiki-lore-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-bottom: 9px;
+}
+
+.ac-wiki-lore-item {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #e6e1f2;
+  background: #fbfafd;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ac-wiki-lore-item.wide {
+  grid-column: 1 / -1;
+}
+
+.ac-wiki-lore-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #6a5f93;
+}
+
+.ac-wiki-lore-val {
+  font-size: 0.81rem;
+  color: #36304c;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.ac-wiki-story-inline,
+.ac-wiki-story-jump {
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid #dcd5f0;
+  background: #f8f6fc;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ac-wiki-story-subhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.84rem;
+}
+
+.ac-wiki-story-inline p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #413b59;
+  line-height: 1.68;
+}
+
+.ac-wiki-story-excerpt {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #4a4463;
+  line-height: 1.6;
+}
+
+.ac-wiki-story-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ac-wiki-lore-empty {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+}
+
+.ac-wiki-stories-body {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.ac-story-layout {
+  display: grid;
+  grid-template-columns: 245px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  min-height: 54dvh;
+  max-height: 64dvh;
+}
+
+.ac-story-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  border: 1px solid #e6e2f0;
+  border-radius: 10px;
+  padding: 8px;
+  background: #faf9fd;
+}
+
+.ac-story-search {
+  width: 100%;
+  min-width: 0;
+}
+
+.ac-story-toc {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.ac-story-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ac-story-group-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #6b5ea3;
+  padding: 2px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ac-story-item {
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid #e5e1f0;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ac-story-item strong {
+  font-size: 0.82rem;
+  color: #2f2947;
+  line-height: 1.35;
+}
+
+.ac-story-item small {
+  font-size: 0.71rem;
+}
+
+.ac-story-item.active {
+  border-color: #7c5cff;
+  background: #f2edff;
+}
+
+.ac-story-reader {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid #e6e2f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ac-story-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #ede9f6;
+}
+
+.ac-story-head-copy h3 {
+  margin: 4px 0 2px;
+  font-size: 1.08rem;
+  color: #26203d;
+}
+
+.ac-story-head-copy p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.ac-story-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+}
+
+.ac-story-cat-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #efeaff;
+  color: #5b3fd6;
+  font-weight: 700;
+}
+
+.ac-story-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ac-story-font-group {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.ac-story-chapter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #f8f6fc;
+  border: 1px solid #e8e3f5;
+}
+
+.ac-story-chapter-bar select {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+}
+
+.ac-story-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: #2f2a44;
+  line-height: 1.85;
+  max-width: 72ch;
+}
+
+.ac-story-content.font-sm { font-size: 0.86rem; }
+.ac-story-content.font-md { font-size: 0.96rem; }
+.ac-story-content.font-lg { font-size: 1.08rem; }
+
+.ac-story-chapter-title {
+  margin: 2px 0 4px;
+  font-size: 1.02em;
+  color: #4f3ab0;
+  border-left: 3px solid #7c5cff;
+  padding-left: 9px;
+}
+
+.ac-story-para {
+  margin: 0;
+}
+
+.ac-story-dialogue strong {
+  color: #5b3fd6;
+}
+
+.ac-story-note {
+  font-size: 0.88em;
+  color: #6b6485;
+  background: #f8f6fc;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.ac-story-note span {
+  font-weight: 700;
+  color: #7c5cff;
+}
+
+.ac-story-heading {
+  margin: 8px 0 2px;
+  text-align: center;
+  font-size: 0.95em;
+  color: #60548c;
+  letter-spacing: 0.04em;
+}
+
+.ac-story-quote {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid #b8abeb;
+  background: #faf8fe;
+  color: #484066;
+}
+
+.ac-story-divider {
+  border: 0;
+  border-top: 1px dashed #d6cfeb;
+  margin: 6px 0;
+}
+
+.ac-story-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 36px 12px;
+  color: #6d6688;
+  font-size: 0.9rem;
+}
+
+.ac-story-state.error {
+  color: #c2395b;
+}
+
+.ac-story-nav {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #ede9f6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+@media (max-width: 900px) {
+  .ac-story-layout {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+
+  .ac-story-sidebar {
+    max-height: 185px;
+  }
+}
+
+@media (max-width: 640px) {
+  .ac-wiki-lore-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ac-story-sidebar {
+    max-height: 165px;
+  }
+}
+
 /* ── Unit Token Glide, Attack/Hit Motion & Skill VFX ───────────────────────── */
 
 .ac-unit-group {
@@ -3938,4 +4296,17 @@
   height: 100%;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-story-layout {
+  grid-template-columns: 205px minmax(0, 1fr);
+  max-height: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.ac-shell[data-ac-mobile-landscape="true"] .ac-story-sidebar,
+.ac-shell[data-ac-mobile-landscape="true"] .ac-story-reader {
+  max-height: 100%;
+  height: 100%;
 }

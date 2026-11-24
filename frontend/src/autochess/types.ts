@@ -331,6 +331,64 @@ export interface AutoChessUnitWiki {
   };
   passives: string[];
   skills: AutoChessWikiSkill[];
+  lore?: AutoChessUnitLore | null;
+}
+
+export interface AutoChessLoreField {
+  label: string;
+  value: string;
+}
+
+export interface AutoChessExtraStoryRef {
+  id: string;
+  title: string;
+  word_count: number;
+}
+
+export interface AutoChessUnitLore {
+  serial: string;
+  profile_fields: AutoChessLoreField[];
+  story_mode: 'none' | 'inline' | 'jump';
+  story_id?: string | null;
+  story_text?: string;
+  story_excerpt?: string;
+  extra_stories?: AutoChessExtraStoryRef[];
+}
+
+export interface AutoChessStoryChapterMeta {
+  id: string;
+  title: string;
+  word_count: number;
+}
+
+export interface AutoChessStoryParagraph {
+  kind: 'narrator' | 'dialogue' | 'heading' | 'quote' | 'note' | 'divider';
+  speaker?: string;
+  text: string;
+}
+
+export interface AutoChessStoryChapter extends AutoChessStoryChapterMeta {
+  paragraphs?: AutoChessStoryParagraph[];
+}
+
+export interface AutoChessStoryIndexItem {
+  id: string;
+  category: 'opening' | 'prequel' | 'character' | string;
+  category_label: string;
+  title: string;
+  subtitle?: string;
+  serial?: string | null;
+  unit_name?: string | null;
+  summary: string;
+  word_count: number;
+  is_long: boolean;
+  chapter_count: number;
+  chapters: AutoChessStoryChapterMeta[];
+}
+
+export interface AutoChessStoryDetail extends Omit<AutoChessStoryIndexItem, 'chapters'> {
+  active_chapter_id: string;
+  chapters: AutoChessStoryChapter[];
 }
 
 export const AUTOCHESS_ROLE_LABELS: Record<string, string> = {
@@ -342,12 +400,14 @@ export const AUTOCHESS_ROLE_LABELS: Record<string, string> = {
   summoner: '召唤',
 };
 
-export type AutoChessWikiTab = 'units' | 'synergies' | 'augments' | 'rules';
+export type AutoChessWikiTab = 'units' | 'synergies' | 'augments' | 'rules' | 'stories';
 
 export interface AutoChessWikiTarget {
   tab: AutoChessWikiTab;
   serial?: string;
   synergyId?: string;
+  storyId?: string;
+  chapterId?: string;
 }
 
 export function resolveUnitWiki(catalog: AutoChessCatalog | null, serial: string): AutoChessUnitWiki | null {
@@ -392,6 +452,7 @@ export function resolveUnitWiki(catalog: AutoChessCatalog | null, serial: string
     basic_attack: { skill_name: '斗殴', skill_val: 50, dice: '1d4', pierce: false },
     passives: [],
     skills: [],
+    lore: null,
   };
 }
 
@@ -399,6 +460,7 @@ export interface AutoChessCatalog {
   units: AutoChessUnitMeta[];
   available_emblems?: AutoChessEmblemOption[];
   wiki_units?: Record<string, AutoChessUnitWiki>;
+  story_index?: AutoChessStoryIndexItem[];
   synergies: AutoChessSynergyDef[];
   augments: AutoChessAugment[];
   arenas: AutoChessArenaPreset[];

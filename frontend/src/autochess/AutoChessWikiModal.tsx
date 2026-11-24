@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Compass, Search, Shield, Sparkles, Star, Trophy, Wind, X } from 'lucide-react';
+import { ArrowRight, BookOpen, BookText, Compass, Search, Shield, Sparkles, Star, Trophy, Wind, X } from 'lucide-react';
+import { AutoChessStoryReader } from './AutoChessStoryReader';
 import {
   AUTOCHESS_ROLE_LABELS,
   resolveUnitWiki,
@@ -7,6 +8,22 @@ import {
   type AutoChessWikiTab,
   type AutoChessWikiTarget,
 } from './types';
+
+const WIDE_LORE_LABELS = new Set([
+  '外貌',
+  '外貌（常态）',
+  '外貌（变身）',
+  '外貌（变身前）',
+  '外貌（变身后）',
+  '性格',
+  '讨厌的人',
+  '特殊关系',
+  '特质',
+  '难言之隐',
+  '意义非凡之地',
+  '宝贵之物',
+  '心理状态',
+]);
 
 export function AutoChessWikiModal({
   catalog,
@@ -23,10 +40,13 @@ export function AutoChessWikiModal({
   const arenas = catalog?.arenas || [];
   const levels = catalog?.levels || {};
   const terrains = catalog?.terrains || {};
+  const storyIndex = catalog?.story_index || [];
 
   const [tab, setTab] = useState<AutoChessWikiTab>(initialTarget?.tab || 'units');
   const [activeSerial, setActiveSerial] = useState<string>(initialTarget?.serial || units[0]?.serial || 'Y1');
   const [activeSynergy, setActiveSynergy] = useState<string>(initialTarget?.synergyId || '');
+  const [activeStoryId, setActiveStoryId] = useState<string>(initialTarget?.storyId || storyIndex[0]?.id || '');
+  const [activeChapterId, setActiveChapterId] = useState<string>(initialTarget?.chapterId || '');
   const [costFilter, setCostFilter] = useState<number>(0);
   const [traitFilter, setTraitFilter] = useState<string>('');
   const [search, setSearch] = useState<string>('');
@@ -50,11 +70,19 @@ export function AutoChessWikiModal({
     });
   };
 
+  const openStory = (storyId: string, chapterId?: string) => {
+    setActiveStoryId(storyId);
+    setActiveChapterId(chapterId || '');
+    setTab('stories');
+  };
+
   useEffect(() => {
     if (!initialTarget) return;
     setTab(initialTarget.tab || 'units');
     if (initialTarget.serial) setActiveSerial(initialTarget.serial);
     if (initialTarget.synergyId !== undefined) setActiveSynergy(initialTarget.synergyId);
+    if (initialTarget.storyId !== undefined) setActiveStoryId(initialTarget.storyId);
+    if (initialTarget.chapterId !== undefined) setActiveChapterId(initialTarget.chapterId);
     setPhaseFilter('all');
   }, [initialTarget]);
 
@@ -85,6 +113,7 @@ export function AutoChessWikiModal({
         AUTOCHESS_ROLE_LABELS[u.role] || u.role,
         ...u.traits,
         ...(wiki?.skills.map(s => s.name) || []),
+        ...(wiki?.lore?.profile_fields.map(f => f.value) || []),
       ]
         .join(' ')
         .toLowerCase();
@@ -152,6 +181,7 @@ export function AutoChessWikiModal({
               ['synergies', `8 大羁绊 (${synergies.length})`],
               ['augments', `星序祝福 (${augments.length})`],
               ['rules', '地形与机制'],
+              ['stories', `故事阅读 (${storyIndex.length})`],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -347,6 +377,84 @@ export function AutoChessWikiModal({
                         </ul>
                       )}
                     </section>
+
+                    {currentUnit.lore && (
+                      <section className="ac-wiki-section ac-wiki-lore-sec">
+                        <h4><BookText size={14} /> 角色档案与背景故事</h4>
+                        <div className="ac-wiki-lore-grid">
+                          {currentUnit.lore.profile_fields.map((field, idx) => {
+                            const isWide =
+                              WIDE_LORE_LABELS.has(field.label) ||
+                              field.value.length > 26 ||
+                              field.value.includes('\n');
+                            return (
+                              <div
+                                key={`${field.label}_${idx}`}
+                                className={`ac-wiki-lore-item ${isWide ? 'wide' : ''}`}
+                              >
+                                <span className="ac-wiki-lore-label">{field.label}</span>
+                                <span className="ac-wiki-lore-val">{field.value}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {currentUnit.lore.story_mode === 'inline' && currentUnit.lore.story_text && (
+                          <div className="ac-wiki-story-inline">
+                            <div className="ac-wiki-story-subhead">
+                              <strong>背景故事</strong>
+                              {currentUnit.lore.story_id && (
+                                <button
+                                  type="button"
+                                  className="ac-wiki-trait-btn"
+                                  onClick={() => openStory(currentUnit.lore!.story_id!)}
+                                >
+                                  在故事阅读中打开 →
+                                </button>
+                              )}
+                            </div>
+                            {currentUnit.lore.story_text.split('\n').filter(Boolean).map((para, idx) => (
+                              <p key={idx}>{para}</p>
+                            ))}
+                          </div>
+                        )}
+
+                        {currentUnit.lore.story_mode === 'jump' && currentUnit.lore.story_id && (
+                          <div className="ac-wiki-story-jump">
+                            <div className="ac-wiki-story-subhead">
+                              <strong>背景故事（长篇）</strong>
+                              <span className="muted">点击跳转至纯文字故事阅读</span>
+                            </div>
+                            {currentUnit.lore.story_excerpt && (
+                              <p className="ac-wiki-story-excerpt">{currentUnit.lore.story_excerpt}</p>
+                            )}
+                            <div className="ac-wiki-story-actions">
+                              <button
+                                type="button"
+                                className="button primary compact-button"
+                                onClick={() => openStory(currentUnit.lore!.story_id!)}
+                              >
+                                <BookText size={14} /> 前往故事阅读查看完整背景故事 <ArrowRight size={14} />
+                              </button>
+                              {(currentUnit.lore.extra_stories || []).map(ex => (
+                                <button
+                                  key={ex.id}
+                                  type="button"
+                                  className="button subtle compact-button"
+                                  onClick={() => openStory(ex.id)}
+                                >
+                                  <BookOpen size={14} /> 阅读单列前传：{ex.title}（{ex.word_count.toLocaleString()}字） <ArrowRight size={14} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {currentUnit.lore.story_mode === 'none' && (
+                          <p className="ac-wiki-lore-empty muted">该角色详细背景故事暂未公开。</p>
+                        )}
+                      </section>
+                    )}
 
                     <section className="ac-wiki-section">
                       <div className="ac-section-head" style={{ marginBottom: 6 }}>
@@ -578,6 +686,20 @@ export function AutoChessWikiModal({
                 </div>
               )}
             </section>
+          </div>
+        )}
+
+        {tab === 'stories' && (
+          <div className="ac-wiki-body ac-wiki-stories-body">
+            <AutoChessStoryReader
+              stories={storyIndex}
+              initialStoryId={activeStoryId}
+              initialChapterId={activeChapterId}
+              onOpenUnit={serial => {
+                setTab('units');
+                setActiveSerial(serial);
+              }}
+            />
           </div>
         )}
       </section>

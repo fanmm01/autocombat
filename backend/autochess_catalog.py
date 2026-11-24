@@ -4,6 +4,7 @@ import copy
 import math
 
 from characters_data import ALL_CHARACTERS, load_character_to_engine
+from autochess_lore import get_unit_lore, list_story_index
 from autochess_ranked import ranked_rules_summary
 
 AUTOCHESS_RANGE_OVERRIDES = {
@@ -787,6 +788,7 @@ def build_unit_wiki(serial):
         },
         'passives': _build_wiki_passives(passive_rules),
         'skills': skills_wiki,
+        'lore': get_unit_lore(serial),
     }
 
 
@@ -795,6 +797,7 @@ def catalog_summary():
     return {
         'units': sorted(UNIT_CATALOG.values(), key=lambda u: (u['cost'], u['serial'])),
         'wiki_units': {s: build_unit_wiki(s) for s in sorted(UNIT_CATALOG, key=lambda x: int(x[1:]))},
+        'story_index': list_story_index(),
         'synergies': list(SYNERGIES.values()),
         'augments': AUGMENTS,
         'levels': LEVEL_TABLE,

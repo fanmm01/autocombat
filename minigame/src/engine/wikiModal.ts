@@ -1,8 +1,13 @@
 import {
   AUTOCHESS_ROLE_LABELS,
+  fetchAutoChessStories,
+  fetchAutoChessStoryDetail,
   resolveUnitWiki,
   type AutoChessAugment,
   type AutoChessCatalog,
+  type AutoChessStoryDetail,
+  type AutoChessStoryIndexItem,
+  type AutoChessStoryParagraph,
   type AutoChessSynergyDef,
   type AutoChessUnitWiki,
 } from '../net/autochessApi';
@@ -16,9 +21,27 @@ import {
   drawPill,
   fillRoundRect,
   strokeRoundRect,
+  type Rect,
 } from './ui';
 
-export type WikiTab = 'units' | 'synergies' | 'augments';
+export type WikiTab = 'units' | 'synergies' | 'augments' | 'stories';
+
+interface CachedStoryLine {
+  y: number;
+  text: string;
+  color: string;
+  font: string;
+  speakerPrefix?: string;
+  speakerWidth?: number;
+  isDivider?: boolean;
+  isNoteBg?: boolean;
+  lineHeight: number;
+}
+
+interface CachedStoryLayout {
+  totalHeight: number;
+  lines: CachedStoryLine[];
+}
 
 function wrapTextLines(
   ctx: WxCanvasRenderingContext2D,
@@ -68,6 +91,48 @@ function drawLines(
   }
 }
 
+function drawClippedScrollButton(
+  stage: Stage,
+  ctx: WxCanvasRenderingContext2D,
+  clipTop: number,
+  clipBottom: number,
+  rect: Rect,
+  label: string,
+  onTap: () => void,
+  opts: { bg?: string; border?: string; color?: string; fontSize?: number } = {},
+): void {
+  const bg = opts.bg || PALETTE.violetDark;
+  const border = opts.border || '#bba7ff';
+  const color = opts.color || PALETTE.textMain;
+  const fontSize = opts.fontSize ?? 13;
+
+  fillRoundRect(ctx, rect.x, rect.y, rect.w, rect.h, 8, bg);
+  strokeRoundRect(ctx, rect.x, rect.y, rect.w, rect.h, 8, border, 1.3);
+  drawClippedText(
+    ctx,
+    label,
+    rect.x + rect.w / 2,
+    rect.y + rect.h / 2 + 0.5,
+    rect.w - 14,
+    color,
+    `700 ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`,
+    'center',
+    'middle',
+  );
+
+  const visTop = Math.max(clipTop, rect.y);
+  const visBottom = Math.min(clipBottom, rect.y + rect.h);
+  if (visBottom > visTop) {
+    stage.addHitRegion({
+      x: rect.x,
+      y: visTop,
+      w: rect.w,
+      h: visBottom - visTop,
+      onTap,
+    });
+  }
+}
+
 export class WikiModal {
   private opened = false;
   private tab: WikiTab = 'units';
@@ -77,7 +142,19 @@ export class WikiModal {
   private selectedSynergyId: string | null = null;
   private selectedAugmentId: string | null = null;
 
-  open(tab: WikiTab = 'units', unitSerial?: string): void {
+  // Story reader state
+  private selectedStoryId: string | null = null;
+  private selectedChapterId: string | null = null;
+  private storyDetail: AutoChessStoryDetail | null = null;
+  private storyLoadingKey = '';
+  private storyLoading = false;
+  private storyError = '';
+  private storyFontSize: 13 | 15 | 17 = 15;
+  private fallbackStories: AutoChessStoryIndexItem[] | null = null;
+  private fallbackLoading = false;
+  private storyLayoutCache = new Map<string, CachedStoryLayout>();
+
+  open(tab: WikiTab = 'units', unitSerial?: string, storyId?: string): void {
     this.opened = true;
     this.tab = tab;
     this.listScroll = 0;
@@ -85,6 +162,13 @@ export class WikiModal {
     this.selectedUnitSerial = unitSerial || null;
     this.selectedSynergyId = null;
     this.selectedAugmentId = null;
+    this.selectedStoryId = storyId || null;
+    this.selectedChapterId = null;
+    this.storyError = '';
+    if (storyId) {
+      this.tab = 'stories';
+      this.requestStoryLoad(storyId);
+    }
   }
 
   close(): void {
@@ -99,7 +183,72 @@ export class WikiModal {
     this.selectedUnitSerial = null;
     this.selectedSynergyId = null;
     this.selectedAugmentId = null;
+    this.selectedStoryId = null;
+    this.selectedChapterId = null;
     this.detailScroll = 0;
+  }
+
+  private resolveStories(cat: AutoChessCatalog): AutoChessStoryIndexItem[] {
+    if (cat.story_index && cat.story_index.length > 0) {
+      return cat.story_index;
+    }
+    if (this.fallbackStories) {
+      return this.fallbackStories;
+    }
+    if (!this.fallbackLoading) {
+      this.fallbackLoading = true;
+      fetchAutoChessStories()
+        .then(list => {
+          this.fallbackStories = list;
+        })
+        .catch(() => {
+          this.fallbackStories = [];
+        })
+        .finally(() => {
+          this.fallbackLoading = false;
+        });
+    }
+    return [];
+  }
+
+  private requestStoryLoad(storyId: string, chapterId?: string): void {
+    const key = `${storyId}::${chapterId || ''}`;
+    if (this.storyLoadingKey === key && this.storyLoading) return;
+    if (
+      this.storyDetail &&
+      this.storyDetail.id === storyId &&
+      (!chapterId || this.storyDetail.active_chapter_id === chapterId)
+    ) {
+      const ch = this.storyDetail.chapters.find(c => c.id === (chapterId || this.storyDetail!.active_chapter_id));
+      if (ch && ch.paragraphs) return;
+    }
+
+    this.storyLoadingKey = key;
+    this.storyLoading = true;
+    this.storyError = '';
+    fetchAutoChessStoryDetail(storyId, chapterId)
+      .then(detail => {
+        if (this.storyLoadingKey !== key) return;
+        this.storyDetail = detail;
+        this.selectedChapterId = detail.active_chapter_id;
+        this.storyLoading = false;
+      })
+      .catch(err => {
+        if (this.storyLoadingKey !== key) return;
+        this.storyLoading = false;
+        this.storyError = err instanceof Error ? err.message : '加载故事失败';
+      });
+  }
+
+  private openStory(storyId: string, chapterId?: string): void {
+    this.tab = 'stories';
+    this.selectedUnitSerial = null;
+    this.selectedSynergyId = null;
+    this.selectedAugmentId = null;
+    this.selectedStoryId = storyId;
+    this.selectedChapterId = chapterId || null;
+    this.detailScroll = 0;
+    this.requestStoryLoad(storyId, chapterId);
   }
 
   render(stage: Stage, catalog: AutoChessCatalog | null): void {
@@ -118,7 +267,10 @@ export class WikiModal {
     stage.addHitRegion({ x: mx, y: my, w: mw, h: mh, onTap: () => {} });
 
     const hasDetail = Boolean(
-      this.selectedUnitSerial || this.selectedSynergyId || this.selectedAugmentId,
+      this.selectedUnitSerial ||
+        this.selectedSynergyId ||
+        this.selectedAugmentId ||
+        this.selectedStoryId,
     );
 
     if (hasDetail) {
@@ -127,20 +279,20 @@ export class WikiModal {
       }, { fontSize: 13 });
       drawClippedText(
         ctx,
-        '星序自走棋百科 · 详情',
+        this.selectedStoryId ? '纯文字故事阅读' : '星序自走棋百科 · 详情',
         mx + 150,
         my + 31,
-        420,
+        560,
         PALETTE.textMain,
         '700 18px "PingFang SC", sans-serif',
       );
     } else {
       drawClippedText(
         ctx,
-        '星序自走棋百科图鉴（点击条目查看详情）',
+        '星序自走棋百科与故事阅读（点击条目查看）',
         mx + 24,
         my + 32,
-        560,
+        620,
         PALETTE.textMain,
         '700 19px "PingFang SC", sans-serif',
       );
@@ -152,6 +304,11 @@ export class WikiModal {
 
     if (!catalog) {
       drawClippedText(ctx, '正在加载图鉴数据…', mx + mw / 2, my + mh / 2, mw, PALETTE.textMuted, '15px "PingFang SC", sans-serif', 'center', 'middle');
+      return;
+    }
+
+    if (this.selectedStoryId) {
+      this.renderStoryReader(stage, catalog, this.selectedStoryId, mx + 24, my + 60, mw - 48, mh - 76);
       return;
     }
 
@@ -194,14 +351,16 @@ export class WikiModal {
     mh: number,
   ): void {
     const ctx = stage.ctx;
+    const stories = this.resolveStories(cat);
     const tabs: Array<[WikiTab, string]> = [
       ['units', `棋子图鉴 (${cat.units.length})`],
       ['synergies', `羁绊效果 (${cat.synergies.length})`],
       ['augments', `星序海克斯 (${cat.augments.length})`],
+      ['stories', `故事阅读 (${stories.length})`],
     ];
     tabs.forEach(([id, label], i) => {
       const active = this.tab === id;
-      drawButton(stage, ctx, { x: mx + 24 + i * 168, y: my + 62, w: 158, h: 34 }, label, () => {
+      drawButton(stage, ctx, { x: mx + 24 + i * 164, y: my + 62, w: 154, h: 34 }, label, () => {
         this.tab = id;
         this.listScroll = 0;
       }, {
@@ -217,7 +376,9 @@ export class WikiModal {
         ? cat.units.length
         : this.tab === 'synergies'
           ? cat.synergies.length
-          : cat.augments.length;
+          : this.tab === 'augments'
+            ? cat.augments.length
+            : stories.length;
     const rowH = this.tab === 'units' ? 84 : 78;
     stage.addScrollZone({
       ...listRect,
@@ -282,7 +443,7 @@ export class WikiModal {
             },
           });
         }
-      } else {
+      } else if (this.tab === 'augments') {
         const a = cat.augments[i];
         drawClippedText(ctx, `${a.name}${a.tier ? ` [${a.tier}]` : ''}`, listRect.x + 18, y + 22, listRect.w - 140, PALETTE.cyan, '700 15px "PingFang SC", sans-serif');
         drawClippedText(ctx, '查看详情 →', listRect.x + listRect.w - 18, y + 22, 100, PALETTE.cyan, '700 13px "PingFang SC", sans-serif', 'right', 'middle');
@@ -297,6 +458,28 @@ export class WikiModal {
               this.detailScroll = 0;
               this.selectedAugmentId = a.id;
             },
+          });
+        }
+      } else {
+        const st = stories[i];
+        const catColor =
+          st.category === 'opening'
+            ? PALETTE.gold
+            : st.category === 'prequel'
+              ? PALETTE.cyan
+              : PALETTE.violet;
+        drawPill(ctx, listRect.x + 16, y + 12, 92, 22, `${catColor}22`, catColor, st.category_label, catColor, 11);
+        drawClippedText(ctx, st.title, listRect.x + 120, y + 23, 520, PALETTE.textMain, '700 15px "PingFang SC", sans-serif');
+        const meta = `${st.chapter_count > 1 ? `${st.chapter_count}节 · ` : ''}${st.word_count.toLocaleString()}字`;
+        drawClippedText(ctx, `${meta}  阅读 →`, listRect.x + listRect.w - 18, y + 23, 220, PALETTE.cyan, '700 13px "PingFang SC", sans-serif', 'right', 'middle');
+        drawClippedText(ctx, st.summary || st.subtitle || '', listRect.x + 16, y + 52, listRect.w - 34, PALETTE.textSub, '13px "PingFang SC", sans-serif');
+        if (visBottom > visTop) {
+          stage.addHitRegion({
+            x: listRect.x,
+            y: visTop,
+            w: listRect.w,
+            h: visBottom - visTop,
+            onTap: () => this.openStory(st.id),
           });
         }
       }
@@ -335,6 +518,38 @@ export class WikiModal {
         ? 40 + tuningLineBlocks.reduce((sum, ls) => sum + ls.length * 19 + 6, 0) + 10
         : 0;
 
+    // Precompute lore block layout height
+    const lore = u.lore;
+    const loreFieldBlocks = (lore?.profile_fields || []).map(f => ({
+      label: f.label,
+      lines: wrapTextLines(ctx, `${f.label}：${f.value}`, contentW - 36, textFont),
+    }));
+    const loreInlineLines =
+      lore?.story_mode === 'inline' && lore.story_text
+        ? wrapTextLines(ctx, lore.story_text, contentW - 36, textFont)
+        : [];
+    const loreExcerptLines =
+      lore?.story_mode === 'jump' && lore.story_excerpt
+        ? wrapTextLines(ctx, lore.story_excerpt, contentW - 36, textFont)
+        : [];
+    const extraStories = lore?.extra_stories || [];
+
+    let loreH = 0;
+    if (lore) {
+      loreH = 42;
+      for (const fb of loreFieldBlocks) {
+        loreH += fb.lines.length * 19 + 5;
+      }
+      if (lore.story_mode === 'inline' && loreInlineLines.length > 0) {
+        loreH += 14 + 24 + loreInlineLines.length * 19 + 42;
+      } else if (lore.story_mode === 'jump' && lore.story_id) {
+        loreH += 14 + 24 + loreExcerptLines.length * 19 + 44 + extraStories.length * 40;
+      } else if (lore.story_mode === 'none') {
+        loreH += 28;
+      }
+      loreH += 12;
+    }
+
     const baseStatsH = 90;
     const starKeys = ['1', '2', '3'].filter(k => u.star_stats[k]);
     const starTableH = 44 + Math.max(1, starKeys.length) * 30 + 14;
@@ -348,6 +563,7 @@ export class WikiModal {
       12 +
       (passiveH > 0 ? passiveH + 12 : 0) +
       (tuningH > 0 ? tuningH + 12 : 0) +
+      (loreH > 0 ? loreH + 12 : 0) +
       36 +
       skillLayouts.reduce((sum, item) => sum + item.height + 10, 0) +
       20;
@@ -405,7 +621,7 @@ export class WikiModal {
     strokeRoundRect(ctx, x, curY, contentW, baseStatsH, 12, PALETTE.border, 1);
     drawClippedText(
       ctx,
-      `基础面板：MOV ${u.mov} · 战术移动 ${u.tactical_move} · 主动作 ${u.main_actions} · 敏捷 ${u.dex} · 闪避 ${u.dodge} · 射程 ${u.range}${u.flying ? ' · 飞行单位' : ''}${u.can_block ? ` · 可格挡(${u.block_val})` : ''}`,
+      `基础面板：MOV ${u.mov} · 战术移动 ${u.tactical_move} 格 · 主动作 ${u.main_actions} · 敏捷 ${u.dex} · 闪避 ${u.dodge} · 射程 ${u.range}${u.flying ? ' · 飞行' : ''}${u.can_block ? ` · 格挡(${u.block_val})` : ''}`,
       x + 18,
       curY + 26,
       contentW - 36,
@@ -473,7 +689,78 @@ export class WikiModal {
       curY += tuningH + 12;
     }
 
-    // 6. Skills
+    // 6. Character lore profile & story (inline or jump)
+    if (lore && loreH > 0) {
+      fillRoundRect(ctx, x, curY, contentW, loreH, 12, PALETTE.bgCard);
+      strokeRoundRect(ctx, x, curY, contentW, loreH, 12, PALETTE.violet, 1.2);
+      drawClippedText(ctx, '角色档案与背景故事', x + 18, curY + 20, 280, PALETTE.violet, '700 14px "PingFang SC", sans-serif');
+      let ly = curY + 40;
+      for (const fb of loreFieldBlocks) {
+        drawLines(ctx, fb.lines, x + 18, ly, 19, PALETTE.textSub, textFont);
+        ly += fb.lines.length * 19 + 5;
+      }
+
+      if (lore.story_mode === 'inline' && loreInlineLines.length > 0) {
+        ly += 8;
+        ctx.fillStyle = PALETTE.border;
+        ctx.fillRect(x + 18, ly, contentW - 36, 1);
+        ly += 10;
+        drawClippedText(ctx, '背景故事', x + 18, ly + 8, 220, PALETTE.gold, '700 13px "PingFang SC", sans-serif');
+        ly += 22;
+        drawLines(ctx, loreInlineLines, x + 18, ly, 19, PALETTE.textMain, textFont);
+        ly += loreInlineLines.length * 19 + 8;
+        if (lore.story_id) {
+          drawClippedScrollButton(
+            stage,
+            ctx,
+            y,
+            y + h,
+            { x: x + 18, y: ly, w: 200, h: 30 },
+            '在故事阅读中打开 →',
+            () => this.openStory(lore.story_id!),
+            { bg: '#20294c', border: PALETTE.cyan, color: PALETTE.cyan, fontSize: 12 },
+          );
+        }
+      } else if (lore.story_mode === 'jump' && lore.story_id) {
+        ly += 8;
+        ctx.fillStyle = PALETTE.border;
+        ctx.fillRect(x + 18, ly, contentW - 36, 1);
+        ly += 10;
+        drawClippedText(ctx, '背景故事（长篇）', x + 18, ly + 8, 260, PALETTE.gold, '700 13px "PingFang SC", sans-serif');
+        ly += 22;
+        drawLines(ctx, loreExcerptLines, x + 18, ly, 19, PALETTE.textSub, textFont);
+        ly += loreExcerptLines.length * 19 + 8;
+        drawClippedScrollButton(
+          stage,
+          ctx,
+          y,
+          y + h,
+          { x: x + 18, y: ly, w: 256, h: 32 },
+          '前往故事阅读查看完整故事 →',
+          () => this.openStory(lore.story_id!),
+        );
+        ly += 40;
+        for (const ex of extraStories) {
+          drawClippedScrollButton(
+            stage,
+            ctx,
+            y,
+            y + h,
+            { x: x + 18, y: ly, w: 340, h: 32 },
+            `阅读单列前传：${ex.title} →`,
+            () => this.openStory(ex.id),
+            { bg: '#1d2747', border: PALETTE.cyan, color: PALETTE.cyan, fontSize: 12 },
+          );
+          ly += 40;
+        }
+      } else if (lore.story_mode === 'none') {
+        ly += 4;
+        drawClippedText(ctx, '该角色详细背景故事暂未公开', x + 18, ly + 8, 360, PALETTE.textMuted, '12px "PingFang SC", sans-serif');
+      }
+      curY += loreH + 12;
+    }
+
+    // 7. Skills
     drawClippedText(ctx, `主动技能与形态技能 (${skillLayouts.length})`, x + 4, curY + 14, 340, PALETTE.violet, '700 15px "PingFang SC", sans-serif');
     curY += 34;
 
@@ -494,6 +781,301 @@ export class WikiModal {
       drawClippedText(ctx, meta, x + contentW - 16, curY + 20, 560, PALETTE.gold, '600 12px "PingFang SC", sans-serif', 'right', 'middle');
       drawLines(ctx, lines, x + 16, curY + 40, 19, PALETTE.textSub, textFont);
       curY += height + 10;
+    }
+
+    ctx.restore();
+  }
+
+  private getStoryLayout(
+    ctx: WxCanvasRenderingContext2D,
+    storyId: string,
+    chapterId: string,
+    paragraphs: AutoChessStoryParagraph[],
+    contentW: number,
+  ): CachedStoryLayout {
+    const cacheKey = `${storyId}::${chapterId}::${this.storyFontSize}::${contentW}`;
+    const cached = this.storyLayoutCache.get(cacheKey);
+    if (cached) return cached;
+
+    const fs = this.storyFontSize;
+    const lh = fs + 9;
+    const baseFont = `${fs}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+    const boldFont = `700 ${fs}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+    const headFont = `700 ${fs + 1}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+    const noteFont = `${Math.max(12, fs - 1)}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+
+    const lines: CachedStoryLine[] = [];
+    let curY = 8;
+
+    for (const p of paragraphs) {
+      if (p.kind === 'divider') {
+        lines.push({
+          y: curY,
+          text: '',
+          color: PALETTE.border,
+          font: baseFont,
+          isDivider: true,
+          lineHeight: lh,
+        });
+        curY += 18;
+        continue;
+      }
+
+      if (p.kind === 'heading') {
+        const wrapped = wrapTextLines(ctx, p.text, contentW - 16, headFont);
+        for (const wLine of wrapped) {
+          lines.push({
+            y: curY,
+            text: wLine,
+            color: PALETTE.gold,
+            font: headFont,
+            lineHeight: lh,
+          });
+          curY += lh;
+        }
+        curY += 8;
+        continue;
+      }
+
+      if (p.kind === 'dialogue' && p.speaker) {
+        const prefix = `${p.speaker}：`;
+        ctx.font = boldFont;
+        const prefixW = ctx.measureText(prefix).width;
+        const full = `${prefix}${p.text}`;
+        const wrapped = wrapTextLines(ctx, full, contentW - 8, baseFont);
+        wrapped.forEach((wLine, idx) => {
+          if (idx === 0 && wLine.startsWith(prefix)) {
+            lines.push({
+              y: curY,
+              text: wLine.slice(prefix.length),
+              speakerPrefix: prefix,
+              speakerWidth: prefixW,
+              color: PALETTE.textMain,
+              font: baseFont,
+              lineHeight: lh,
+            });
+          } else {
+            lines.push({
+              y: curY,
+              text: wLine,
+              color: PALETTE.textMain,
+              font: baseFont,
+              lineHeight: lh,
+            });
+          }
+          curY += lh;
+        });
+        curY += 8;
+        continue;
+      }
+
+      if (p.kind === 'note') {
+        const txt = `[${p.speaker || '判定'}] ${p.text}`;
+        const wrapped = wrapTextLines(ctx, txt, contentW - 24, noteFont);
+        for (const wLine of wrapped) {
+          lines.push({
+            y: curY,
+            text: wLine,
+            color: PALETTE.textMuted,
+            font: noteFont,
+            isNoteBg: true,
+            lineHeight: lh - 2,
+          });
+          curY += lh - 2;
+        }
+        curY += 8;
+        continue;
+      }
+
+      const color = p.kind === 'quote' ? PALETTE.cyan : PALETTE.textSub;
+      const wrapped = wrapTextLines(ctx, p.text, contentW - 8, baseFont);
+      for (const wLine of wrapped) {
+        lines.push({
+          y: curY,
+          text: wLine,
+          color,
+          font: baseFont,
+          lineHeight: lh,
+        });
+        curY += lh;
+      }
+      curY += 10;
+    }
+
+    const layout: CachedStoryLayout = { totalHeight: curY + 24, lines };
+    this.storyLayoutCache.set(cacheKey, layout);
+    return layout;
+  }
+
+  private renderStoryReader(
+    stage: Stage,
+    cat: AutoChessCatalog,
+    storyId: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): void {
+    const ctx = stage.ctx;
+    const stories = this.resolveStories(cat);
+    const meta = stories.find(s => s.id === storyId);
+    const activeChapterId = this.selectedChapterId || meta?.chapters[0]?.id;
+
+    this.requestStoryLoad(storyId, activeChapterId);
+
+    // Top reader control strip (42px)
+    const barH = 42;
+    fillRoundRect(ctx, x, y, w, barH, 10, PALETTE.bgCard);
+    strokeRoundRect(ctx, x, y, w, barH, 10, PALETTE.border, 1);
+
+    const detail = this.storyDetail?.id === storyId ? this.storyDetail : null;
+    const chapters = detail?.chapters || meta?.chapters || [];
+    const curChId = detail?.active_chapter_id || activeChapterId || '';
+    const chIdx = Math.max(0, chapters.findIndex(c => c.id === curChId));
+    const activeChapter = detail?.chapters?.[chIdx];
+
+    drawClippedText(
+      ctx,
+      meta?.title || detail?.title || storyId,
+      x + 14,
+      y + 21,
+      360,
+      PALETTE.gold,
+      '700 15px "PingFang SC", sans-serif',
+    );
+
+    let rightX = x + w - 10;
+
+    if (meta?.serial) {
+      rightX -= 104;
+      const targetSerial = meta.serial;
+      drawButton(stage, ctx, { x: rightX, y: y + 6, w: 100, h: 30 }, `查看 ${targetSerial} →`, () => {
+        this.selectedStoryId = null;
+        this.selectedChapterId = null;
+        this.tab = 'units';
+        this.selectedUnitSerial = targetSerial;
+        this.detailScroll = 0;
+      }, { fontSize: 12, bg: '#1d2747', border: PALETTE.cyan, color: PALETTE.cyan });
+      rightX -= 6;
+    }
+
+    // Font size controls
+    rightX -= 38;
+    drawButton(stage, ctx, { x: rightX, y: y + 6, w: 36, h: 30 }, 'A+', () => {
+      this.storyFontSize = this.storyFontSize === 13 ? 15 : 17;
+    }, { fontSize: 12, disabled: this.storyFontSize === 17 });
+    rightX -= 42;
+    drawButton(stage, ctx, { x: rightX, y: y + 6, w: 36, h: 30 }, 'A-', () => {
+      this.storyFontSize = this.storyFontSize === 17 ? 15 : 13;
+    }, { fontSize: 12, disabled: this.storyFontSize === 13 });
+
+    // Chapter prev / next controls when multi-chapter
+    if (chapters.length > 1) {
+      rightX -= 76;
+      drawButton(stage, ctx, { x: rightX, y: y + 6, w: 70, h: 30 }, '下一节 ›', () => {
+        if (chIdx < chapters.length - 1) {
+          this.detailScroll = 0;
+          this.selectedChapterId = chapters[chIdx + 1].id;
+          this.requestStoryLoad(storyId, this.selectedChapterId);
+        }
+      }, { fontSize: 12, disabled: chIdx >= chapters.length - 1 });
+
+      rightX -= 76;
+      drawButton(stage, ctx, { x: rightX, y: y + 6, w: 70, h: 30 }, '‹ 上一节', () => {
+        if (chIdx > 0) {
+          this.detailScroll = 0;
+          this.selectedChapterId = chapters[chIdx - 1].id;
+          this.requestStoryLoad(storyId, this.selectedChapterId);
+        }
+      }, { fontSize: 12, disabled: chIdx <= 0 });
+
+      const chTitleText = `${chIdx + 1}/${chapters.length} ${activeChapter?.title || chapters[chIdx]?.title || ''}`;
+      const chMaxW = Math.max(80, rightX - (x + 382));
+      if (chMaxW > 90) {
+        drawClippedText(ctx, chTitleText, x + 382, y + 21, chMaxW, PALETTE.textSub, '12px "PingFang SC", sans-serif');
+      }
+    }
+
+    const bodyY = y + barH + 10;
+    const bodyH = h - barH - 10;
+    const contentW = w - 24;
+
+    fillRoundRect(ctx, x, bodyY, w, bodyH, 12, '#12162b');
+    strokeRoundRect(ctx, x, bodyY, w, bodyH, 12, PALETTE.border, 1);
+
+    if (this.storyLoading && (!activeChapter || !activeChapter.paragraphs)) {
+      drawClippedText(ctx, '正在加载纯文字正文…', x + w / 2, bodyY + bodyH / 2, w - 40, PALETTE.textMuted, '15px "PingFang SC", sans-serif', 'center', 'middle');
+      return;
+    }
+
+    if (this.storyError && (!activeChapter || !activeChapter.paragraphs)) {
+      drawClippedText(ctx, this.storyError, x + w / 2, bodyY + bodyH / 2 - 20, w - 40, PALETTE.rose, '14px "PingFang SC", sans-serif', 'center', 'middle');
+      drawButton(stage, ctx, { x: x + w / 2 - 50, y: bodyY + bodyH / 2 + 8, w: 100, h: 32 }, '重新加载', () => {
+        this.storyLoadingKey = '';
+        this.requestStoryLoad(storyId, activeChapterId);
+      }, { fontSize: 13 });
+      return;
+    }
+
+    const paragraphs = activeChapter?.paragraphs || [];
+    if (paragraphs.length === 0) {
+      drawClippedText(ctx, '暂无正文内容', x + w / 2, bodyY + bodyH / 2, w - 40, PALETTE.textMuted, '14px "PingFang SC", sans-serif', 'center', 'middle');
+      return;
+    }
+
+    const layout = this.getStoryLayout(ctx, storyId, curChId, paragraphs, contentW);
+
+    stage.addScrollZone({
+      x,
+      y: bodyY,
+      w,
+      h: bodyH,
+      key: `wiki-story-reader-${storyId}-${curChId}`,
+      contentHeight: layout.totalHeight + 24,
+      getOffset: () => this.detailScroll,
+      onScroll: v => {
+        this.detailScroll = v;
+      },
+    });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 2, bodyY + 2, w - 4, bodyH - 4);
+    ctx.clip();
+
+    const baseTop = bodyY + 12 - this.detailScroll;
+    const minVis = bodyY - 36;
+    const maxVis = bodyY + bodyH + 12;
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+
+    for (const item of layout.lines) {
+      const drawY = baseTop + item.y;
+      if (drawY < minVis || drawY > maxVis) continue;
+
+      if (item.isDivider) {
+        ctx.fillStyle = PALETTE.border;
+        ctx.fillRect(x + 24, drawY + 6, contentW - 24, 1);
+        continue;
+      }
+
+      if (item.isNoteBg) {
+        fillRoundRect(ctx, x + 14, drawY - 1, contentW - 8, item.lineHeight + 2, 4, 'rgba(156, 134, 236, 0.08)');
+      }
+
+      if (item.speakerPrefix && item.speakerWidth) {
+        ctx.font = `700 ${this.storyFontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+        ctx.fillStyle = PALETTE.cyan;
+        ctx.fillText(item.speakerPrefix, x + 16, drawY);
+        ctx.font = item.font;
+        ctx.fillStyle = item.color;
+        ctx.fillText(item.text, x + 16 + item.speakerWidth, drawY);
+      } else {
+        ctx.font = item.font;
+        ctx.fillStyle = item.color;
+        ctx.fillText(item.text, x + 16, drawY);
+      }
     }
 
     ctx.restore();

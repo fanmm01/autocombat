@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, BookOpen, Image as ImageIcon, Shield, Trophy, UserCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, BookText, Image as ImageIcon, Shield, Trophy, UserCheck, UserPlus, X } from 'lucide-react';
 import { readPreferences, savePreferences } from '../settings';
 import { api } from '../types';
 import { getAuthMe, readGuestTokens } from './api';
@@ -19,6 +19,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const [wikiOpenNonce, setWikiOpenNonce] = useState(0);
+  const [storyOpenNonce, setStoryOpenNonce] = useState(0);
 
   const [account, setAccount] = useState<AutoChessAccount | null>(null);
   const [guestTokens, setGuestTokens] = useState<Record<string, string>>(() => readGuestTokens());
@@ -132,6 +133,16 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
 
           <button
             type="button"
+            className="button subtle compact-button ac-topbar-story-btn"
+            onClick={() => setStoryOpenNonce(n => n + 1)}
+            title="纯文字阅读角色背景故事、单列前传与大故事开篇《覆辙》"
+          >
+            <BookText size={15} />
+            <span>故事阅读</span>
+          </button>
+
+          <button
+            type="button"
             className="button subtle compact-button ac-topbar-wiki-btn"
             onClick={() => setWikiOpenNonce(n => n + 1)}
           >
@@ -172,6 +183,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
           onOpenLeaderboard={() => setLeaderboardOpen(true)}
           onPlayerNameChange={updatePlayerName}
           wikiOpenNonce={wikiOpenNonce}
+          storyOpenNonce={storyOpenNonce}
           onError={setError}
         />
       </main>

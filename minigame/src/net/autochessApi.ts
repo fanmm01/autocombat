@@ -8,6 +8,8 @@ import type {
   AutoChessRankedSettlement,
   AutoChessRoomState,
   AutoChessRoomSummary,
+  AutoChessStoryDetail,
+  AutoChessStoryIndexItem,
 } from '@shared/autochess/types';
 import { MG_CONFIG } from '../config';
 import { apiRequest, getSavedPlayerName, setAuthToken, withSession } from './transport';
@@ -23,7 +25,9 @@ export type {
   AutoChessCombatSnapshot,
   AutoChessCombatUnit,
   AutoChessCommanderSummary,
+  AutoChessExtraStoryRef,
   AutoChessLeaderboardResponse,
+  AutoChessLoreField,
   AutoChessMatchState,
   AutoChessMatchSummary,
   AutoChessOwnedUnit,
@@ -32,13 +36,46 @@ export type {
   AutoChessRoomSummary,
   AutoChessRoundReport,
   AutoChessShopSlot,
+  AutoChessStoryChapter,
+  AutoChessStoryChapterMeta,
+  AutoChessStoryDetail,
+  AutoChessStoryIndexItem,
+  AutoChessStoryParagraph,
   AutoChessSynergyDef,
+  AutoChessUnitLore,
   AutoChessUnitMeta,
   AutoChessUnitWiki,
   AutoChessVfxEvent,
 } from '@shared/autochess/types';
 
 export { AUTOCHESS_ROLE_LABELS, resolveUnitWiki } from '@shared/autochess/types';
+
+const storyDetailCache = new Map<string, AutoChessStoryDetail>();
+
+export async function fetchAutoChessStories(): Promise<AutoChessStoryIndexItem[]> {
+  const res = await apiRequest<{ stories: AutoChessStoryIndexItem[] }>('/autochess/stories', {
+    method: 'GET',
+  });
+  return res.stories || [];
+}
+
+export async function fetchAutoChessStoryDetail(
+  storyId: string,
+  chapterId?: string,
+): Promise<AutoChessStoryDetail> {
+  const key = `${storyId}::${chapterId || ''}`;
+  const cached = storyDetailCache.get(key);
+  if (cached) return cached;
+  const qs = chapterId ? `?chapter=${encodeURIComponent(chapterId)}` : '';
+  const res = await apiRequest<{ story: AutoChessStoryDetail }>(
+    `/autochess/stories/${encodeURIComponent(storyId)}${qs}`,
+    { method: 'GET' },
+  );
+  if (res.story) {
+    storyDetailCache.set(key, res.story);
+  }
+  return res.story;
+}
 
 export function ensureSession(name?: string): Promise<{ id: string; name: string; session_token?: string }> {
   return apiRequest('/session', {

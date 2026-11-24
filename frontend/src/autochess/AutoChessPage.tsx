@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import {
   Award,
   BookOpen,
+  BookText,
   Check,
   CircleHelp,
   Coins,
@@ -98,6 +99,7 @@ interface AutoChessPageProps {
   onOpenLeaderboard?: () => void;
   onPlayerNameChange?: (name: string) => Promise<void> | void;
   wikiOpenNonce?: number;
+  storyOpenNonce?: number;
   onError: (msg: string) => void;
 }
 
@@ -113,6 +115,7 @@ export function AutoChessPage({
   onOpenLeaderboard,
   onPlayerNameChange,
   wikiOpenNonce = 0,
+  storyOpenNonce = 0,
   onError,
 }: AutoChessPageProps) {
   const [catalog, setCatalog] = useState<AutoChessCatalog | null>(null);
@@ -559,6 +562,12 @@ export function AutoChessPage({
     });
   }, [wikiOpenNonce]);
 
+  useEffect(() => {
+    if (!storyOpenNonce) return;
+    hoverWiki.closeNow();
+    setWikiTarget({ tab: 'stories' });
+  }, [storyOpenNonce]);
+
   const resolveTokenUrl = useCallback(
     (serial: string, team: 'Y' | 'X', inCombat: boolean): { url: string; accent: string; isSvg: boolean } => {
       const meta = catalogBySerial[serial];
@@ -887,6 +896,12 @@ export function AutoChessPage({
               onClick={() => setWikiTarget({ tab: 'units', serial: catalog?.units[0]?.serial })}
             >
               <BookOpen size={16} /> 自走棋百科
+            </button>
+            <button
+              className="button subtle compact-button ac-lobby-dup-action"
+              onClick={() => setWikiTarget({ tab: 'stories' })}
+            >
+              <BookText size={16} /> 故事阅读
             </button>
             <button
               className="button subtle compact-button"

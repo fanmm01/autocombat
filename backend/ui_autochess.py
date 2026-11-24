@@ -12,6 +12,7 @@ from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from arena_presets import ARENA_PRESETS, TERRAIN_DESCRIPTIONS
 from autochess_auth import AuthError, AutoChessAuthService, exchange_wechat_code
 from autochess_catalog import catalog_summary
+from autochess_lore import get_story_detail, list_story_index
 from autochess_match import AutoChessMatch
 
 _STORE_KIND = 'autochess_match'
@@ -44,6 +45,8 @@ class AutoChessUI:
 
         routes = [
             ('/catalog', 'catalog', 'GET'),
+            ('/stories', 'stories_list', 'GET'),
+            ('/stories/<story_id>', 'story_detail', 'GET'),
             ('/auth/me', 'auth_me', 'GET'),
             ('/auth/register', 'auth_register', 'POST'),
             ('/auth/login', 'auth_login', 'POST'),
@@ -270,6 +273,16 @@ class AutoChessUI:
         data['arenas'] = list(ARENA_PRESETS.values())
         data['terrains'] = TERRAIN_DESCRIPTIONS
         return jsonify(data)
+
+    def stories_list(self):
+        return jsonify(stories=list_story_index())
+
+    def story_detail(self, story_id):
+        chapter_id = request.args.get('chapter')
+        story = get_story_detail(story_id, chapter_id=chapter_id)
+        if story is None:
+            raise NotFound('未找到该故事或章节')
+        return jsonify(story=story)
 
     # ── Single-player / PvE Match Persistence ───────────────────────────────
 
