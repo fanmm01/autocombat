@@ -1,4 +1,5 @@
 import secrets
+import time
 import unittest
 
 import autocombat_backend as backend
@@ -260,6 +261,76 @@ class AutoChessMultiplayerTests(unittest.TestCase):
         spec_view = c3.get(f'/api/ui/autochess/rooms/{code}?spectate={p1_cid}').get_json()['room']['match']
         self.assertEqual(spec_view['watching_cid'], p1_cid)
         self.assertNotEqual(p1_cid, acc1['id'])
+
+    def test_multiplayer_skip_combat_vote_and_round_result_timeout(self):
+        c1 = self.app.test_client()
+        c2 = self.app.test_client()
+        self._register(c1, 'skip1', 'pw_skip_111', display_name='跳过甲')
+        self._register(c2, 'skip2', 'pw_skip_222', display_name='跳过乙')
+
+        r_create = c1.post(
+            '/api/ui/autochess/rooms',
+            json={
+                'name': '跳过测试房',
+                'arena_preset': 'autochess_standard',
+                'max_players': 2,
+                'fill_bots': False,
+                'prep_duration': 45,
+                'auto_step': False,
+            },
+        )
+        self.assertEqual(r_create.status_code, 200, r_create.get_data(as_text=True))
+        code = r_create.get_json()['room']['code']
+        self.created_rooms.append(code)
+
+        self.assertEqual(c2.post(f'/api/ui/autochess/rooms/{code}/join').status_code, 200)
+        self.assertEqual(c2.post(f'/api/ui/autochess/rooms/{code}/control', json={'op': 'ready', 'ready': True}).status_code, 200)
+        self.assertEqual(c1.post(f'/api/ui/autochess/rooms/{code}/control', json={'op': 'start'}).status_code, 200)
+
+        for cli in (c1, c2):
+            cur_rm = cli.get(f'/api/ui/autochess/rooms/{code}').get_json()['room']['match']
+            affordable = next(
+                i
+                for i, sl in enumerate(cur_rm['player']['shop'])
+                if sl and not sl['bought'] and sl['cost'] <= cur_rm['player']['gold']
+            )
+            self.assertTrue(cli.post(f'/api/ui/autochess/rooms/{code}/action', json={'action': 'buy', 'slot_index': affordable}).get_json()['ok'])
+            self.assertTrue(cli.post(f'/api/ui/autochess/rooms/{code}/action', json={'action': 'ready_combat', 'ready': True}).get_json()['ok'])
+
+        # Player 1 votes to skip combat: match must stay in combat until all alive humans skip
+        r_skip1 = c1.post(f'/api/ui/autochess/rooms/{code}/action', json={'action': 'skip_combat', 'skip': True})
+        self.assertEqual(r_skip1.status_code, 200)
+        d1 = r_skip1.get_json()
+        self.assertTrue(d1['ok'])
+        m1 = d1['room']['match']
+        self.assertEqual(m1['phase'], 'combat')
+        self.assertTrue(m1['player']['skip_combat'])
+        p2_summary = next(c for c in m1['commanders'] if c['id'] != m1['player']['id'])
+        self.assertFalse(p2_summary['skip_combat'])
+
+        # Player 2 also skips: all alive humans skipped -> combat resolves immediately
+        r_skip2 = c2.post(f'/api/ui/autochess/rooms/{code}/action', json={'action': 'skip_combat', 'skip': True})
+        self.assertEqual(r_skip2.status_code, 200)
+        d2 = r_skip2.get_json()
+        self.assertTrue(d2['ok'])
+        m2 = d2['room']['match']
+        self.assertEqual(m2['phase'], 'round_result')
+        self.assertIsNotNone(m2.get('round_result_deadline'))
+        self.assertGreater(m2['round_result_deadline'], time.time())
+
+        # Expire round_result_deadline and verify poll automatically advances to round 2 prep
+        with self.ac_ui.lock:
+            room_obj, match_obj = self.ac_ui._load_room_locked(code)
+            match_obj.round_result_deadline = time.time() - 1.0
+            self.ac_ui._save_room_locked(room_obj, match_obj)
+            ver_before = self.ac_ui.room_versions.get(code, 0)
+
+        r_poll = c1.get(f'/api/ui/autochess/rooms/{code}/poll?since={ver_before}&timeout=0.5')
+        self.assertEqual(r_poll.status_code, 200)
+        dp = r_poll.get_json()
+        self.assertTrue(dp['changed'])
+        self.assertEqual(dp['room']['match']['phase'], 'prep')
+        self.assertEqual(dp['room']['match']['round_num'], 2)
 
 
 if __name__ == '__main__':

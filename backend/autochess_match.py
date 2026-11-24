@@ -25,6 +25,8 @@ from autochess_ranked import RANK_TIER_BY_ID
 from battle_engine import FullBattleEngine, action_committed, parse_coord
 from grid_nav import terrain_type
 
+ROUND_RESULT_DURATION = 15
+
 
 def _classify_vfx_kind(serial, cmd, skill_name, lines):
     text = f"{skill_name} {' '.join(lines or ())}"
@@ -102,6 +104,7 @@ class AutoChessMatch:
         self.prep_duration = max(15, int(prep_duration or 30))
         self.round_num = 1
         self.prep_deadline = time.time() + self.prep_duration
+        self.round_result_deadline = 0.0
         self.phase = 'prep'  # 'prep' | 'combat' | 'round_result' | 'finished'
         self.winner_id = None
         self.uid_seq = 1
@@ -205,6 +208,7 @@ class AutoChessMatch:
             'ai_style_label': str(ai_style_label or ''),
             'ready': False,
             'next_ready': False,
+            'skip_combat': False,
             'token_overrides': dict(token_overrides or {}),
             'hp': hp,
             'raw_hp': hp,
@@ -268,6 +272,23 @@ class AutoChessMatch:
     def all_humans_next_ready(self):
         humans = self.human_commanders(alive_only=True)
         return bool(humans) and all(bool(c.get('next_ready')) for c in humans)
+
+    def set_skip_combat(self, cid, skip=True):
+        if self.phase != 'combat':
+            return False, '当前非战斗阶段'
+        cmd = self.commanders.get(cid)
+        if not cmd or cmd.get('eliminated'):
+            return False, '指挥官不存在或已被淘汰'
+        cmd['skip_combat'] = bool(skip)
+        if cmd['skip_combat']:
+            humans = self.human_commanders(alive_only=True)
+            skipped = sum(1 for c in humans if c.get('skip_combat'))
+            return True, f'已选择跳过战斗 ({skipped}/{len(humans)})'
+        return True, '已取消跳过战斗'
+
+    def all_humans_skip_combat(self):
+        humans = self.human_commanders(alive_only=True)
+        return bool(humans) and all(bool(c.get('skip_combat')) for c in humans)
 
     def set_commander_tokens(self, account_id, token_overrides):
         for cmd in self.commanders.values():
@@ -1196,7 +1217,9 @@ class AutoChessMatch:
                     return False, '请先在【星序祝福】弹窗中选择本回合强化祝福'
 
         # Ensure every alive commander deploys at least one unit if available on bench
+        self.round_result_deadline = 0.0
         for cid, cmd in self.commanders.items():
+            cmd['skip_combat'] = False
             if cmd.get('eliminated'):
                 continue
             if cmd['is_human']:
@@ -1533,6 +1556,9 @@ class AutoChessMatch:
         self._live_engine = None
         self._live_matchup = None
         self._live_bouts = []
+        self.round_result_deadline = 0.0
+        for cmd in self.commanders.values():
+            cmd['skip_combat'] = False
 
         # Check end-of-match conditions
         if self.mode == 'pve12':
@@ -1586,6 +1612,7 @@ class AutoChessMatch:
                 return
 
         self.phase = 'round_result'
+        self.round_result_deadline = time.time() + ROUND_RESULT_DURATION
 
     def surrender(self, cid):
         if self.mode != 'ranked':
@@ -1608,6 +1635,9 @@ class AutoChessMatch:
         self._live_engine = None
         self._live_matchup = None
         self._live_bouts = []
+        self.round_result_deadline = 0.0
+        for c in self.commanders.values():
+            c['skip_combat'] = False
         self.phase = 'finished'
         self.logs.append(f'🏳️ {cmd["name"]} 选择投降认负，最终排名第 {cmd["placement"]} 名')
         return True, f'已投降结算，本局排名第 {cmd["placement"]} 名'
@@ -1620,10 +1650,12 @@ class AutoChessMatch:
         for cid, cmd in self.commanders.items():
             cmd['ready'] = False
             cmd['next_ready'] = False
+            cmd['skip_combat'] = False
             inc = self._grant_round_income(cid)
             if cid == self.player_id and inc:
                 incomes = inc
         self._offer_augments_if_due()
+        self.round_result_deadline = 0.0
         self.prep_deadline = time.time() + self.prep_duration
         self.phase = 'prep'
         if self.mode != 'pvp_room' and incomes:
@@ -1674,6 +1706,10 @@ class AutoChessMatch:
         if action == 'step_combat':
             res = self.step_combat(int(payload.get('steps', 1)))
             return True, f'步进 {len(res["frames"])} 帧'
+        if action == 'skip_combat':
+            if self.mode == 'pvp_room':
+                return self.set_skip_combat(cid, bool(payload.get('skip', True)))
+            return self.resolve_combat()
         if action == 'resolve_combat':
             return self.resolve_combat()
         if action == 'next_round':
@@ -1726,6 +1762,7 @@ class AutoChessMatch:
                 'ai_style_label': c.get('ai_style_label', ''),
                 'ready': bool(c.get('ready', False)),
                 'next_ready': bool(c.get('next_ready', False)),
+                'skip_combat': bool(c.get('skip_combat', False)),
                 'hp': c['hp'],
                 'max_hp': c['max_hp'],
                 'gold': c['gold'],
@@ -1800,6 +1837,7 @@ class AutoChessMatch:
             'arena_name': ARENA_PRESETS[self.arena_preset]['name'],
             'round_num': self.round_num,
             'prep_deadline': self.prep_deadline,
+            'round_result_deadline': self.round_result_deadline if self.phase == 'round_result' else None,
             'max_waves': len(PVE_WAVES) if self.mode == 'pve12' else None,
             'phase': self.phase,
             'winner_id': self.winner_id,
@@ -1813,6 +1851,7 @@ class AutoChessMatch:
                 'account_id': p1.get('account_id'),
                 'ready': bool(p1.get('ready', False)),
                 'next_ready': bool(p1.get('next_ready', False)),
+                'skip_combat': bool(p1.get('skip_combat', False)),
                 'token_overrides': dict(p1.get('token_overrides') or {}),
                 'hp': p1['hp'],
                 'max_hp': p1['max_hp'],
@@ -1855,6 +1894,7 @@ class AutoChessMatch:
             'seed': self.seed,
             'round_num': self.round_num,
             'prep_deadline': self.prep_deadline,
+            'round_result_deadline': float(getattr(self, 'round_result_deadline', 0.0) or 0.0),
             'phase': 'prep' if self.phase == 'combat' else self.phase,
             'winner_id': self.winner_id,
             'uid_seq': self.uid_seq,
@@ -1885,6 +1925,7 @@ class AutoChessMatch:
         obj._rng = random.Random(obj.seed + int(data.get('round_num', 1)) * 97)
         obj.round_num = int(data.get('round_num', 1))
         obj.prep_deadline = data.get('prep_deadline', time.time() + 30)
+        obj.round_result_deadline = float(data.get('round_result_deadline', 0.0) or 0.0)
         obj.phase = data.get('phase', 'prep')
         obj.winner_id = data.get('winner_id')
         obj.uid_seq = int(data.get('uid_seq', 1))

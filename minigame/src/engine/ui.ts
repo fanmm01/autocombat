@@ -265,17 +265,18 @@ export function drawButton(
     radius?: number;
     disabled?: boolean;
     sublabel?: string;
+    sublabelColor?: string;
   } = {},
 ): void {
   const disabled = Boolean(opts.disabled);
-  const bg = disabled ? '#1d2236' : opts.bg || PALETTE.bgCard;
-  const border = disabled ? '#2c334f' : opts.border || PALETTE.borderBright;
-  const color = disabled ? PALETTE.textMuted : opts.color || PALETTE.textMain;
+  const bg = disabled ? '#121626' : opts.bg || PALETTE.bgCard;
+  const border = disabled ? '#252c44' : opts.border || PALETTE.borderBright;
+  const color = disabled ? '#5b6482' : opts.color || PALETTE.textMain;
   const radius = opts.radius ?? 10;
   const fontSize = opts.fontSize ?? 16;
 
   fillRoundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius, bg);
-  strokeRoundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius, border, 1.5);
+  strokeRoundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius, border, disabled ? 1 : 1.5);
 
   if (opts.sublabel) {
     drawClippedText(
@@ -295,7 +296,7 @@ export function drawButton(
       rect.x + rect.w / 2,
       rect.y + rect.h * 0.72,
       rect.w - 16,
-      disabled ? PALETTE.textMuted : PALETTE.textSub,
+      opts.sublabelColor || (disabled ? '#4d5673' : PALETTE.textSub),
       `500 ${Math.max(11, fontSize - 4)}px "PingFang SC", "Microsoft YaHei", sans-serif`,
       'center',
       'middle',

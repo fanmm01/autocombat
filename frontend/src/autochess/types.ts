@@ -98,6 +98,7 @@ export interface AutoChessCommanderSummary {
   ai_style_label?: string;
   ready?: boolean;
   next_ready?: boolean;
+  skip_combat?: boolean;
   personality: string;
   hp: number;
   max_hp: number;
@@ -212,6 +213,7 @@ export interface AutoChessMatchState {
   arena_name: string;
   round_num: number;
   prep_deadline?: number;
+  round_result_deadline?: number | null;
   max_waves: number | null;
   phase: 'prep' | 'combat' | 'round_result' | 'finished';
   winner_id: string | null;
@@ -233,6 +235,7 @@ export interface AutoChessMatchState {
     account_id?: string | null;
     ready?: boolean;
     next_ready?: boolean;
+    skip_combat?: boolean;
     token_overrides?: Record<string, string>;
     hp: number;
     max_hp: number;

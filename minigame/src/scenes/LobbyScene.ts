@@ -253,7 +253,7 @@ export class LobbyScene {
     rx -= 96;
     drawButton(stage, ctx, { x: rx, y: 15, w: 88, h: 38 }, '排行榜', () => {
       void this.loadLeaderboard('all');
-    }, { fontSize: 14, border: PALETTE.goldSoft, color: PALETTE.gold });
+    }, { fontSize: 14, border: PALETTE.goldSoft, color: PALETTE.gold, disabled: !this.connected || this.busy });
 
     rx -= 164;
     const accLabel = acc ? `${acc.display_name}${acc.wx_bound ? ' [微信]' : ''}` : '登录 / 绑定';
@@ -263,6 +263,7 @@ export class LobbyScene {
       fontSize: 14,
       bg: acc ? '#20294c' : PALETTE.violetDark,
       border: acc ? PALETTE.violet : '#a995ff',
+      disabled: !this.connected || this.busy,
     });
 
     if (acc?.ranked) {
@@ -292,6 +293,7 @@ export class LobbyScene {
     drawClippedText(ctx, arena?.description || this.statusText, padX + 18, colY + 41, 520, PALETTE.textSub, '12px "PingFang SC", sans-serif');
     drawButton(stage, ctx, { x: padX + leftW - 140, y: colY + 10, w: 126, h: 36 }, '切换棋盘', () => this.cycleArena(), {
       fontSize: 14,
+      disabled: (this.host.getCatalog()?.arenas.length || 0) <= 1,
     });
 
     // 2x2 Mode Grid
@@ -413,7 +415,7 @@ export class LobbyScene {
     drawClippedText(ctx, `存档战局 (${this.matches.length})`, rightColX + 18, listHeaderY + 12, 220, PALETTE.textMain, '700 16px "PingFang SC", sans-serif');
     drawButton(stage, ctx, { x: rightColX + rightColW - 88, y: listHeaderY - 2, w: 72, h: 28 }, '刷新', () => {
       void this.refreshAll();
-    }, { fontSize: 12 });
+    }, { fontSize: 12, disabled: this.loading || this.busy });
 
     const listRect = {
       x: rightColX + 14,
@@ -457,7 +459,7 @@ export class LobbyScene {
             const full = await getAutoChessMatch(m.id);
             this.host.openMatch(full);
           });
-        }, { fontSize: 13, bg: PALETTE.violetDark, border: PALETTE.violet });
+        }, { fontSize: 13, bg: PALETTE.violetDark, border: PALETTE.violet, disabled: this.busy });
 
         if (m.mode !== 'ranked' || m.phase === 'finished') {
           drawButton(stage, ctx, { x: listRect.x + listRect.w - 64, y: iy + 19, w: 54, h: 34 }, '删', () => {
@@ -467,7 +469,7 @@ export class LobbyScene {
                 this.matches = this.matches.filter(x => x.id !== m.id);
               }
             });
-          }, { fontSize: 13, border: PALETTE.rose, color: PALETTE.rose });
+          }, { fontSize: 13, border: PALETTE.rose, color: PALETTE.rose, disabled: this.busy });
         }
       });
     }
@@ -506,11 +508,11 @@ export class LobbyScene {
       if (!acc.wx_bound) {
         drawButton(stage, ctx, { x: mx + 26, y: my + 150, w: mw - 52, h: 48 }, '将当前账号与微信绑定', () => {
           void this.handlePasswordLogin(false, true);
-        }, { bg: PALETTE.violetDark, border: '#b39eff', fontSize: 16 });
+        }, { bg: PALETTE.violetDark, border: '#b39eff', fontSize: 16, disabled: this.busy });
       }
       drawButton(stage, ctx, { x: mx + 26, y: my + 216, w: mw - 52, h: 46 }, '切换账号（密码登录）', () => {
         void this.handlePasswordLogin(false, false);
-      }, { fontSize: 15 });
+      }, { fontSize: 15, disabled: this.busy });
       drawButton(stage, ctx, { x: mx + 26, y: my + 280, w: mw - 52, h: 46 }, '退出当前账号', () => {
         void this.runBusy(async () => {
           await logoutAccount();
@@ -518,25 +520,25 @@ export class LobbyScene {
           this.matches = await listAutoChessMatches().catch(() => []);
           this.host.stage.showToast('已退出登录');
         });
-      }, { border: PALETTE.rose, color: PALETTE.rose, fontSize: 15 });
+      }, { border: PALETTE.rose, color: PALETTE.rose, fontSize: 15, disabled: this.busy });
     } else {
       drawWrappedText(ctx, '使用微信一键登录可自动创建云端棋手档案并同步排位战绩；如果你已有 Web 端星序账号，点击「微信绑定已有账号」即可打通双端数据。', mx + 26, my + 74, mw - 52, 22, PALETTE.textSub, '14px "PingFang SC", sans-serif', 3);
 
       drawButton(stage, ctx, { x: mx + 26, y: my + 154, w: mw - 52, h: 52 }, '微信一键登录 / 自动建号', () => {
         void this.handleWeChatLogin();
-      }, { bg: '#1a6b4e', border: PALETTE.emerald, fontSize: 17 });
+      }, { bg: '#1a6b4e', border: PALETTE.emerald, fontSize: 17, disabled: this.busy });
 
       drawButton(stage, ctx, { x: mx + 26, y: my + 222, w: mw - 52, h: 48 }, '微信绑定已有 Web 端账号', () => {
         void this.handlePasswordLogin(false, true);
-      }, { bg: PALETTE.violetDark, border: '#b39eff', fontSize: 16 });
+      }, { bg: PALETTE.violetDark, border: '#b39eff', fontSize: 16, disabled: this.busy });
 
       drawButton(stage, ctx, { x: mx + 26, y: my + 288, w: (mw - 68) / 2, h: 44 }, '用户名密码登录', () => {
         void this.handlePasswordLogin(false, false);
-      }, { fontSize: 15 });
+      }, { fontSize: 15, disabled: this.busy });
 
       drawButton(stage, ctx, { x: mx + 42 + (mw - 68) / 2, y: my + 288, w: (mw - 68) / 2, h: 44 }, '注册新账号', () => {
         void this.handlePasswordLogin(true, false);
-      }, { fontSize: 15 });
+      }, { fontSize: 15, disabled: this.busy });
 
       drawButton(stage, ctx, { x: mx + 26, y: my + 350, w: mw - 52, h: 40 }, `修改访客昵称（当前：${getSavedPlayerName()}）`, () => {
         void (async () => {

@@ -11,6 +11,7 @@ import {
   type AutoChessRoomSummary,
 } from '../net/autochessApi';
 import { LongPoller } from '../net/poller';
+import { ApiError } from '../net/transport';
 import {
   PALETTE,
   Stage,
@@ -22,6 +23,14 @@ import {
   promptInput,
   strokeRoundRect,
 } from '../engine/ui';
+
+function isRoomMissingError(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    return err.status === 404 || (err.status === 403 && err.message.includes('房间'));
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('联机房间不存在') || msg.includes('请先加入该联机房间');
+}
 
 export interface RoomHost {
   stage: Stage;
@@ -57,6 +66,8 @@ export class RoomScene {
 
   onLeave(): void {
     this.stopPoller();
+    this.activeRoom = null;
+    this.version = -1;
     this.host.setShareRoomCode(null);
   }
 
@@ -71,20 +82,46 @@ export class RoomScene {
     }
   }
 
+  private exitRoomLocally(goToLobby: boolean, toastMsg?: string): void {
+    this.stopPoller();
+    this.activeRoom = null;
+    this.version = -1;
+    this.host.setShareRoomCode(null);
+    if (toastMsg) {
+      this.host.stage.showToast(toastMsg);
+    }
+    if (goToLobby) {
+      this.host.backToLobby();
+    } else {
+      void listRooms()
+        .then(rooms => {
+          this.rooms = rooms;
+        })
+        .catch(() => {});
+    }
+  }
+
   private startPoller(code: string): void {
     this.stopPoller();
-    this.poller = new LongPoller(async () => {
-      const res = await pollRoom(code, this.version, 8);
-      this.version = res.version;
-      if (res.changed && res.room) {
-        this.applyRoom(res.room);
-        if (res.room.status === 'playing' && res.room.match) {
-          return 'stop';
+    this.poller = new LongPoller(
+      async () => {
+        const res = await pollRoom(code, this.version, 8);
+        this.version = res.version;
+        if (res.changed && res.room) {
+          this.applyRoom(res.room);
+          if (res.room.status === 'playing' && res.room.match) {
+            return 'stop';
+          }
+          return 'changed';
         }
-        return 'changed';
-      }
-      return 'timeout';
-    });
+        return 'timeout';
+      },
+      err => {
+        if (isRoomMissingError(err)) {
+          this.exitRoomLocally(false, '联机房间已解散或不存在，已返回房间列表');
+        }
+      },
+    );
     this.poller.start();
   }
 
@@ -144,20 +181,51 @@ export class RoomScene {
     });
   }
 
+  private async handleBackToLobby(): Promise<void> {
+    if (!this.activeRoom || this.activeRoom.status !== 'waiting') {
+      this.exitRoomLocally(true);
+      return;
+    }
+    if (this.busy) {
+      this.exitRoomLocally(true);
+      return;
+    }
+    const code = this.activeRoom.code;
+    this.busy = true;
+    this.stopPoller();
+    try {
+      await controlRoom(code, 'leave');
+    } catch {
+      // Ignore errors so the user is never trapped in a dead waiting room.
+    } finally {
+      this.busy = false;
+      this.exitRoomLocally(true);
+    }
+  }
+
   private async handleControl(op: 'ready' | 'config' | 'leave' | 'start', payload: Record<string, unknown> = {}): Promise<void> {
     if (!this.activeRoom) return;
     const code = this.activeRoom.code;
     await this.runBusy(async () => {
-      const res = await controlRoom(code, op, payload);
-      if (op === 'leave' || res.disbanded) {
-        this.stopPoller();
-        this.activeRoom = null;
-        this.host.setShareRoomCode(null);
-        this.rooms = await listRooms();
-        return;
-      }
-      if (res.room) {
-        this.applyRoom(res.room);
+      try {
+        const res = await controlRoom(code, op, payload);
+        if (op === 'leave' || res.disbanded) {
+          this.exitRoomLocally(false);
+          return;
+        }
+        if (res.room) {
+          this.applyRoom(res.room);
+        }
+      } catch (err) {
+        if (isRoomMissingError(err)) {
+          this.exitRoomLocally(false, '联机房间已解散或不存在，已返回房间列表');
+          return;
+        }
+        if (op === 'leave' && err instanceof ApiError && err.status === 0) {
+          this.exitRoomLocally(false, '网络异常，已在本地退出房间');
+          return;
+        }
+        throw err;
       }
     });
   }
@@ -177,11 +245,7 @@ export class RoomScene {
     ctx.fillRect(0, 67, 1280, 1);
 
     drawButton(stage, ctx, { x: padX, y: 15, w: 112, h: 38 }, '← 返回大厅', () => {
-      if (this.activeRoom && this.activeRoom.status === 'waiting') {
-        void this.handleControl('leave');
-      } else {
-        this.host.backToLobby();
-      }
+      void this.handleBackToLobby();
     }, { fontSize: 14 });
 
     const topRight = stage.topbarRightEdge;
@@ -198,10 +262,10 @@ export class RoomScene {
     if (!this.activeRoom) {
       drawButton(stage, ctx, { x: topRight - 274, y: 15, w: 132, h: 38 }, '房间码加入', () => {
         void this.handleJoinCode();
-      }, { fontSize: 14 });
+      }, { fontSize: 14, disabled: this.busy });
       drawButton(stage, ctx, { x: topRight - 134, y: 15, w: 134, h: 38 }, '+ 创建房间', () => {
         void this.handleCreateRoom();
-      }, { fontSize: 14, bg: PALETTE.violetDark, border: '#b39eff' });
+      }, { fontSize: 14, bg: PALETTE.violetDark, border: '#b39eff', disabled: this.busy });
 
       this.renderRoomList(padX, 92, rightX - padX, 598);
     } else {
@@ -218,7 +282,7 @@ export class RoomScene {
     drawClippedText(ctx, `开放与已加入房间 (${this.rooms.length})`, x + 22, y + 28, 360, PALETTE.textMain, '700 17px "PingFang SC", sans-serif');
     drawButton(stage, ctx, { x: x + w - 104, y: y + 12, w: 84, h: 32 }, '刷新', () => {
       void this.refreshList();
-    }, { fontSize: 13 });
+    }, { fontSize: 13, disabled: this.busy });
 
     const listRect = { x: x + 18, y: y + 58, w: w - 36, h: h - 76 };
     const rowH = 74;
@@ -256,9 +320,17 @@ export class RoomScene {
           '13px "PingFang SC", sans-serif',
         );
 
-        drawButton(stage, ctx, { x: listRect.x + listRect.w - 134, y: ry + 18, w: 116, h: 38 }, rm.is_member ? '进入房间' : '加入房间', () => {
+        const roomUnavailable = !rm.is_member && (rm.member_count >= rm.max_players || rm.status !== 'waiting');
+        const btnLabel = rm.is_member
+          ? '进入房间'
+          : rm.status !== 'waiting'
+            ? '对局中'
+            : rm.member_count >= rm.max_players
+              ? '已满员'
+              : '加入房间';
+        drawButton(stage, ctx, { x: listRect.x + listRect.w - 134, y: ry + 18, w: 116, h: 38 }, btnLabel, () => {
           void this.handleJoinCode(rm.code);
-        }, { fontSize: 14, bg: PALETTE.violetDark, border: '#b39eff' });
+        }, { fontSize: 14, bg: PALETTE.violetDark, border: '#b39eff', disabled: this.busy || roomUnavailable });
       });
     }
     ctx.restore();
@@ -327,12 +399,12 @@ export class RoomScene {
     if (room.is_host) {
       drawButton(stage, ctx, { x: rightX + 22, y: y + 190, w: (rightW - 54) / 2, h: 38 }, room.fill_bots ? 'AI 补位：开' : 'AI 补位：关', () => {
         void this.handleControl('config', { fill_bots: !room.fill_bots });
-      }, { fontSize: 13 });
+      }, { fontSize: 13, disabled: this.busy });
 
       drawButton(stage, ctx, { x: rightX + 32 + (rightW - 54) / 2, y: y + 190, w: (rightW - 54) / 2, h: 38 }, `备战 ${room.prep_duration}s`, () => {
         const nextDur = room.prep_duration >= 60 ? 20 : room.prep_duration + 15;
         void this.handleControl('config', { prep_duration: nextDur });
-      }, { fontSize: 13 });
+      }, { fontSize: 13, disabled: this.busy });
 
       drawButton(stage, ctx, { x: rightX + 22, y: y + 242, w: rightW - 44, h: 38 }, '切换棋盘预设', () => {
         if (arenas.length > 1) {
@@ -340,7 +412,7 @@ export class RoomScene {
           const next = arenas[(idx + 1) % arenas.length].id;
           void this.handleControl('config', { arena_preset: next });
         }
-      }, { fontSize: 13 });
+      }, { fontSize: 13, disabled: this.busy || arenas.length <= 1 });
     }
 
     drawButton(stage, ctx, { x: rightX + 22, y: y + h - 184, w: rightW - 44, h: 44 }, '分享给微信好友 (直达本房)', () => {
@@ -355,9 +427,22 @@ export class RoomScene {
     }, { bg: '#1b5e47', border: PALETTE.emerald, fontSize: 14 });
 
     if (room.is_host) {
+      const nonHostUnready = room.members.filter(m => !m.is_host && !m.ready);
+      const needMorePlayers = !room.fill_bots && room.members.length < 2;
+      const canStart = room.is_host && !needMorePlayers && nonHostUnready.length === 0;
       drawButton(stage, ctx, { x: rightX + 22, y: y + h - 126, w: rightW - 44, h: 48 }, '开始多人对局', () => {
         void this.handleControl('start');
-      }, { bg: PALETTE.violetDark, border: PALETTE.gold, fontSize: 16 });
+      }, {
+        bg: PALETTE.violetDark,
+        border: PALETTE.gold,
+        fontSize: 16,
+        disabled: this.busy || !canStart,
+        sublabel: !canStart
+          ? needMorePlayers
+            ? '至少需 2 名玩家'
+            : `等待 ${nonHostUnready.length} 人准备`
+          : undefined,
+      });
     } else {
       const me = room.members.find(m => m.account_id === room.my_account_id);
       const isReady = Boolean(me?.ready);
@@ -367,12 +452,13 @@ export class RoomScene {
         bg: isReady ? '#2d375c' : '#1b5e47',
         border: isReady ? PALETTE.borderBright : PALETTE.emerald,
         fontSize: 16,
+        disabled: this.busy,
       });
     }
 
     drawButton(stage, ctx, { x: rightX + 22, y: y + h - 66, w: rightW - 44, h: 40 }, '离开房间', () => {
       void this.handleControl('leave');
-    }, { border: PALETTE.rose, color: PALETTE.rose, fontSize: 14 });
+    }, { border: PALETTE.rose, color: PALETTE.rose, fontSize: 14, disabled: this.busy });
 
     void getRoom;
     void (null as AutoChessMatchState | null);

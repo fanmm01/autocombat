@@ -1875,16 +1875,31 @@ export function AutoChessPage({
                     </button>
                   </>
                 )}
-                {activeMatch.phase === 'combat' && isPvpRoom && (
-                  <>
-                    <span className="muted" style={{ fontSize: '0.82rem' }}>
-                      服务端同步演算中…
-                    </span>
-                    <button className="button subtle" disabled={busy} onClick={() => void act('resolve_combat')}>
-                      <FastForward size={14} /> 跳过动画结算
-                    </button>
-                  </>
-                )}
+                {activeMatch.phase === 'combat' && isPvpRoom && (() => {
+                  const aliveHumans = activeMatch.commanders.filter(c => c.is_human && !c.eliminated);
+                  const skippedCount = aliveHumans.filter(c => c.skip_combat).length;
+                  const mySkipped = Boolean(p.skip_combat);
+                  const meEliminated = Boolean(activeMatch.commanders.find(c => c.id === p.id)?.eliminated || p.hp <= 0);
+                  return (
+                    <>
+                      <span className="muted" style={{ fontSize: '0.82rem' }}>
+                        {mySkipped ? '已跳过本轮战斗，等待结算…' : '服务端同步演算中…'}
+                      </span>
+                      <button
+                        className={`button ${mySkipped ? 'primary' : 'subtle'}`}
+                        disabled={busy || meEliminated}
+                        onClick={() => void act('skip_combat', { skip: !mySkipped })}
+                      >
+                        <FastForward size={14} />{' '}
+                        {mySkipped
+                          ? `取消跳过 (${skippedCount}/${Math.max(1, aliveHumans.length)})`
+                          : skippedCount > 0
+                            ? `跳过战斗 (${skippedCount}/${Math.max(1, aliveHumans.length)})`
+                            : '跳过战斗'}
+                      </button>
+                    </>
+                  );
+                })()}
                 {activeMatch.phase === 'round_result' && (
                   <button
                     className={`button ${isPvpRoom && p.next_ready ? 'subtle' : 'primary'}`}

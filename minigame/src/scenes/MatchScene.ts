@@ -11,6 +11,7 @@ import {
   type AutoChessRoomState,
 } from '../net/autochessApi';
 import { LongPoller } from '../net/poller';
+import { ApiError } from '../net/transport';
 import {
   PALETTE,
   Stage,
@@ -66,6 +67,9 @@ export class MatchScene {
   private roomVersion = -1;
   private roomPoller: LongPoller | null = null;
   private combatTimer: number | null = null;
+  private prepTimer: number | null = null;
+  private roundResultTimer: number | null = null;
+  private roundResultFallbackDeadline = 0;
   private combatSpeed2x = false;
   private busy = false;
   private selectedUnitId: string | null = null;
@@ -86,14 +90,19 @@ export class MatchScene {
     this.selectedUnitId = null;
     this.hideRoundResult = false;
     this.lastFrameCount = match.combat_frames?.length || 0;
+    this.roundResultFallbackDeadline = match.phase === 'round_result' ? Date.now() / 1000 + 15 : 0;
     this.vfx.clear();
     this.wikiModal.close();
     this.stopTimers();
 
     if (this.room) {
       this.startRoomPoller(this.room.code);
+    } else if (match.phase === 'prep') {
+      this.schedulePrepAutoStart();
     } else if (match.phase === 'combat') {
       this.scheduleCombatStep();
+    } else if (match.phase === 'round_result') {
+      this.scheduleRoundResultAutoNext();
     }
   }
 
@@ -105,11 +114,35 @@ export class MatchScene {
 
   setForeground(active: boolean): void {
     this.roomPoller?.setForeground(active);
-    if (active && this.match && !this.room && this.match.phase === 'combat') {
-      this.scheduleCombatStep();
-    } else if (!active && this.combatTimer !== null) {
-      clearTimeout(this.combatTimer);
-      this.combatTimer = null;
+    if (active && this.match && !this.room) {
+      if (this.match.phase === 'prep') {
+        this.schedulePrepAutoStart();
+      } else if (this.match.phase === 'combat') {
+        this.scheduleCombatStep();
+      } else if (this.match.phase === 'round_result') {
+        this.scheduleRoundResultAutoNext();
+      }
+    } else if (!active) {
+      this.clearPrepTimer();
+      this.clearRoundResultTimer();
+      if (this.combatTimer !== null) {
+        clearTimeout(this.combatTimer);
+        this.combatTimer = null;
+      }
+    }
+  }
+
+  private clearPrepTimer(): void {
+    if (this.prepTimer !== null) {
+      clearTimeout(this.prepTimer);
+      this.prepTimer = null;
+    }
+  }
+
+  private clearRoundResultTimer(): void {
+    if (this.roundResultTimer !== null) {
+      clearTimeout(this.roundResultTimer);
+      this.roundResultTimer = null;
     }
   }
 
@@ -122,6 +155,90 @@ export class MatchScene {
       clearTimeout(this.combatTimer);
       this.combatTimer = null;
     }
+    this.clearPrepTimer();
+    this.clearRoundResultTimer();
+  }
+
+  private getRoundResultRemainingSec(m: AutoChessMatchState): number | null {
+    if (m.phase !== 'round_result') return null;
+    const deadline =
+      typeof m.round_result_deadline === 'number' && Number.isFinite(m.round_result_deadline) && m.round_result_deadline > 0
+        ? m.round_result_deadline
+        : this.roundResultFallbackDeadline;
+    if (!(deadline > 0)) return null;
+    return Math.max(0, Math.ceil(deadline - Date.now() / 1000));
+  }
+
+  private scheduleRoundResultAutoNext(minDelayMs = 250): void {
+    this.clearRoundResultTimer();
+    if (this.room || !this.match || this.match.phase !== 'round_result') return;
+    if (
+      !(typeof this.match.round_result_deadline === 'number' && Number.isFinite(this.match.round_result_deadline) && this.match.round_result_deadline > 0) &&
+      this.roundResultFallbackDeadline <= 0
+    ) {
+      this.roundResultFallbackDeadline = Date.now() / 1000 + 15;
+    }
+    const deadline =
+      typeof this.match.round_result_deadline === 'number' && Number.isFinite(this.match.round_result_deadline) && this.match.round_result_deadline > 0
+        ? this.match.round_result_deadline
+        : this.roundResultFallbackDeadline;
+
+    const delay = Math.max(minDelayMs, deadline * 1000 - Date.now() + 250);
+    this.roundResultTimer = setTimeout(() => {
+      this.roundResultTimer = null;
+      const cur = this.match;
+      if (!cur || cur.phase !== 'round_result' || this.room) return;
+      if (this.busy) {
+        this.scheduleRoundResultAutoNext(300);
+        return;
+      }
+      const curDeadline =
+        typeof cur.round_result_deadline === 'number' && Number.isFinite(cur.round_result_deadline) && cur.round_result_deadline > 0
+          ? cur.round_result_deadline
+          : this.roundResultFallbackDeadline;
+      if (curDeadline * 1000 - Date.now() > 50) {
+        this.scheduleRoundResultAutoNext(250);
+        return;
+      }
+      this.host.stage.showToast('结算倒计时结束，自动进入下一回合');
+      void this.dispatchAction('next_round', {}, true);
+    }, delay) as unknown as number;
+  }
+
+  private getPrepRemainingSec(m: AutoChessMatchState): number | null {
+    if (m.phase !== 'prep' || typeof m.prep_deadline !== 'number' || !Number.isFinite(m.prep_deadline) || m.prep_deadline <= 0) {
+      return null;
+    }
+    return Math.max(0, Math.ceil(m.prep_deadline - Date.now() / 1000));
+  }
+
+  private schedulePrepAutoStart(minDelayMs = 250): void {
+    this.clearPrepTimer();
+    if (this.room || !this.match || this.match.phase !== 'prep') return;
+    const deadline = this.match.prep_deadline;
+    if (typeof deadline !== 'number' || !Number.isFinite(deadline) || deadline <= 0) return;
+
+    const delay = Math.max(minDelayMs, deadline * 1000 - Date.now() + 250);
+    this.prepTimer = setTimeout(() => {
+      this.prepTimer = null;
+      const cur = this.match;
+      if (!cur || cur.phase !== 'prep' || this.room) return;
+      if (this.busy) {
+        this.schedulePrepAutoStart(300);
+        return;
+      }
+      if (typeof cur.prep_deadline === 'number' && cur.prep_deadline * 1000 - Date.now() > 50) {
+        this.schedulePrepAutoStart(250);
+        return;
+      }
+      const firstAugment = cur.player.pending_augments?.[0];
+      if (firstAugment) {
+        void this.dispatchAction('pick_augment', { augment_id: firstAugment.id }, true);
+      } else {
+        this.host.stage.showToast('备战倒计时结束，自动进入战斗');
+        void this.dispatchAction('start_combat', {}, true);
+      }
+    }, delay) as unknown as number;
   }
 
   private startRoomPoller(code: string): void {
@@ -137,6 +254,11 @@ export class MatchScene {
         return 'timeout';
       },
       err => {
+        if (err instanceof ApiError && (err.status === 404 || (err.status === 403 && err.message.includes('房间')))) {
+          this.stopTimers();
+          this.host.stage.showToast('联机房间已不存在，请点击左上角返回大厅');
+          return;
+        }
         this.host.stage.showToast(`联机同步重试中：${err.message}`);
       },
     );
@@ -164,9 +286,22 @@ export class MatchScene {
 
     if (prevPhase !== 'round_result' && next.phase === 'round_result') {
       this.hideRoundResult = false;
+      this.roundResultFallbackDeadline = Date.now() / 1000 + 15;
+    }
+    if (next.phase !== 'round_result') {
+      this.roundResultFallbackDeadline = 0;
+      this.clearRoundResultTimer();
+    } else if (!this.room) {
+      this.scheduleRoundResultAutoNext();
     }
     if (next.phase !== 'prep') {
       this.selectedUnitId = null;
+    }
+
+    if (!this.room && next.phase === 'prep') {
+      this.schedulePrepAutoStart();
+    } else if (next.phase !== 'prep') {
+      this.clearPrepTimer();
     }
 
     if (!this.room && next.phase === 'combat') {
@@ -199,10 +334,12 @@ export class MatchScene {
   ): Promise<void> {
     if (!this.match || this.busy) return;
     this.busy = true;
+    let shouldBackoff = false;
     try {
       if (this.room) {
         const res = await sendRoomAction(this.room.code, action, payload, this.spectateCid);
         this.applyRoomUpdate(res.room);
+        if (!res.ok) shouldBackoff = true;
         if (!res.ok || !silentSuccess) {
           if (res.message) this.host.stage.showToast(res.message);
         }
@@ -215,16 +352,25 @@ export class MatchScene {
           res.match.ranked_settlement = res.ranked_settlement;
         }
         this.applyMatchUpdate(res.match);
+        if (!res.ok) shouldBackoff = true;
         if (!res.ok || !silentSuccess) {
           if (res.message) this.host.stage.showToast(res.message);
         }
       }
     } catch (err) {
+      shouldBackoff = true;
+      if (this.room && err instanceof ApiError && err.status === 404) {
+        this.stopTimers();
+      }
       this.host.stage.showToast(err instanceof Error ? err.message : String(err));
     } finally {
       this.busy = false;
       if (!this.room && this.match?.phase === 'combat') {
         this.scheduleCombatStep();
+      } else if (!this.room && this.match?.phase === 'prep') {
+        this.schedulePrepAutoStart(shouldBackoff ? 2500 : 250);
+      } else if (!this.room && this.match?.phase === 'round_result') {
+        this.scheduleRoundResultAutoNext(shouldBackoff ? 2500 : 250);
       }
     }
   }
@@ -254,6 +400,11 @@ export class MatchScene {
   private selectedOwnedUnit(m: AutoChessMatchState): AutoChessOwnedUnit | null {
     if (!this.selectedUnitId) return null;
     return this.allOwnedUnits(m).find(u => u.id === this.selectedUnitId) || null;
+  }
+
+  private isPlayerEliminated(m: AutoChessMatchState): boolean {
+    const me = (m.commanders || []).find(c => c.id === m.player.id);
+    return Boolean(me?.eliminated || m.player.hp <= 0);
   }
 
   private handleTapUnit(unit: AutoChessOwnedUnit): void {
@@ -344,17 +495,40 @@ export class MatchScene {
           : m.mode === 'pvp_room'
             ? `联机房 ${this.room?.code || ''}`
             : '4人标准';
+    const leftSec = this.getPrepRemainingSec(m);
+    const resultLeftSec = this.getRoundResultRemainingSec(m);
+    const urgentPrep = m.phase === 'prep' && leftSec !== null && leftSec <= 5;
+    const urgentResult = m.phase === 'round_result' && resultLeftSec !== null && resultLeftSec <= 3;
+    const urgentPhase = urgentPrep || urgentResult;
     const phaseLabel =
       m.phase === 'prep'
-        ? '备战布阵'
+        ? leftSec !== null
+          ? `备战 ${leftSec}s`
+          : '备战布阵'
         : m.phase === 'combat'
           ? '战斗演算中'
           : m.phase === 'round_result'
-            ? '回合结算'
+            ? resultLeftSec !== null
+              ? `结算 ${resultLeftSec}s`
+              : '回合结算'
             : '已结束';
 
     drawPill(ctx, padX + 90, 15, 138, 28, 'rgba(156,134,236,0.16)', PALETTE.violet, `${modeLabel} · R${m.round_num}`, PALETTE.textMain, 12);
-    drawPill(ctx, padX + 234, 15, 92, 28, 'rgba(92,225,208,0.12)', PALETTE.cyan, phaseLabel, PALETTE.cyan, 12);
+    drawPill(
+      ctx,
+      padX + 234,
+      15,
+      92,
+      28,
+      urgentPhase ? 'rgba(241, 108, 141, 0.18)' : 'rgba(92,225,208,0.12)',
+      urgentPhase ? PALETTE.rose : PALETTE.cyan,
+      phaseLabel,
+      urgentPhase ? PALETTE.rose : PALETTE.cyan,
+      12,
+    );
+
+    const isEliminated = this.isPlayerEliminated(m);
+    const canPrepAct = m.phase === 'prep' && !isEliminated;
 
     let rx = stage.topbarRightEdge;
     if (m.phase !== 'finished') {
@@ -365,35 +539,48 @@ export class MatchScene {
             await this.dispatchAction('surrender');
           }
         })();
-      }, { fontSize: 13, border: PALETTE.rose, color: PALETTE.rose });
+      }, { fontSize: 13, border: PALETTE.rose, color: PALETTE.rose, disabled: isEliminated });
     }
 
     if (m.phase === 'prep') {
       rx -= 92;
       drawButton(stage, ctx, { x: rx, y: 11, w: 84, h: 36 }, '一键布阵', () => {
         void this.dispatchAction('auto_arrange', {}, true);
-      }, { fontSize: 13 });
+      }, { fontSize: 13, disabled: !canPrepAct || m.player.board.length === 0 });
     } else if (m.phase === 'combat') {
       if (!this.room) {
         rx -= 78;
         drawButton(stage, ctx, { x: rx, y: 11, w: 70, h: 36 }, '跳过', () => {
           void this.dispatchAction('resolve_combat', {}, true);
         }, { fontSize: 13, border: PALETTE.goldSoft, color: PALETTE.gold });
+        rx -= 80;
+        drawButton(stage, ctx, { x: rx, y: 11, w: 72, h: 36 }, this.combatSpeed2x ? '2x 速度' : '1x 速度', () => {
+          this.combatSpeed2x = !this.combatSpeed2x;
+        }, { fontSize: 13, border: PALETTE.cyan, color: PALETTE.cyan });
+      } else {
+        const aliveHumans = (m.commanders || []).filter(c => c.is_human && !c.eliminated);
+        const skippedCount = aliveHumans.filter(c => c.skip_combat).length;
+        const mySkipped = Boolean(m.player.skip_combat);
+        const skipLabel = mySkipped
+          ? `已跳过 ${skippedCount}/${Math.max(1, aliveHumans.length)}`
+          : skippedCount > 0
+            ? `跳过 (${skippedCount}/${Math.max(1, aliveHumans.length)})`
+            : '跳过战斗';
+        rx -= 120;
+        drawButton(stage, ctx, { x: rx, y: 11, w: 112, h: 36 }, skipLabel, () => {
+          void this.dispatchAction('skip_combat', { skip: !mySkipped }, true);
+        }, {
+          fontSize: 12,
+          bg: mySkipped ? '#2d365a' : PALETTE.bgCard,
+          border: mySkipped ? PALETTE.borderBright : PALETTE.goldSoft,
+          color: mySkipped ? PALETTE.textSub : PALETTE.gold,
+          disabled: isEliminated,
+        });
       }
-      rx -= 80;
-      drawButton(stage, ctx, { x: rx, y: 11, w: 72, h: 36 }, this.combatSpeed2x ? '2x 速度' : '1x 速度', () => {
-        this.combatSpeed2x = !this.combatSpeed2x;
-      }, { fontSize: 13, border: PALETTE.cyan, color: PALETTE.cyan });
-    }
-
-    let countdownText = '';
-    if (m.phase === 'prep' && m.prep_deadline) {
-      const leftSec = Math.max(0, Math.ceil(m.prep_deadline - Date.now() / 1000));
-      countdownText = ` · ${leftSec}s`;
     }
 
     const p = m.player;
-    const statsText = `HP ${p.hp}/${p.max_hp} · ${p.gold}G · Lv.${p.level}(${p.xp}/${p.xp_to_next}) · 人口 ${p.board.length}/${p.max_pop} · 连胜${p.streak}${countdownText}`;
+    const statsText = `HP ${p.hp}/${p.max_hp} · ${p.gold}G · Lv.${p.level}(${p.xp}/${p.xp_to_next}) · 人口 ${p.board.length}/${p.max_pop} · 连胜${p.streak}`;
     const statsX = padX + 336;
     const statsMaxW = Math.max(120, rx - statsX - 12);
     drawClippedText(ctx, statsText, statsX, 29, statsMaxW, PALETTE.gold, '700 13px "PingFang SC", sans-serif');
@@ -474,29 +661,34 @@ export class MatchScene {
       '12px "PingFang SC", sans-serif',
     );
 
+    const isEliminated = this.isPlayerEliminated(m);
+    const canPrepAct = m.phase === 'prep' && !isEliminated;
+    const benchCap = Math.max(1, m.player.bench_capacity || 8);
+    const benchFull = m.player.bench.length >= benchCap;
+
     const stanceLabel = STANCE_LABELS[sel.stance] || sel.stance;
     drawButton(stage, ctx, { x: x + 18, y: cardY + 84, w: w - 36, h: 36 }, `姿态：${stanceLabel} (切换)`, () => {
       const nextStance = STANCE_ORDER[(STANCE_ORDER.indexOf(sel.stance) + 1) % STANCE_ORDER.length];
       void this.dispatchAction('set_stance', { unit_id: sel.id, stance: nextStance }, true);
-    }, { fontSize: 12 });
+    }, { fontSize: 12, disabled: !canPrepAct });
 
     if (sel.location === 'board') {
-      drawButton(stage, ctx, { x: x + 18, y: cardY + 128, w: (w - 42) / 2, h: 36 }, '撤回席', () => {
+      drawButton(stage, ctx, { x: x + 18, y: cardY + 128, w: (w - 42) / 2, h: 36 }, benchFull ? '备战已满' : '撤回席', () => {
         const uid = sel.id;
         this.selectedUnitId = null;
         void this.dispatchAction('recall', { unit_id: uid }, true);
-      }, { fontSize: 12 });
+      }, { fontSize: 12, disabled: !canPrepAct || benchFull });
       drawButton(stage, ctx, { x: x + 24 + (w - 42) / 2, y: cardY + 128, w: (w - 42) / 2, h: 36 }, '出售', () => {
         const uid = sel.id;
         this.selectedUnitId = null;
         void this.dispatchAction('sell', { unit_id: uid }, true);
-      }, { fontSize: 12, border: PALETTE.rose, color: PALETTE.rose });
+      }, { fontSize: 12, border: PALETTE.rose, color: PALETTE.rose, disabled: !canPrepAct });
     } else {
       drawButton(stage, ctx, { x: x + 18, y: cardY + 128, w: w - 36, h: 36 }, '出售该棋子', () => {
         const uid = sel.id;
         this.selectedUnitId = null;
         void this.dispatchAction('sell', { unit_id: uid }, true);
-      }, { fontSize: 12, border: PALETTE.rose, color: PALETTE.rose });
+      }, { fontSize: 12, border: PALETTE.rose, color: PALETTE.rose, disabled: !canPrepAct });
     }
   }
 
@@ -624,9 +816,11 @@ export class MatchScene {
     // Top status banner inside board
     const bannerText =
       m.phase === 'combat'
-        ? activeFrame
-          ? `[第${activeFrame.round}轮] ${activeFrame.actor_name}：${activeFrame.lines?.[0] || activeFrame.reason || ''}`
-          : `战斗中 · 对手：${m.opponent_name || '星序敌军'}`
+        ? this.room && m.player.skip_combat
+          ? '你已跳过本轮战斗，等待其他玩家结束或跳过…'
+          : activeFrame
+            ? `[第${activeFrame.round}轮] ${activeFrame.actor_name}：${activeFrame.lines?.[0] || activeFrame.reason || ''}`
+            : `战斗中 · 对手：${m.opponent_name || '星序敌军'}`
         : `${m.arena_name} · ${this.selectedUnitId ? '点击己方蓝色格部署或点击棋子换位' : '点击棋子选中并调整站位'}`;
     drawClippedText(ctx, bannerText, x + w / 2, y + 18, w - 32, PALETTE.textSub, '600 13px "PingFang SC", sans-serif', 'center', 'middle');
 
@@ -843,30 +1037,50 @@ export class MatchScene {
     }
 
     // Top right of dock: Primary Combat / Ready button
+    const isEliminated = this.isPlayerEliminated(m);
+    const canPrepAct = m.phase === 'prep' && !isEliminated;
+    const hasPendingAugments = Boolean(p.pending_augments && p.pending_augments.length > 0);
     const readyBtnX = rightX - 210;
     if (m.phase === 'prep') {
-      const label = this.room
-        ? p.ready
-          ? '已准备 (取消)'
-          : '准备开战'
-        : '开始战斗';
+      const label = isEliminated
+        ? '已淘汰观战中'
+        : this.room
+          ? p.ready
+            ? '已准备 (取消)'
+            : '准备开战'
+          : '开始战斗';
       drawButton(stage, ctx, { x: readyBtnX, y: by0, w: 196, h: slotH }, label, () => {
         void this.dispatchAction('ready_combat', this.room ? { ready: !p.ready } : {}, true);
       }, {
         bg: p.ready ? '#2d365a' : '#1b644a',
         border: p.ready ? PALETTE.borderBright : PALETTE.emerald,
         fontSize: 16,
+        disabled: isEliminated || hasPendingAugments,
       });
     } else if (m.phase === 'round_result') {
-      drawButton(stage, ctx, { x: readyBtnX, y: by0, w: 196, h: slotH }, '进入下一回合', () => {
+      const nextLabel = isEliminated
+        ? '已淘汰观战中'
+        : this.room
+          ? p.next_ready
+            ? '已就绪 (取消)'
+            : '准备下一回合'
+          : '进入下一回合';
+      drawButton(stage, ctx, { x: readyBtnX, y: by0, w: 196, h: slotH }, nextLabel, () => {
         void this.dispatchAction('ready_next', this.room ? { ready: !p.next_ready } : {}, true);
       }, {
-        bg: PALETTE.violetDark,
-        border: PALETTE.gold,
+        bg: p.next_ready ? '#2d365a' : PALETTE.violetDark,
+        border: p.next_ready ? PALETTE.borderBright : PALETTE.gold,
         fontSize: 15,
+        disabled: isEliminated,
       });
     } else {
-      drawButton(stage, ctx, { x: readyBtnX, y: by0, w: 196, h: slotH }, m.phase === 'combat' ? '战斗演算中…' : '已结束', () => {}, {
+      const combatWaitLabel =
+        m.phase === 'combat'
+          ? this.room && m.player.skip_combat
+            ? '已跳过 · 等待结算'
+            : '战斗演算中…'
+          : '已结束';
+      drawButton(stage, ctx, { x: readyBtnX, y: by0, w: 196, h: slotH }, combatWaitLabel, () => {}, {
         disabled: true,
         fontSize: 14,
       });
@@ -876,28 +1090,51 @@ export class MatchScene {
     const ctrlX = padX + 14;
     const shopY = y + 74;
     const ctrlH = 92;
-    drawButton(stage, ctx, { x: ctrlX, y: shopY, w: 126, h: 42 }, '升级 +4XP', () => {
-      void this.dispatchAction('buy_xp', {}, true);
-    }, { sublabel: '4 金币', fontSize: 13, disabled: m.phase !== 'prep' });
 
-    const rerollLabel = p.free_rerolls > 0 ? `刷新 (免费${p.free_rerolls})` : '刷新商店';
+    const xpMaxed = p.xp_to_next <= 0;
+    const xpNoGold = !xpMaxed && p.gold < 4;
+    const buyXpDisabled = !canPrepAct || xpMaxed || xpNoGold;
+    drawButton(stage, ctx, { x: ctrlX, y: shopY, w: 126, h: 42 }, xpMaxed ? '已达满级' : '升级 +4XP', () => {
+      void this.dispatchAction('buy_xp', {}, true);
+    }, {
+      sublabel: xpMaxed ? '满级' : xpNoGold && canPrepAct ? '4 金币 · 不足' : '4 金币',
+      sublabelColor: xpNoGold && canPrepAct ? '#c8647e' : undefined,
+      fontSize: 13,
+      disabled: buyXpDisabled,
+    });
+
+    const hasFreeReroll = p.free_rerolls > 0;
+    const rerollNoGold = !hasFreeReroll && p.gold < 2;
+    const rerollDisabled = !canPrepAct || rerollNoGold;
+    const rerollLabel = hasFreeReroll ? `刷新 (免费${p.free_rerolls})` : '刷新商店';
     drawButton(stage, ctx, { x: ctrlX, y: shopY + 48, w: 126, h: 44 }, rerollLabel, () => {
       void this.dispatchAction('reroll', {}, true);
-    }, { sublabel: p.free_rerolls > 0 ? '0 金币' : '2 金币', fontSize: 13, disabled: m.phase !== 'prep' });
+    }, {
+      sublabel: hasFreeReroll ? '0 金币' : rerollNoGold && canPrepAct ? '2 金币 · 不足' : '2 金币',
+      sublabelColor: rerollNoGold && canPrepAct ? '#c8647e' : undefined,
+      fontSize: 13,
+      disabled: rerollDisabled,
+    });
 
-    drawButton(stage, ctx, { x: ctrlX + 134, y: shopY, w: 72, h: 92 }, p.shop_locked ? '已锁\n商店' : '锁定\n商店', () => {
+    drawButton(stage, ctx, { x: ctrlX + 134, y: shopY, w: 72, h: 92 }, p.shop_locked ? '已锁定' : '锁定', () => {
       void this.dispatchAction('lock_shop', {}, true);
     }, {
+      sublabel: '商店',
       fontSize: 13,
       bg: p.shop_locked ? '#3c2e1c' : PALETTE.bgCard,
       border: p.shop_locked ? PALETTE.gold : PALETTE.borderBright,
-      disabled: m.phase !== 'prep',
+      disabled: !canPrepAct,
     });
 
     const shopStartX = ctrlX + 216;
     const shopTotalW = rightX - 14 - shopStartX;
     const cardGap = 10;
     const cardW = Math.floor((shopTotalW - 4 * cardGap) / 5);
+
+    const benchCap = Math.max(1, p.bench_capacity || 8);
+    const benchFull = p.bench.length >= benchCap;
+    const boardFull = p.board.length >= p.max_pop;
+    const ownedAll = this.allOwnedUnits(m);
 
     for (let i = 0; i < 5; i += 1) {
       const slot = p.shop[i];
@@ -909,34 +1146,92 @@ export class MatchScene {
         continue;
       }
 
+      const cantAfford = p.gold < slot.cost;
+      const willMerge = ownedAll.filter(u => u.serial === slot.serial && u.star === 1).length >= 2;
+      const noSpace = benchFull && boardFull && !willMerge;
+      const cardDisabled = !canPrepAct || cantAfford || noSpace;
+
       const cColor = costColor(slot.cost);
-      fillRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, PALETTE.bgCard);
-      strokeRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, slot.hint ? PALETTE.gold : cColor, slot.hint ? 2 : 1.3);
+      if (cardDisabled) {
+        fillRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, '#121626');
+        strokeRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, '#252c44', 1);
 
-      drawEmblemBadge(
-        ctx,
-        cx + 26,
-        shopY + 28,
-        16,
-        this.unitEmblem(slot.serial),
-        this.unitAccent(slot.serial),
-        undefined,
-        this.unitCustomImage(slot.serial, 'Y', false, m),
-      );
-      drawClippedText(ctx, slot.name, cx + 50, shopY + 22, cardW - 92, PALETTE.textMain, '700 14px "PingFang SC", sans-serif');
-      drawClippedText(ctx, `${slot.cost}G`, cx + cardW - 12, shopY + 22, 42, PALETTE.gold, '700 14px sans-serif', 'right', 'middle');
-      drawClippedText(ctx, slot.traits.join(' · '), cx + 12, shopY + 54, cardW - 24, PALETTE.textSub, '12px "PingFang SC", sans-serif');
-      drawClippedText(
-        ctx,
-        slot.hint ? `▲ ${slot.hint}` : AUTOCHESS_ROLE_LABELS[slot.role] || slot.role,
-        cx + 12,
-        shopY + 76,
-        cardW - 24,
-        slot.hint ? PALETTE.gold : PALETTE.textMuted,
-        '700 11px "PingFang SC", sans-serif',
-      );
+        ctx.save();
+        ctx.globalAlpha = 0.4;
+        drawEmblemBadge(
+          ctx,
+          cx + 26,
+          shopY + 28,
+          16,
+          this.unitEmblem(slot.serial),
+          this.unitAccent(slot.serial),
+          undefined,
+          this.unitCustomImage(slot.serial, 'Y', false, m),
+        );
+        drawClippedText(ctx, slot.name, cx + 50, shopY + 22, cardW - 92, PALETTE.textMuted, '700 14px "PingFang SC", sans-serif');
+        drawClippedText(ctx, slot.traits.join(' · '), cx + 12, shopY + 54, cardW - 24, PALETTE.textMuted, '12px "PingFang SC", sans-serif');
+        ctx.restore();
 
-      if (m.phase === 'prep') {
+        drawClippedText(
+          ctx,
+          `${slot.cost}G`,
+          cx + cardW - 12,
+          shopY + 22,
+          42,
+          canPrepAct && cantAfford ? '#d96480' : '#5b6482',
+          '700 14px sans-serif',
+          'right',
+          'middle',
+        );
+
+        let bottomText: string;
+        let bottomColor: string;
+        if (canPrepAct && cantAfford) {
+          bottomText = slot.hint ? `金币不足 · ${slot.hint}` : '金币不足';
+          bottomColor = '#c8647e';
+        } else if (canPrepAct && noSpace) {
+          bottomText = '席位已满';
+          bottomColor = '#c98c3a';
+        } else {
+          bottomText = slot.hint ? `▲ ${slot.hint}` : AUTOCHESS_ROLE_LABELS[slot.role] || slot.role;
+          bottomColor = '#4d5673';
+        }
+        drawClippedText(
+          ctx,
+          bottomText,
+          cx + 12,
+          shopY + 76,
+          cardW - 24,
+          bottomColor,
+          '700 11px "PingFang SC", sans-serif',
+        );
+      } else {
+        fillRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, PALETTE.bgCard);
+        strokeRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, slot.hint ? PALETTE.gold : cColor, slot.hint ? 2 : 1.3);
+
+        drawEmblemBadge(
+          ctx,
+          cx + 26,
+          shopY + 28,
+          16,
+          this.unitEmblem(slot.serial),
+          this.unitAccent(slot.serial),
+          undefined,
+          this.unitCustomImage(slot.serial, 'Y', false, m),
+        );
+        drawClippedText(ctx, slot.name, cx + 50, shopY + 22, cardW - 92, PALETTE.textMain, '700 14px "PingFang SC", sans-serif');
+        drawClippedText(ctx, `${slot.cost}G`, cx + cardW - 12, shopY + 22, 42, PALETTE.gold, '700 14px sans-serif', 'right', 'middle');
+        drawClippedText(ctx, slot.traits.join(' · '), cx + 12, shopY + 54, cardW - 24, PALETTE.textSub, '12px "PingFang SC", sans-serif');
+        drawClippedText(
+          ctx,
+          slot.hint ? `▲ ${slot.hint}` : AUTOCHESS_ROLE_LABELS[slot.role] || slot.role,
+          cx + 12,
+          shopY + 76,
+          cardW - 24,
+          slot.hint ? PALETTE.gold : PALETTE.textMuted,
+          '700 11px "PingFang SC", sans-serif',
+        );
+
         stage.addHitRegion({
           x: cx,
           y: shopY,
@@ -956,6 +1251,20 @@ export class MatchScene {
     stage.addHitRegion({ x: 0, y: 0, w: 1280, h: 720, onTap: () => {} });
 
     drawClippedText(ctx, '星序海克斯祝福 · 请选择一项强化', 640, 118, 600, PALETTE.gold, '700 24px "PingFang SC", sans-serif', 'center', 'middle');
+    const leftSec = this.getPrepRemainingSec(m);
+    if (leftSec !== null) {
+      drawClippedText(
+        ctx,
+        `剩余 ${leftSec} 秒，超时自动选择第一项祝福并开战`,
+        640,
+        148,
+        600,
+        leftSec <= 5 ? PALETTE.rose : PALETTE.textSub,
+        '600 13px "PingFang SC", sans-serif',
+        'center',
+        'middle',
+      );
+    }
 
     const cardW = 300;
     const cardH = 340;
@@ -1002,13 +1311,15 @@ export class MatchScene {
       rep.won ? PALETTE.emerald : PALETTE.rose,
       '700 20px "PingFang SC", sans-serif',
     );
+    const resultLeftSec = this.getRoundResultRemainingSec(m);
+    const resultCountdownNote = resultLeftSec !== null ? ` · ${resultLeftSec}s 后自动进入下回合` : '';
     drawClippedText(
       ctx,
-      `激战 ${rep.battle_rounds} 轮${rep.timeout ? '（超时判定）' : ''} · 指挥官 HP 扣减 ${rep.hp_damage}`,
+      `激战 ${rep.battle_rounds} 轮${rep.timeout ? '（超时判定）' : ''} · 指挥官 HP 扣减 ${rep.hp_damage}${resultCountdownNote}`,
       mx + 26,
       my + 68,
       mw - 52,
-      PALETTE.textSub,
+      resultLeftSec !== null && resultLeftSec <= 3 ? PALETTE.rose : PALETTE.textSub,
       '14px "PingFang SC", sans-serif',
     );
 

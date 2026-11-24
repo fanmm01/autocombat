@@ -690,6 +690,17 @@ class AutoChessUI:
                 self._ensure_room_stepper_locked(room['code'])
         return ok
 
+    def _maybe_advance_round_result_deadline_locked(self, room, match):
+        if not match or room.get('status') != 'playing' or match.phase != 'round_result':
+            return False
+        deadline = float(getattr(match, 'round_result_deadline', 0.0) or 0.0)
+        if deadline <= 0 or time.time() < deadline:
+            return False
+        ok, _ = match.next_round()
+        if ok:
+            self._save_room_locked(room, match)
+        return ok
+
     def room_list(self):
         try:
             acc = self._require_account()
@@ -814,6 +825,7 @@ class AutoChessUI:
             if not self._find_member(room, acc['id']):
                 raise Forbidden('请先加入该联机房间')
             self._maybe_advance_prep_deadline_locked(room, match)
+            self._maybe_advance_round_result_deadline_locked(room, match)
             pub = self._public_room(room, match, acc['id'], spectate_cid=spectate_cid)
         return jsonify(room=pub)
 
@@ -830,9 +842,13 @@ class AutoChessUI:
         with self.lock:
             room, match = self._load_room_locked(code)
             if not room:
+                if op == 'leave':
+                    return jsonify(ok=True, disbanded=True, room=None)
                 raise NotFound('联机房间不存在')
             member = self._find_member(room, acc['id'])
             if not member:
+                if op == 'leave':
+                    return jsonify(ok=True, disbanded=False, room=None)
                 raise Forbidden('请先加入该联机房间')
             is_host = acc['id'] == room['host_account_id']
 
@@ -949,6 +965,8 @@ class AutoChessUI:
 
             if self._maybe_advance_prep_deadline_locked(room, match):
                 ok, msg = True, '备战倒计时结束，自动进入战斗阶段'
+            elif self._maybe_advance_round_result_deadline_locked(room, match):
+                ok, msg = True, '结算倒计时结束，自动进入下一回合备战'
             else:
                 ok, msg = match.handle_action(cid, action, payload)
                 if ok and action == 'ready_combat' and match.phase == 'prep' and match.all_humans_ready():
@@ -958,6 +976,8 @@ class AutoChessUI:
                             if pending:
                                 match.pick_augment(hcid, pending[0]['id'])
                     ok, msg = match.start_combat()
+                elif ok and action == 'skip_combat' and match.phase == 'combat' and match.all_humans_skip_combat():
+                    ok, msg = match.resolve_combat()
                 elif ok and action == 'ready_next' and match.phase == 'round_result' and match.all_humans_next_ready():
                     ok, msg = match.next_round()
 
@@ -996,6 +1016,7 @@ class AutoChessUI:
                     if not room_cur:
                         break
                     self._maybe_advance_prep_deadline_locked(room_cur, match_cur)
+                    self._maybe_advance_round_result_deadline_locked(room_cur, match_cur)
                     ver = self.room_versions.get(norm, 0)
                     if ver == last_ver:
                         self.cond.wait(timeout=1.5)
@@ -1003,6 +1024,7 @@ class AutoChessUI:
                         if not room_cur:
                             break
                         self._maybe_advance_prep_deadline_locked(room_cur, match_cur)
+                        self._maybe_advance_round_result_deadline_locked(room_cur, match_cur)
                         ver = self.room_versions.get(norm, 0)
                     if ver != last_ver:
                         last_ver = ver
@@ -1048,6 +1070,7 @@ class AutoChessUI:
                 if not self._find_member(room_cur, acc['id']):
                     raise Forbidden('请先加入该联机房间')
                 self._maybe_advance_prep_deadline_locked(room_cur, match_cur)
+                self._maybe_advance_round_result_deadline_locked(room_cur, match_cur)
                 ver = self.room_versions.get(norm, 0)
                 if ver != since:
                     pub = self._public_room(
