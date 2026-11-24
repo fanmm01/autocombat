@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>星序 · Astral Tactics</title>
+  <defs>
+    <linearGradient id="bg-grad" x1="12" y1="8" x2="118" y2="122" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ded0fb"/>
+      <stop offset="50%" stop-color="#9b84d6"/>
+      <stop offset="100%" stop-color="#6953ab"/>
+    </linearGradient>
+    <radialGradient id="bg-glow" cx="38%" cy="32%" r="68%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.52"/>
+      <stop offset="52%" stop-color="#f3eff9" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#594696" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="center-aura" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.72"/>
+      <stop offset="65%" stop-color="#ede5fb" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#b9a7e8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gold-grad" x1="20" y1="16" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fae6be"/>
+      <stop offset="50%" stop-color="#e8c37e"/>
+      <stop offset="100%" stop-color="#cc9b56"/>
+    </linearGradient>
+    <linearGradient id="silver-orbit" x1="16" y1="88" x2="112" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#cbbcf2"/>
+      <stop offset="50%" stop-color="#f7f4ff"/>
+      <stop offset="100%" stop-color="#dfd4fa"/>
+    </linearGradient>
+    <radialGradient id="core-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="45%" stop-color="#fff5da" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#e8c488" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded icon backdrop -->
+  <rect width="128" height="128" rx="28" fill="url(#bg-grad)"/>
+  <rect width="128" height="128" rx="28" fill="url(#bg-glow)"/>
+
+  <!-- Soft center aura -->
+  <circle cx="64" cy="64" r="42" fill="url(#center-aura)"/>
+
+  <!-- Tactical diamond compass frame -->
+  <path d="M64 15 L113 64 L64 113 L15 64 Z" fill="#f7f2ff" fill-opacity="0.16" stroke="url(#gold-grad)" stroke-width="2.2" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="33" fill="#ffffff" fill-opacity="0.14" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.2"/>
+
+  <!-- Back halves of intersecting orbital rings -->
+  <path d="M15 64 A49 18 0 0 1 113 64" transform="rotate(-28 64 64)" stroke="url(#silver-orbit)" stroke-width="3.2" stroke-linecap="round" stroke-opacity="0.88"/>
+  <path d="M15 64 A49 18 0 0 1 113 64" transform="rotate(28 64 64)" stroke="url(#gold-grad)" stroke-width="3.2" stroke-linecap="round" stroke-opacity="0.9"/>
+
+  <!-- Secondary diagonal crystal rays -->
+  <g stroke="#5c4699" stroke-width="1.2" stroke-linejoin="round">
+    <polygon points="64,64 81,47 71.5,56.5" fill="#f4eeff"/>
+    <polygon points="64,64 81,47 64,53" fill="#cbbaf2"/>
+    <polygon points="64,64 81,81 71.5,71.5" fill="#b49ce8"/>
+    <polygon points="64,64 81,81 64,75" fill="#9278d2"/>
+    <polygon points="64,64 47,81 56.5,71.5" fill="#cbbaf2"/>
+    <polygon points="64,64 47,81 64,75" fill="#a289de"/>
+    <polygon points="64,64 47,47 56.5,56.5" fill="#ffffff"/>
+    <polygon points="64,64 47,47 64,53" fill="#dfd3fa"/>
+  </g>
+
+  <!-- Primary faceted four-pointed astral star emblem -->
+  <g>
+    <!-- Left / top bright crystal facets -->
+    <polygon points="64,64 64,22 56.2,56.2" fill="#ffffff"/>
+    <polygon points="64,64 64,22 71.8,56.2" fill="#e6dbfc"/>
+    <polygon points="64,64 106,64 71.8,56.2" fill="#fcfaff"/>
+    <polygon points="64,64 106,64 71.8,71.8" fill="#baa4ec"/>
+    <polygon points="64,64 64,106 71.8,71.8" fill="#9a7fd9"/>
+    <polygon points="64,64 64,106 56.2,71.8" fill="#d7c7f8"/>
+    <polygon points="64,64 22,64 56.2,71.8" fill="#c7b3f2"/>
+    <polygon points="64,64 22,64 56.2,56.2" fill="#ffffff"/>
+    <!-- Crisp star crest outline -->
+    <path d="M64 22 L71.8 56.2 L106 64 L71.8 71.8 L64 106 L56.2 71.8 L22 64 L56.2 56.2 Z" stroke="#574195" stroke-width="1.7" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Front halves of intersecting orbital rings -->
+  <path d="M15 64 A49 18 0 0 0 113 64" transform="rotate(-28 64 64)" stroke="url(#silver-orbit)" stroke-width="3.6" stroke-linecap="round"/>
+  <path d="M15 64 A49 18 0 0 0 113 64" transform="rotate(28 64 64)" stroke="url(#gold-grad)" stroke-width="3.6" stroke-linecap="round"/>
+
+  <!-- Luminous core highlight -->
+  <circle cx="64" cy="64" r="9.5" fill="url(#core-glow)"/>
+  <path d="M64 57.5 L65.6 62.4 L70.5 64 L65.6 65.6 L64 70.5 L62.4 65.6 L57.5 64 L62.4 62.4 Z" fill="#ffffff"/>
+
+  <!-- Orbital star nodes & subtle sparkles -->
+  <circle cx="23.5" cy="49" r="3" fill="#fff4d2" stroke="#d5a85f" stroke-width="1"/>
+  <path d="M101 89 L102.6 92.4 L106 94 L102.6 95.6 L101 99 L99.4 95.6 L96 94 L99.4 92.4 Z" fill="#ffffff"/>
+  <circle cx="96.5" cy="36.5" r="2.2" fill="#ffffff" fill-opacity="0.92"/>
+</svg>

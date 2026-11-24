@@ -27,7 +27,7 @@ def parallel_session():
         _pools.reset(token)
 
 
-def initialize(settings, season):
+def initialize(settings, season, extra_characters=None):
     global _tournament, _scope, _quiet
     from combat_settings import settings_scope
     _scope = settings_scope(settings)
@@ -39,7 +39,7 @@ def initialize(settings, season):
         import ai_battle as ab
         ab.logger.handlers[:] = [logging.NullHandler()]
         ab.logger.setLevel(logging.WARNING)
-        _tournament = ab.Tournament()
+        _tournament = ab.Tournament(extra_characters=extra_characters)
         _tournament.init_characters()
     _tournament._parallel_prelim = True
     _tournament.char_season_status = season
@@ -53,19 +53,20 @@ def battle(task):
 
 
 class Battles:
-    def __init__(self, workers, settings, season):
+    def __init__(self, workers, settings, season, extra_characters=None):
         # Spawned interpreters must agree on set/hash iteration as well as RNG seeds.
         os.environ.setdefault('PYTHONHASHSEED', '0')
         self.workers = max(1, min(workers, os.cpu_count() or 1))
         self.season = season
         pools = _pools.get()
         self.shared = pools is not None
-        key = (self.workers, json.dumps(settings, sort_keys=True))
+        extra_key = json.dumps(extra_characters, sort_keys=True, ensure_ascii=False) if extra_characters else ''
+        key = (self.workers, json.dumps(settings, sort_keys=True), extra_key)
         self.pool = pools.get(key) if self.shared else None
         if self.pool is None:
             self.pool = ProcessPoolExecutor(max_workers=self.workers,
                 mp_context=multiprocessing.get_context('spawn'),
-                initializer=initialize, initargs=(settings, season))
+                initializer=initialize, initargs=(settings, season, extra_characters))
             if self.shared:
                 pools[key] = self.pool
 

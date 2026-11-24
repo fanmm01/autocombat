@@ -120,6 +120,10 @@ def classify_role(char, spells=None):
     """Classify unit into one of: tank / bruiser / assassin / ranged / support / summoner."""
     if char is None:
         return 'bruiser'
+    if getattr(char, 'serial', '') in ('Y18', 'Y19'):
+        return 'summoner' if char.serial == 'Y18' else 'assassin'
+    if getattr(char, 'serial', '') == 'Y17':
+        return 'bruiser'
     if spells is None:
         spells = getattr(char, 'spells', None) or []
     hp = char.get_attr('体力上限', char.get_attr('体力', 10))
@@ -313,11 +317,46 @@ def _spell_is_already_active(engine, uid, spell):
     return False
 
 
+def _y17_format_cmd(slot_prefix, sn, options=None):
+    args = ' '.join(f'{k}={v}' for k, v in (options or {}).items())
+    return f'{slot_prefix}s{sn} {args}'.strip()
+
+
 def _can_cast_spell(engine, uid, spell, my_acts, failed):
     sn = spell.get('index')
     if sn is None:
         return None
     timing = spell.get('时机', '2')
+    if engine._is_y17(uid):
+        if not engine._can_cast_active_skill(uid):
+            return None
+        if engine._get_cooldown(uid, sn) > 0:
+            return None
+        options = engine._y17_ai_options(uid, spell)
+        use_add = (
+            options.get('mode') != 'throw'
+            and has_timing(timing, '3')
+            and (not has_timing(timing, '2') or my_acts.get('附加', 0) > 0)
+        )
+        if use_add:
+            if my_acts.get('附加', 0) <= 0:
+                return None
+            slot_cmd = f'.a s{sn}'
+            slot_prefix = '.a '
+        else:
+            if not (has_timing(timing, '2') or has_timing(timing, '1') or options.get('mode') == 'throw'):
+                return None
+            if my_acts.get('主动', 0) <= 0:
+                return None
+            slot_cmd = f'.s{sn}'
+            slot_prefix = '.'
+        full_cmd = _y17_format_cmd(slot_prefix, sn, options)
+        if full_cmd in failed or slot_cmd in failed:
+            return None
+        if engine._y17_preflight(uid, dict(spell, _blood_options=options), ai=True):
+            return None
+        return full_cmd
+
     cmd_main = f'.s{sn}'
     cmd_add = f'.a s{sn}'
     slot_cmd = None
@@ -334,7 +373,7 @@ def _can_cast_spell(engine, uid, spell, my_acts, failed):
         return None
     if engine._is_y14(uid) and engine._y14_preflight(uid, spell):
         return None
-    if engine._revive_preflight(uid, spell):
+    if engine._season_preflight(uid, spell) or engine._revive_preflight(uid, spell):
         return None
 
     char = engine.get_char(uid)
@@ -597,7 +636,8 @@ def _estimate_spell_damage(engine, uid, spell, echar_or_uid):
                 total += float(mp) * float(e['damage_mp_multiplier'])
             elif e.get('damage_pct_caster_max_hp'):
                 mhp = char.get_attr('体力上限', 10) if char else 10
-                total += float(mhp) * float(e['damage_pct_caster_max_hp'])
+                pct = float(e['damage_pct_caster_max_hp'])
+                total += float(mhp) * (pct / 100.0 if pct > 1.0 else pct)
             else:
                 total += float(avg_damage(e.get('伤害骰', '1d4')) or 2.5)
             if obj in ('R', 'RP', 'ALL', '45') or e.get('范围半径') or e.get('AOE'):
@@ -623,6 +663,241 @@ def _estimate_spell_damage(engine, uid, spell, echar_or_uid):
             divisor *= 1.6
         total /= divisor
     return total, is_aoe, has_cc
+
+
+def _evaluate_y17_spells(engine, base, char, spells, my_acts, failed, enemies,
+                         weights, st_mults, can_move_now, cur_coord):
+    """Evaluate Y17 blood-magic spells using Y17 options and preflight hooks."""
+    candidates = []
+    out_of_range_best = 0.0
+    out_of_range_coord = None
+    best_desired_range = 2
+
+    rules = engine._y17_rules(base)
+    blood = engine._get_blood(base)
+    cur_hp = max(1, engine._get_combat_hp(base) or 1)
+    max_hp = max(1, char.get_attr('体力上限', cur_hp) or cur_hp)
+    mp = char.get_attr('魔力', 0) or 0
+    chant = engine._y17_chant(base)
+    blade = engine._y17_blade(base)
+    spears = engine._y17_spears(base)
+
+    enemy_coords = [e for e in enemies if e.get('coord')]
+    min_enemy_dist = (
+        min(grid_dist(cur_coord, e['coord']) for e in enemy_coords)
+        if cur_coord and enemy_coords else 99
+    )
+    nearest_enemy = (
+        min(enemy_coords, key=lambda e: grid_dist(cur_coord, e['coord']))
+        if cur_coord and enemy_coords else (enemy_coords[0] if enemy_coords else None)
+    )
+    slash_reach = engine._get_attack_range(spell_effect={'射程': 3}, uid=base)
+    slash_spell = next((s for s in spells if engine._y17_spell_kind(base, s) == 'slash'), None)
+    has_sword = bool(blade and blade.get('bloodForm', 'sword') == 'sword')
+    slash_blood_req = rules.get('slash_base_ml', 500) + (0 if has_sword else rules.get('blade_ml', 100))
+    wants_slash_advance = (
+        not chant
+        and slash_spell is not None
+        and engine._get_cooldown(base, slash_spell['index']) <= 0
+        and mp >= 8
+        and blood >= slash_blood_req
+        and min_enemy_dist > slash_reach
+    )
+    if wants_slash_advance:
+        best_desired_range = max(best_desired_range, slash_reach)
+        if nearest_enemy:
+            out_of_range_coord = nearest_enemy.get('coord')
+
+    if not engine._can_cast_active_skill(base):
+        return candidates, out_of_range_best, out_of_range_coord, best_desired_range, wants_slash_advance
+
+    if chant and my_acts.get('主动', 0) > 0:
+        chant_spell = next((s for s in spells if s.get('index') == chant.get('spellIndex')), None)
+        if chant_spell:
+            options = engine._y17_ai_options(base, chant_spell)
+            sn = chant_spell['index']
+            cmd = _y17_format_cmd('.', sn, options)
+            if cmd not in failed and f'.s{sn}' not in failed:
+                if not engine._y17_preflight(base, dict(chant_spell, _blood_options=options), ai=True):
+                    is_cancel = options.get('mode') == 'cancel'
+                    sc = 220.0 if is_cancel else 170.0
+                    sname = chant_spell.get('name', f's{sn}')
+                    reason = f'取消吟唱【{sname}】避免误伤队友' if is_cancel else f'继续吟唱【{sname}】'
+                    candidates.append((sc, cmd, None, reason))
+
+    for spell in spells:
+        sn = spell.get('index')
+        if sn is None or engine._get_cooldown(base, sn) > 0:
+            continue
+        kind = engine._y17_spell_kind(base, spell)
+        if not kind:
+            continue
+        if chant and kind not in ('guard', 'blade', 'store', 'cape', 'spear'):
+            continue
+        timing = spell.get('时机', '2')
+        sname = spell.get('name', f's{sn}')
+
+        if kind == 'guard':
+            if my_acts.get('附加', 0) > 0 and has_timing(timing, '3'):
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.a ', sn, options)
+                reserve = 500 + (0 if blade else rules.get('blade_ml', 100))
+                if (cmd not in failed and f'.a s{sn}' not in failed
+                        and blood - options.get('blood', 0) >= reserve and min_enemy_dist <= 10):
+                    if not engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True):
+                        sc = weights['buff_weight'] * 4.5 + 90.0
+                        candidates.append((sc, cmd, None, f'施放【{sname}】凝聚血甲'))
+
+        elif kind == 'blade':
+            if my_acts.get('附加', 0) > 0 and has_timing(timing, '3'):
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.a ', sn, options)
+                if cmd not in failed and f'.a s{sn}' not in failed:
+                    if not engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True):
+                        form = options.get('form', 'sword')
+                        sc = None
+                        if not blade:
+                            sc = 195.0
+                        elif form == 'sword' and blood >= 600:
+                            sc = 190.0
+                        elif form == 'bow' and not can_move_now and min_enemy_dist > slash_reach:
+                            sc = 145.0
+                        if sc is not None:
+                            label = '血弓' if form == 'bow' else '血刃'
+                            candidates.append((sc, cmd, None, f'施放【{sname}】凝聚{label}'))
+
+        elif kind == 'store':
+            if my_acts.get('附加', 0) > 0 and has_timing(timing, '3'):
+                options = engine._y17_ai_options(base, spell)
+                tgt = options.get('target')
+                if tgt:
+                    tchar = engine.get_char(tgt)
+                    cap = max(1, (tchar.get_attr('体力上限', 1) if tchar else 1) or 1)
+                    thp = engine._get_combat_hp(tgt) or 0
+                    missing = cap - thp
+                    if missing >= rules.get('ball_heal', 1) and thp <= cap * 0.8:
+                        cmd = _y17_format_cmd('.a ', sn, options)
+                        if cmd not in failed and f'.a s{sn}' not in failed:
+                            if not engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True):
+                                sc = (225.0 if thp <= cap * 0.65 else 95.0) * st_mults['heal_mult']
+                                candidates.append((sc, cmd, None, f'施放【{sname}】治疗友方'))
+
+        elif kind == 'cape':
+            if (my_acts.get('附加', 0) > 0 and has_timing(timing, '3')
+                    and mp < 8 and blood >= rules.get('cape_ml', 1000) + 500):
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.a ', sn, options)
+                if cmd not in failed and f'.a s{sn}' not in failed:
+                    if not engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True):
+                        candidates.append((215.0, cmd, None, f'施放【{sname}】血染披风回蓝'))
+
+        elif kind == 'spear':
+            if (not spears and my_acts.get('附加', 0) > 0 and has_timing(timing, '3')
+                    and min_enemy_dist <= 2 and blood >= rules.get('spear_ml', 1000) + 500):
+                create_cmd = f'.a s{sn}'
+                if create_cmd not in failed:
+                    if not engine._y17_preflight(base, dict(spell, _blood_options={}), ai=True):
+                        candidates.append((155.0, create_cmd, None, f'施放【{sname}】凝聚血枪'))
+            if spears and not chant and my_acts.get('主动', 0) > 0 and (has_timing(timing, '2') or has_timing(timing, '1')):
+                throw_opts = {'mode': 'throw'}
+                throw_cmd = _y17_format_cmd('.', sn, throw_opts)
+                if throw_cmd not in failed and f'.s{sn}' not in failed:
+                    exp_dmg = float(avg_damage(rules.get('spear_throw', '1d10+6')) or 11.5) * 1.15
+                    hit_p = _estimate_hit_prob(engine._apply_buff_skill_mod(base, char.get_attr('弓术', 61), '弓术'))
+                    spear_range = int(rules.get('spear_range', 8) or 8)
+                    best_desired_range = max(best_desired_range, spear_range)
+                    for e in enemies:
+                        err = engine._y17_preflight(base, dict(spell, _blood_options=throw_opts), ai=True, target=e['userId'])
+                        if not err:
+                            sc = _enemy_target_score(engine, base, e, exp_dmg, hit_p, weights)
+                            dist = grid_dist(cur_coord, e.get('coord', '')) if (cur_coord and e.get('coord')) else 99
+                            if spears[0] <= 1 or dist > 2:
+                                sc += 12.0
+                            ename = e.get('name', e['userId'])
+                            candidates.append((sc, throw_cmd, e['userId'], f'投掷血枪【{sname}】打击 {ename}'))
+                        elif '射程' in err and e.get('coord'):
+                            sc_oor = _enemy_target_score(engine, base, e, exp_dmg, hit_p, weights)
+                            if sc_oor > out_of_range_best:
+                                out_of_range_best = sc_oor
+                                out_of_range_coord = e.get('coord')
+
+        elif kind == 'slash':
+            if my_acts.get('主动', 0) > 0 and has_timing(timing, '2'):
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.', sn, options)
+                if cmd not in failed and f'.s{sn}' not in failed:
+                    segments = 1 + (options['blood'] - rules['slash_base_ml']) // rules['slash_extra_ml']
+                    moon_entry = rules['moon_phases'][options['moon'] - 1]
+                    phase_dmg = float(avg_damage(moon_entry[1]) or 10.0)
+                    is_leech = bool(moon_entry[2])
+                    total_dmg = phase_dmg * segments * 1.15
+                    hit_p = _estimate_hit_prob(80)
+                    leech_bonus = (
+                        min(max_hp - cur_hp, phase_dmg * segments) * 0.7 * weights['dmg_weight'] * hit_p
+                        if is_leech else 0.0
+                    )
+                    for e in enemies:
+                        err = engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True, target=e['userId'])
+                        if not err:
+                            sc = _enemy_target_score(engine, base, e, total_dmg, hit_p, weights) + leech_bonus
+                            ename = e.get('name', e['userId'])
+                            candidates.append((sc, cmd, e['userId'], f'释放【{sname}】斩击 {ename}'))
+                        elif '射程' in err and e.get('coord'):
+                            sc_oor = _enemy_target_score(engine, base, e, total_dmg, hit_p, weights) + leech_bonus
+                            if sc_oor > out_of_range_best:
+                                out_of_range_best = sc_oor
+                                out_of_range_coord = e.get('coord')
+
+        elif kind == 'war':
+            if my_acts.get('主动', 0) > 0 and has_timing(timing, '2') and cur_hp > max(8, max_hp * 0.3):
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.', sn, options)
+                if cmd not in failed and f'.s{sn}' not in failed:
+                    if not engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True):
+                        war_rad = int(rules.get('war_radius', 10) or 10)
+                        in_rad = [e for e in enemies if not cur_coord or not e.get('coord') or grid_dist(cur_coord, e['coord']) <= war_rad]
+                        rep = in_rad[0] if in_rad else enemies[0]
+                        est_dmg = float(avg_damage('2d12') or 13.0) * min(3, max(1, len(in_rad)))
+                        sc = max(1.0, _enemy_target_score(engine, base, rep, est_dmg, 0.96, weights) - 4.5 * weights['dmg_weight'])
+                        candidates.append((sc, cmd, None, f'释放【{sname}】血波冲击'))
+
+        elif kind == 'arcana':
+            if my_acts.get('主动', 0) > 0 and has_timing(timing, '2') and cur_hp >= max_hp * 0.45:
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.', sn, options)
+                if cmd not in failed and f'.s{sn}' not in failed:
+                    effective_mp = max(1, mp // 2, (char.get_attr('魔力上限', 26) + 3) // 4)
+                    raw_dmg = effective_mp * 4.0
+                    divisor = (1.0 + 1.3 * 3) * (1.6 if cur_hp <= 11 else 1.0)
+                    hit_p = _estimate_hit_prob(80)
+                    for e in enemies:
+                        err = engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True, target=e['userId'])
+                        if not err:
+                            ehp = max(1, engine._get_combat_hp(e['userId']) or 10)
+                            est_dmg = min(raw_dmg, float(ehp)) / divisor
+                            sc = _enemy_target_score(engine, base, e, est_dmg, hit_p, weights) * 0.85
+                            ename = e.get('name', e['userId'])
+                            candidates.append((sc, cmd, e['userId'], f'吟唱【{sname}】锁定 {ename}'))
+                        elif '射程' in err and e.get('coord'):
+                            est_dmg = raw_dmg / divisor
+                            sc_oor = _enemy_target_score(engine, base, e, est_dmg, hit_p, weights) * 0.85
+                            if sc_oor > out_of_range_best:
+                                out_of_range_best = sc_oor
+                                out_of_range_coord = e.get('coord')
+
+        elif kind == 'sacrifice':
+            if my_acts.get('主动', 0) > 0 and has_timing(timing, '2'):
+                options = engine._y17_ai_options(base, spell)
+                cmd = _y17_format_cmd('.', sn, options)
+                if cmd not in failed and f'.s{sn}' not in failed:
+                    est_dmg = max_hp * 0.9 / 2.0
+                    for e in enemies:
+                        if not engine._y17_preflight(base, dict(spell, _blood_options=options), ai=True, target=e['userId']):
+                            sc = _enemy_target_score(engine, base, e, est_dmg, 0.96, weights)
+                            ename = e.get('name', e['userId'])
+                            candidates.append((sc, cmd, e['userId'], f'绝境吟唱【{sname}】锁定 {ename}'))
+
+    return candidates, out_of_range_best, out_of_range_coord, best_desired_range, wants_slash_advance
 
 
 def decide_tactical_action(engine, uid, weights=None):
@@ -706,6 +981,38 @@ def decide_tactical_action(engine, uid, weights=None):
                 engine._last_ai_reason = reason
                 return give_cmd, reason
 
+    if getattr(char, 'serial', '') in ('Y18', 'Y19'):
+        zone = engine._season_zone(base) or {}
+        if char.serial == 'Y18':
+            active = zone.get('spellIndex')
+            order = {None: (2, 1, 4), 2: (1, 3, 4), 3: (1, 4), 4: (1,)}[active]
+        else:
+            marked = any(engine._leaf_marks(e['userId']) >= 2 for e in enemies)
+            order = (4, 2, 1, 3) if zone else (3, 2, 1) if marked else (1, 2, 3)
+        for index in order:
+            spell = next((s for s in spells if s['index'] == index), None)
+            cmd = _can_cast_spell(engine, base, spell, my_acts, failed) if spell else None
+            if cmd:
+                if char.serial == 'Y19' and index == 2:
+                    target = next((e for e in enemies if engine._spear_landing(base, e['userId'])), None)
+                    if not target:
+                        continue
+                    engine._set_autochess_pending_target(base, target['userId'])
+                engine._last_ai_reason = spell['name']
+                return cmd, spell['name']
+
+    is_y17 = engine._is_y17(base)
+    y17_chant = engine._y17_chant(base) if is_y17 else None
+    me_entry = engine._unit_il_entry(base, engine._get_initiative())
+    cur_coord = me_entry.get('coord', '') if me_entry else ''
+    can_move_now = (
+        my_acts.get('附加', 0) > 0
+        and base not in getattr(engine, '_moved_this_turn', set())
+        and engine._can_move(base)
+    )
+    if y17_chant and cur_coord and cur_coord not in engine._unit_hazard_coords(base):
+        can_move_now = False
+
     # Candidate list: (score, cmd, target_uid, reason)
     candidates = []
     out_of_range_best = 0.0
@@ -713,7 +1020,7 @@ def decide_tactical_action(engine, uid, weights=None):
     best_desired_range = 2
 
     # 1. Evaluate basic attack (.s0)
-    if '.s0' not in failed and engine._can_basic_attack(base):
+    if not y17_chant and '.s0' not in failed and engine._can_basic_attack(base):
         bn, bv = engine._get_attack_skill(base, char)
         bv = engine._apply_buff_skill_mod(base, bv, bn)
         profile = engine._y14_attack_profile(base)
@@ -743,97 +1050,108 @@ def decide_tactical_action(engine, uid, weights=None):
                     out_of_range_coord = e.get('coord')
 
     # 2. Evaluate castable active / additional spells
-    need_heal_allies = []
-    for a_uid, a_entry, _is_self in allies:
-        ahp = engine._get_combat_hp(a_uid) or 0
-        achar = engine.get_char(a_uid)
-        amhp = max(1, (achar.get_attr('体力上限', ahp) if achar else ahp) or 1)
-        missing = max(0, amhp - ahp)
-        if engine._is_dying(a_uid) or ahp / amhp < 0.82:
-            need_heal_allies.append((1.0 - ahp / amhp, missing, a_uid, a_entry.get('name', a_uid)))
-    need_heal_allies.sort(reverse=True)
+    wants_slash_advance = False
+    if is_y17:
+        y17_cands, y17_oor_best, y17_oor_coord, y17_range, wants_slash_advance = _evaluate_y17_spells(
+            engine, base, char, spells, my_acts, failed, enemies,
+            weights, st_mults, can_move_now, cur_coord,
+        )
+        candidates.extend(y17_cands)
+        best_desired_range = max(best_desired_range, y17_range)
+        if y17_oor_coord and (wants_slash_advance or y17_oor_best > out_of_range_best or not out_of_range_coord):
+            out_of_range_best = max(out_of_range_best, y17_oor_best)
+            out_of_range_coord = y17_oor_coord
+        y17_blade = engine._y17_blade(base)
+        if wants_slash_advance or (y17_blade and y17_blade.get('bloodForm', 'sword') == 'sword'):
+            role = 'bruiser'
+        elif engine._y17_ranged(base):
+            role = 'ranged'
+            best_desired_range = max(best_desired_range, 8)
+    else:
+        need_heal_allies = []
+        for a_uid, a_entry, _is_self in allies:
+            ahp = engine._get_combat_hp(a_uid) or 0
+            achar = engine.get_char(a_uid)
+            amhp = max(1, (achar.get_attr('体力上限', ahp) if achar else ahp) or 1)
+            missing = max(0, amhp - ahp)
+            if engine._is_dying(a_uid) or ahp / amhp < 0.82:
+                need_heal_allies.append((1.0 - ahp / amhp, missing, a_uid, a_entry.get('name', a_uid)))
+        need_heal_allies.sort(reverse=True)
 
-    for spell in spells:
-        cmd = _can_cast_spell(engine, base, spell, my_acts, failed)
-        if not cmd:
-            continue
-        effects = _spell_effects(spell)
-        if not effects:
-            continue
-        sname = spell.get('name', cmd)
-        cast_skill_name = spell.get('判定技能', spell.get('skill', ''))
-        cast_skill_val = char.get_attr(cast_skill_name, 75) if cast_skill_name else 75
-        hit_p = _estimate_hit_prob(engine._apply_buff_skill_mod(base, cast_skill_val, cast_skill_name) if cast_skill_name else 85)
+        for spell in spells:
+            cmd = _can_cast_spell(engine, base, spell, my_acts, failed)
+            if not cmd:
+                continue
+            effects = _spell_effects(spell)
+            if not effects:
+                continue
+            sname = spell.get('name', cmd)
+            cast_skill_name = spell.get('判定技能', spell.get('skill', ''))
+            cast_skill_val = char.get_attr(cast_skill_name, 75) if cast_skill_name else 75
+            hit_p = _estimate_hit_prob(engine._apply_buff_skill_mod(base, cast_skill_val, cast_skill_name) if cast_skill_name else 85)
 
-        has_dmg = any(e.get('type') == 1 or (e.get('type') == 8 and e.get('每回合伤害骰')) for e in effects)
-        has_heal = any(e.get('type') in (2, 18) or (e.get('type') == 8 and e.get('回复hp')) for e in effects)
-        has_revive = any(e.get('type') == 19 for e in effects)
-        has_morale_cc = any(e.get('type') == 11 for e in effects)
-        has_summon = any(e.get('type') == 5 for e in effects)
-        has_cc = has_morale_cc or any(e.get('type') == 4 and str(e.get('客体', 4)) in ('5', '124') for e in effects)
-        has_buff = any(e.get('type') in (3, 4) and str(e.get('客体', 4)) not in ('5', '124') for e in effects)
+            has_dmg = any(e.get('type') == 1 or (e.get('type') == 8 and e.get('每回合伤害骰')) for e in effects)
+            has_heal = any(e.get('type') in (2, 18) or (e.get('type') == 8 and e.get('回复hp')) for e in effects)
+            has_revive = any(e.get('type') == 19 for e in effects)
+            has_morale_cc = any(e.get('type') == 11 for e in effects)
+            has_summon = any(e.get('type') == 5 for e in effects)
+            has_cc = has_morale_cc or any(e.get('type') == 4 and str(e.get('客体', 4)) in ('5', '124') for e in effects)
+            has_buff = any(e.get('type') in (3, 4) and str(e.get('客体', 4)) not in ('5', '124') for e in effects)
 
-        if has_revive:
-            candidates.append((weights['support_heal_weight'] * 2.4, cmd, None, f'施放【{sname}】唤醒阵亡队友'))
-        elif has_dmg or has_cc:
-            est_dmg, is_aoe, effect_cc = _estimate_spell_damage(engine, base, spell, enemies[0])
-            sr = _spell_offensive_range(engine, base, spell)
-            best_desired_range = max(best_desired_range, sr)
-            enemy_mult = min(len(enemies), 3) if is_aoe else 1.0
-            for e in enemies:
-                sc = _enemy_target_score(engine, base, e, est_dmg * enemy_mult, hit_p, weights)
-                if has_morale_cc:
-                    sc += weights['cc_weight'] * 1.15
-                elif effect_cc or has_cc:
-                    sc += weights['cc_weight'] * (0.85 if not e.get('isSummon') else 0.35)
-                if any(ef.get('type') == 8 and ef.get('每回合伤害骰') for ef in effects):
-                    sc += weights['zone_weight'] * 0.45
-                if any(ef.get('consume_moon') for ef in effects):
-                    sc *= 1.15
-                # If command is pure range-checked (type==1) verify reachability
-                has_type1_enemy = any(
-                    ef.get('type') == 1 and str(ef.get('客体', 0)).upper() in ('4', '5', '24', '45', 'R', 'RP')
-                    for ef in effects
-                )
-                reachable_ok = (not has_type1_enemy) or engine._can_reach_attack_range(base, e['userId'], sr)
-                if reachable_ok:
-                    ename = e.get('name', e['userId'])
-                    candidates.append((sc, cmd, e['userId'], f'释放【{sname}】打击 {ename}'))
-                else:
-                    if sc > out_of_range_best:
-                        out_of_range_best = sc
-                        out_of_range_coord = e.get('coord')
-        elif has_summon:
-            sc = weights['summon_weight']
-            if cmd.startswith('.a '):
-                sc += 12.0  # Additional action summon leaves main action free
-            candidates.append((sc, cmd, None, f'召唤伙伴【{sname}】增强战力'))
-        elif has_heal:
-            if need_heal_allies:
-                urgency, missing, ally_uid, ally_name = need_heal_allies[0]
-                sc = weights['support_heal_weight'] * (0.7 + urgency * 1.6) * st_mults['heal_mult']
-                if missing <= 2 and not any(ef.get('type') == 8 for ef in effects):
-                    sc *= 0.45
+            if has_revive:
+                candidates.append((weights['support_heal_weight'] * 2.4, cmd, None, f'施放【{sname}】唤醒阵亡队友'))
+            elif has_dmg or has_cc:
+                est_dmg, is_aoe, effect_cc = _estimate_spell_damage(engine, base, spell, enemies[0])
+                sr = _spell_offensive_range(engine, base, spell)
+                best_desired_range = max(best_desired_range, sr)
+                enemy_mult = min(len(enemies), 3) if is_aoe else 1.0
+                for e in enemies:
+                    sc = _enemy_target_score(engine, base, e, est_dmg * enemy_mult, hit_p, weights)
+                    if has_morale_cc:
+                        sc += weights['cc_weight'] * 1.15
+                    elif effect_cc or has_cc:
+                        sc += weights['cc_weight'] * (0.85 if not e.get('isSummon') else 0.35)
+                    if any(ef.get('type') == 8 and ef.get('每回合伤害骰') for ef in effects):
+                        sc += weights['zone_weight'] * 0.45
+                    if any(ef.get('consume_moon') for ef in effects):
+                        sc *= 1.15
+                    # If command is pure range-checked (type==1) verify reachability
+                    has_type1_enemy = any(
+                        ef.get('type') == 1 and str(ef.get('客体', 0)).upper() in ('4', '5', '24', '45', 'R', 'RP')
+                        for ef in effects
+                    )
+                    reachable_ok = (not has_type1_enemy) or engine._can_reach_attack_range(base, e['userId'], sr)
+                    if reachable_ok:
+                        ename = e.get('name', e['userId'])
+                        candidates.append((sc, cmd, e['userId'], f'释放【{sname}】打击 {ename}'))
+                    else:
+                        if sc > out_of_range_best:
+                            out_of_range_best = sc
+                            out_of_range_coord = e.get('coord')
+            elif has_summon:
+                sc = weights['summon_weight']
                 if cmd.startswith('.a '):
-                    sc += 10.0
-                candidates.append((sc, cmd, ally_uid, f'施放【{sname}】治疗 {ally_name}'))
-        elif has_buff:
-            if not _spell_is_already_active(engine, base, spell):
-                # Signature combat enchants stay high priority; minor self-buffs wait behind real attacks
-                is_sig_buff = sname in ('火焰附魔', '幻造兵武', '斗殴精通', '斗殴强化', '猩红眼眸', '辉月女神的祝福')
-                sc = (weights['buff_weight'] + 6.0) if is_sig_buff else (weights['buff_weight'] * 0.55)
-                if cmd.startswith('.a '):
-                    sc += 14.0
-                candidates.append((sc, cmd, base, f'开启增益【{sname}】'))
+                    sc += 12.0  # Additional action summon leaves main action free
+                candidates.append((sc, cmd, None, f'召唤伙伴【{sname}】增强战力'))
+            elif has_heal:
+                if need_heal_allies:
+                    urgency, missing, ally_uid, ally_name = need_heal_allies[0]
+                    sc = weights['support_heal_weight'] * (0.7 + urgency * 1.6) * st_mults['heal_mult']
+                    if missing <= 2 and not any(ef.get('type') == 8 for ef in effects):
+                        sc *= 0.45
+                    if cmd.startswith('.a '):
+                        sc += 10.0
+                    candidates.append((sc, cmd, ally_uid, f'施放【{sname}】治疗 {ally_name}'))
+            elif has_buff:
+                if not _spell_is_already_active(engine, base, spell):
+                    # Signature combat enchants stay high priority; minor self-buffs wait behind real attacks
+                    is_sig_buff = sname in ('火焰附魔', '幻造兵武', '斗殴精通', '斗殴强化', '猩红眼眸', '辉月女神的祝福')
+                    sc = (weights['buff_weight'] + 6.0) if is_sig_buff else (weights['buff_weight'] * 0.55)
+                    if cmd.startswith('.a '):
+                        sc += 14.0
+                    candidates.append((sc, cmd, base, f'开启增益【{sname}】'))
 
     # 3. Check tactical movement (.a m <coord>) BEFORE burning main action
-    can_move_now = (
-        my_acts.get('附加', 0) > 0
-        and base not in getattr(engine, '_moved_this_turn', set())
-    )
-    me_entry = engine._unit_il_entry(base, engine._get_initiative())
-    cur_coord = me_entry.get('coord', '') if me_entry else ''
-
     if can_move_now and cur_coord:
         best_move_coord, move_gain, move_reason = plan_best_move(
             engine, base, role=role, stance=stance, weights=weights,
@@ -850,9 +1168,16 @@ def decide_tactical_action(engine, uid, weights=None):
                 )
                 in_hazard = cur_coord in engine._unit_hazard_coords(base)
                 has_good_offense = bool(candidates) and max(c[0] for c in candidates) >= 22.0
+                slash_advance_move = (
+                    is_y17
+                    and wants_slash_advance
+                    and out_of_range_coord
+                    and grid_dist(best_move_coord, out_of_range_coord) < grid_dist(cur_coord, out_of_range_coord)
+                )
                 should_reposition = (
                     not candidates
                     or in_hazard
+                    or slash_advance_move
                     or (role in ('ranged', 'support', 'summoner') and enemies_close and move_gain > 2.0)
                     or (not has_good_offense and move_gain >= weights['move_threshold'] * 1.75)
                     or move_gain >= weights['move_threshold'] * 2.8

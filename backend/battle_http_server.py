@@ -84,7 +84,7 @@ from flask import Flask, request, jsonify
 
 # Now import from battle_engine — its lazy imports get characters_data_pvp
 from battle_engine import (
-    action_committed, ActionExecutionResult,
+    action_committed, ActionExecutionResult, _portal_attack,
     FullBattleEngine, CombatEngine,
     roll_dice, parse_coord, format_coord,
     is_in_melee_range, has_timing, has_object,
@@ -459,6 +459,7 @@ class PvPFullBattleEngine(FullBattleEngine):
         can_melee, penalty = self._can_melee(atk_uid, def_uid)
         return ('' if can_melee else '无法近战飞行目标！'), penalty
 
+    @_portal_attack
     def _coc7_attack(self, atk_uid, def_uid, skill_name, skill_val, dmg_dice, pen, leth,
                      bp_suffix="", dmg_adv=False, dmg_dis=False):
         """Override: raise ReactionNeeded at the reaction decision point (line 1210 of parent)."""
@@ -477,13 +478,14 @@ class PvPFullBattleEngine(FullBattleEngine):
                 bp_suffix = 'p'
             self._y17_weapon_used(atk_uid)
 
+        self._begin_portal_hit(atk_uid, def_uid)
         lines.extend(self._received_attack_reactions(atk_uid, def_uid))
         eff_skill = self._apply_buff_skill_mod(atk_uid, skill_val, skill_name)
         atk_buffs = self._get_active_buffs(atk_uid)
         eff_bp = _calc_net_bp(atk_buffs, bp_suffix, skill_name)
 
         atk_result, bp_detail = roll_d100(eff_bp)
-        atk_rank = success_rank(atk_result, eff_skill)
+        atk_rank = success_rank(atk_result, eff_skill, *self._get_buff_crit_adjustment(atk_uid))
         bp_str = f", {bp_detail}" if bp_detail else ""
         lines.append(f"{aname} 的【{skill_name}】检定:")
         lines.append(f"  D100={atk_result}/{eff_skill}{bp_str} {rank_text(atk_rank)}")
@@ -538,7 +540,22 @@ class PvPFullBattleEngine(FullBattleEngine):
         # unreachable — return is just to satisfy type checker
         return (None, None, lines)
 
+    def _seasonal_melee_damage(self, attacker, defender, damage):
+        if not any(e.get('seasonSource') for e in self._get_effects()):
+            return damage
+        percent = sum(int(view['auxVal']) for uid, code in ((attacker, 3), (defender, 1))
+                      for view in self._zone_buff_views(uid) if view.get('seasonSource') and view['auxCode'] == code)
+        return self._apply_autochess_damage_mods(attacker, defender, int(damage * (1 + percent / 100)))
+
     def resolve_reaction(self, state: dict, choice: str):
+        previous = getattr(self, '_portal_hit', None)
+        self._portal_hit = state.get('portalHit')
+        try:
+            return self._resolve_reaction(state, choice)
+        finally:
+            self._portal_hit = previous
+
+    def _resolve_reaction(self, state: dict, choice: str):
         """Complete _coc7_attack after player chooses dodge/counter.
 
         This duplicates the second half of _coc7_attack (parent lines 1212-1321).
@@ -655,6 +672,7 @@ class PvPFullBattleEngine(FullBattleEngine):
                     else:
                         adv = roll_dice(dmg_dice)
                         adetail = f"{dmg_dice}={adv}"
+                adv = self._seasonal_melee_damage(atk_uid, def_uid, adv)
                 asr = self._absorb_damage_with_shield(def_uid, adv)
                 aeff = asr[0]
                 if asr[1] > 0:
@@ -702,6 +720,7 @@ class PvPFullBattleEngine(FullBattleEngine):
                         ddetail = f"{cdmg}满值{dmx}+{extra}={ddmg}"
                 else:
                     ddmg, ddetail = self._normal_damage_roll(def_uid, cdmg)
+                ddmg = self._seasonal_melee_damage(def_uid, atk_uid, ddmg)
                 dsr = self._absorb_damage_with_shield(atk_uid, ddmg)
                 deff = dsr[0]
                 if dsr[1] > 0:
@@ -741,6 +760,7 @@ class PvPFullBattleEngine(FullBattleEngine):
                 elif atk_rank == 3: blk_dmg = mx + roll_dice(dmg_dice) if pen else mx
                 elif atk_rank == 4: blk_dmg = mx * 2 if (atk_result == 1 or pen) else mx + roll_dice(dmg_dice)
                 else: blk_dmg = roll_dice(dmg_dice)
+                blk_dmg = self._seasonal_melee_damage(atk_uid, def_uid, blk_dmg)
                 sr = self._absorb_damage_with_shield(def_uid, blk_dmg); blk_eff = sr[0]
                 # ── block_redirect: 伤害由召唤物承担 ──
                 _block_redirect = self._get_block_redirect_target(def_uid)
@@ -826,6 +846,7 @@ class PvPFullBattleEngine(FullBattleEngine):
                 dmg_detail = f"{dmg_dice}={dmg_val}"
 
         lines.append(f"  {winner_name} 胜利! {rank_text(winner_rank)}")
+        dmg_val = self._seasonal_melee_damage(winner_uid, loser_uid, dmg_val)
         sr = self._absorb_damage_with_shield(loser_uid, dmg_val)
         eff_dmg = sr[0]
         if sr[1] > 0:
@@ -931,6 +952,14 @@ class PvPFullBattleEngine(FullBattleEngine):
         )
 
     def resolve_spell_reaction(self, state: dict, choice: str):
+        previous = getattr(self, '_portal_hit', None)
+        self._portal_hit = state.get('portalHit')
+        try:
+            return self._resolve_spell_reaction(state, choice)
+        finally:
+            self._portal_hit = previous
+
+    def _resolve_spell_reaction(self, state: dict, choice: str):
         """Complete spell reaction after player input.
         Supports dodge, counter, AND block (for ignore_unreactable_block users like 玄武).
         Returns (dodged: bool, countered: bool, lines: list)."""

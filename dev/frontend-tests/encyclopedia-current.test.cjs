@@ -14,7 +14,7 @@ const article = (card, spell) => profiles[card.serial].skills.find(s => s.name =
 const prose = skill => [skill.cost, skill.limits, skill.description, ...skill.facts].join('\n');
 const plain = html => html.replace(/<[^>]*>/g, '');
 
-test('all 106 articles contain current costs, damage, healing and summon quantities', () => {
+test('all 114 articles contain current costs, damage, healing and summon quantities', () => {
   let count = 0;
   for (const card of cards) {
     assert.ok(profiles[card.serial].basic.includes(`普通攻击基础骰：${card.str_attrs?.['伤害值'] ?? '未单独设定，依引擎默认规则'}；`));
@@ -35,7 +35,7 @@ test('all 106 articles contain current costs, damage, healing and summon quantit
       count++;
     }
   }
-  assert.equal(count, 106);
+  assert.equal(count, 114);
   const ember = profiles.Y15.skills.find(s => s.name === '余烬');
   assert.match(ember.description, /连续发动两段/);
   assert.equal(cards.find(c => c.serial === 'Y15').spells.find(s => s.name === '余烬').effects.length, 2);
@@ -170,7 +170,7 @@ test('every referenced damage, healing, shield and summon quantity reacts to dat
       }
     }
   }
-  assert.equal(checked, 72);
+  assert.equal(checked, 77);
 });
 
 test('summon, cake, passive, cross-skill and blood references follow edits and skill reordering', () => {

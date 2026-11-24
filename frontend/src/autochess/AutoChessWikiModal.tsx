@@ -161,7 +161,7 @@ export function AutoChessWikiModal({
                 />
               </div>
               <div className="ac-wiki-filter-pills">
-                {[0, 1, 2, 3, 4].map(c => (
+                {[0, 1, 2, 3, 4, 5, 6].map(c => (
                   <button
                     key={c}
                     type="button"
@@ -453,7 +453,7 @@ export function AutoChessWikiModal({
           <div className="ac-wiki-body ac-wiki-rules">
             <section className="ac-wiki-rule-card">
               <h4><Shield size={15} /> 1. 独立模式边界与主动作公式</h4>
-              <p>星序自走棋完全独立于经典模式与本体百科：仅收录 <code>Y1–Y17</code> 共 17 位魔法少女。每轮主动作次数仍严格沿用经典 CoC 公式 <code>max(1, (有效MOV+1)//5 + 额外行动数)</code>；仅将战术移动力缩放为 2–8 格，且回合末保留站位不再弹回锚点。</p>
+              <p>星序自走棋完全独立于经典模式与本体百科：仅收录 <code>Y1–Y19</code> 共 19 位魔法少女。每轮主动作次数仍严格沿用经典 CoC 公式 <code>max(1, (有效MOV+1)//5 + 额外行动数)</code>；仅将战术移动力缩放为 2–8 格，且回合末保留站位不再弹回锚点。</p>
             </section>
 
             <section className="ac-wiki-rule-card">
@@ -478,7 +478,7 @@ export function AutoChessWikiModal({
 
             <section className="ac-wiki-rule-card">
               <h4><Sparkles size={15} /> 3. 经济、升星、刷新概率与加时</h4>
-              <p>每 10 金币每轮 +1 利息（基础上限 +5G，星辉投资可提至 +7G），连胜/连败达 2/3/5+ 轮分别额外 +1/+2/+3 金币。同类同星 3 枚自动合成 1★ → 2★ → 3★；第 4、8、12 回合触发星序祝福 3 选 1；1v1 第 12 轮 / 多人第 15 轮起进入加时决战（每轮伤递增 +15%、治疗最低降至 25%）。</p>
+              <p>每 10 金币每轮 +1 利息（基础上限 +5G，星辉投资可提至 +7G），连胜/连败达 2/3/5+ 轮分别额外 +1/+2/+3 金币；每轮结算自动获得 +2 XP，单回合战胜对手额外奖励 +1G 与 +1 XP（即胜场累计 +3 XP、败场 +2 XP）。同类同星 3 枚自动合成 1★ → 2★ → 3★；第 4、8、12 回合触发星序祝福 3 选 1；1v1 第 12 轮 / 多人第 15 轮起进入加时决战（每轮伤递增 +15%、治疗最低降至 25%）。</p>
               <div className="ac-wiki-table-wrap">
                 <table className="ac-wiki-table">
                   <thead>
@@ -490,10 +490,14 @@ export function AutoChessWikiModal({
                       <th>2费概率</th>
                       <th>3费概率</th>
                       <th>4费概率</th>
+                      <th>5费概率</th>
+                      <th>6费概率</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(levels).map(([lv, info]) => (
+                    {Object.entries(levels)
+                      .sort(([a], [b]) => Number(a) - Number(b))
+                      .map(([lv, info]) => (
                       <tr key={lv}>
                         <td><b>Lv.{lv}</b></td>
                         <td>{info.max_pop} 人</td>
@@ -502,21 +506,26 @@ export function AutoChessWikiModal({
                         <td>{info.odds['2'] ?? 0}%</td>
                         <td>{info.odds['3'] ?? 0}%</td>
                         <td>{info.odds['4'] ?? 0}%</td>
+                        <td>{info.odds['5'] ?? 0}%</td>
+                        <td>{info.odds['6'] ?? 0}%</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.8rem' }}>
+                注：当前已开启 5–6 费体系，其中 5 费档位架构预留（刷新概率 0%），6 费为唯一彩卡档位（<code>Y12 斯瑞提卡</code>），于 Lv.5 起逐步出现、Lv.6–Lv.7 主力刷新。
+              </p>
             </section>
 
             <section className="ac-wiki-rule-card">
               <h4><Trophy size={15} /> 4. 8 人排位模式、段位积分与局外金币</h4>
               <p>
-                排位模式需登录自走棋账号后方可参与，每局共 8 名指挥官混战（1 名玩家 + 7 名随机命名且策略各异的同段位 AI），使用扩容版 8 人共享牌库（1–4 费分别为{' '}
+                排位模式需登录自走棋账号后方可参与，每局共 8 名指挥官混战（1 名玩家 + 7 名随机命名且策略各异的同段位 AI），使用扩容版 8 人共享牌库（1–6 费分别为{' '}
                 <code>
                   {catalog?.pool_counts_8p
-                    ? `${catalog.pool_counts_8p['1']}/${catalog.pool_counts_8p['2']}/${catalog.pool_counts_8p['3']}/${catalog.pool_counts_8p['4']}`
-                    : '29/22/18/14'}
+                    ? `${catalog.pool_counts_8p['1']}/${catalog.pool_counts_8p['2']}/${catalog.pool_counts_8p['3']}/${catalog.pool_counts_8p['4']}/${catalog.pool_counts_8p['5'] ?? 11}/${catalog.pool_counts_8p['6'] ?? 9}`
+                    : '29/22/18/14/11/9'}
                 </code>{' '}
                 张）。前 4 名记为排位胜利并积累连胜与局外「金币」（暂未设兑换出口），第 5–8 名记为战败；每小段需 <b>100 分</b>，晋级白银后永久解锁<b>不会跌回青铜</b>硬保底；3 连胜必得 1 张<b>保段卡</b>（上限 5 张），掉段时自动消耗抵扣全部扣分。
               </p>

@@ -114,9 +114,9 @@ def render_backend():
                  'max_damage','AUX_NAME_TO_CODE','_get_attack_range','chebyshev_dist','_resolve_db',
                  '_get_db_str','_calc_net_bp','season_status_roll','_parse_bp_token',
                  '_format_bp','_parse_attr_mods','SpellInterrupted','ActionExecutionResult','action_committed',
-                 '_summon_skill_mp_cost']:
+                 '_summon_skill_mp_cost', '_portal_attack']:
         output_lines.append(f'if \"{_sym}\" in dir():_bem.{_sym} = {_sym}\n')
-    output_lines.append('sys.modules[\'battle_engine\'] = _bem\n')
+    output_lines.append('sys.modules.setdefault(\'battle_engine\', _bem)\n')
 
     output_lines.append('\n# Main entry\n')
     output_lines.append("""if __name__ == '__main__':

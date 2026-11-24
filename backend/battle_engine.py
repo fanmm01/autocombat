@@ -13,6 +13,7 @@ JS autocombat.js ↔ Python 三引擎统一 -> 单一实现
 
 import sys, os, random, math, json, re, time
 from collections import defaultdict
+from functools import wraps
 from abc import ABC, abstractmethod
 from datetime import datetime
 import threading as _threading
@@ -499,6 +500,8 @@ def _calc_net_bp(buffs, bp_suffix='', skill_name=None, extra_tokens=None,
             # Tolerate spells loaded before auxCode existed.
             if not aux_code:
                 aux_code = AUX_NAME_TO_CODE.get(aux_type, 0)
+            if b.get('seasonAttackOnly') and skill_name in ('闪避', '格挡'):
+                continue
             if only_codes is not None and aux_code not in only_codes:
                 continue
 
@@ -692,6 +695,27 @@ def action_committed(result):
     return getattr(result, 'committed', True)
 
 
+def _portal_attack(method):
+    """Keep a channel's dodge and reduction local to one incoming attack."""
+    @wraps(method)
+    def resolve(engine, attacker, defender, *args, **kwargs):
+        previous = getattr(engine, '_portal_hit', None)
+        engine._portal_hit = None
+        try:
+            return method(engine, attacker, defender, *args, **kwargs)
+        except SpellInterrupted as pending:
+            if engine._portal_hit:
+                pending.data['portalHit'] = engine._portal_hit
+                engine._portal_hit = None
+            raise
+        finally:
+            channel = engine._portal_hit
+            engine._portal_hit = previous
+            if channel and engine.autochess_mode:
+                engine._portal_escape(*channel)
+    return resolve
+
+
 class CombatEngine:
     def _get_attack_range(self, spell_effect=None, skill_name=None, spell_name=None, uid=None):
         if not getattr(self, 'autochess_mode', False):
@@ -701,6 +725,9 @@ class CombatEngine:
         if uid is not None:
             char = self.get_char(uid)
             serial = getattr(char, 'serial', '') if char else ''
+            if serial in ('Y18', 'Y19') and skill_name and not spell_effect:
+                from autochess_catalog import UNIT_CATALOG
+                rng = UNIT_CATALOG[serial]['range']
             if serial and spell_name and (serial, spell_name) in overrides:
                 rng = overrides[(serial, spell_name)]
             elif serial and skill_name and (serial, skill_name) in overrides:
@@ -797,6 +824,12 @@ class CombatEngine:
         tm = (getattr(self, '_autochess_team_mods', {}) or {}).get(self._battle_team_of(base), {})
         return float(um.get('summon_hp_mult', 1.0)) * float(tm.get('summon_hp_mult', 1.0))
 
+    def _autochess_scale_shield_block(self, owner_id, raw_sb):
+        sb = int(raw_sb or 0)
+        if sb <= 0 or not getattr(self, 'autochess_mode', False):
+            return sb
+        return max(1, int(round(sb * self._autochess_summon_hp_mult(owner_id))))
+
     def _autochess_summon_skill_bonus(self, caster_id):
         if not getattr(self, 'autochess_mode', False):
             return 0
@@ -830,6 +863,9 @@ class CombatEngine:
 
     def _apply_autochess_damage_mods(self, attacker_uid, defender_uid, dmg_val):
         """Apply overtime, terrain cover, and situational Auto-Chess synergy/augment mods."""
+        if attacker_uid and getattr(self.get_char(attacker_uid), 'serial', '') == 'Y19' and self._season_zone(attacker_uid):
+            rules = self._passive_rules(attacker_uid, 'burn_autumn')
+            dmg_val = round(dmg_val * (rules['bloom_self_base_mult'] + rules['bloom_self_mark_mult'] * self._leaf_marks(defender_uid)), 8)
         if dmg_val <= 0 or not getattr(self, 'autochess_mode', False):
             return max(0, int(dmg_val))
         res = int(dmg_val)
@@ -1084,6 +1120,12 @@ class CombatEngine:
         self._summoned_once = {}
         self._summoned_templates = {}
         self._graveyard = {}
+        self.set_json('sunset_casts', {})
+        for uid in team_a + team_b:
+            fighter = self.get_char(uid)
+            fighter.attrs.pop('leaf_marks', None)
+            if fighter.serial == 'Y19':
+                fighter.phase = 1
         self._reset_blood_battle_state(team_a + team_b)
         if arena_preset or self.autochess_mode:
             map_data = build_arena_map(arena_preset or getattr(self, 'arena_preset', None) or 'autochess_standard')
@@ -2455,13 +2497,13 @@ class CombatEngine:
                 return True
         return False
 
-    def _y17_preflight(self, uid, spell, ai=False):
+    def _y17_preflight(self, uid, spell, ai=False, target=None):
         if not self._is_y17(uid):
             return ''
         try:
             if ai and '_blood_options' not in spell:
                 spell = dict(spell, _blood_options=self._y17_ai_options(uid, spell))
-            self._y17_plan(uid, None, spell, ai=ai)
+            self._y17_plan(uid, target, spell, ai=ai)
             return ''
         except (ValueError, KeyError) as exc:
             return str(exc)
@@ -2879,7 +2921,7 @@ class CombatEngine:
         s = self.get_json(self._combat_hp_key(), {}); s[self._resolve_uid(uid)] = hp; self.set_json(self._combat_hp_key(), s)
     def _get_combat_hp(self, uid):
         return self.get_json(self._combat_hp_key(), {}).get(self._resolve_uid(uid))
-    def _set_combat_hp(self, uid, hp, source_dmg=0, damage_source=None, is_counter=False):
+    def _set_combat_hp(self, uid, hp, source_dmg=0, damage_source=None, is_counter=False, *, bypass_conversion=False):
         """Set combat HP. Accepts raw HP (negative = overflow damage).
         Tracks per-team overflow for mutual-annihilation tiebreaker."""
         base = self._resolve_uid(uid)
@@ -2890,8 +2932,12 @@ class CombatEngine:
         if source_dmg > 0 and old_hp is not None:
             overflow = max(overflow, max(0, source_dmg - old_hp))
         new_hp = max(0, hp)
+        if old_hp is not None and hp > old_hp and getattr(self.get_char(base), 'serial', '') == 'Y19':
+            cast = self.get_json('sunset_casts', {}).get(base)
+            if cast:
+                new_hp = min(new_hp, int(self.get_char(base).get_attr('体力上限') * cast['rules']['sunset_heal_cap_ratio']))
         # AUX 29: HP→MP conversion (消耗hp转为消耗mp) — intercept HP loss, consume MP instead
-        if old_hp is not None and new_hp < old_hp:
+        if not bypass_conversion and old_hp is not None and new_hp < old_hp:
             char = self.get_char(uid)
             if char:
                 hp_loss = old_hp - new_hp
@@ -2947,6 +2993,8 @@ class CombatEngine:
             entry = next((e for e in self._battle_unit_entries()
                           if self._resolve_uid(e.get('userId', '')) == base), None)
             if entry and not entry.get('isSummon'):
+                if getattr(self.get_char(base), 'serial', '') in ('Y18', 'Y19'):
+                    self._end_season_bindings(base)
                 team = entry.get('team', '?')
                 if not hasattr(self, '_last_death_overflow'):
                     self._last_death_overflow = {}
@@ -2991,7 +3039,8 @@ class CombatEngine:
         char = self.get_char(uid)
         con = char.get_attr('体质', 50)
         # Saving throws are not skill checks: only 全D100检定 dice apply.
-        roll, detail = self._roll_check_d100(uid, only_codes={34})
+        bloom = getattr(char, 'serial', '') == 'Y19' and self._season_zone(uid)
+        roll, detail = self._roll_check_d100(uid, only_codes={34}, extra_tokens=['p'] if bloom else None)
         rank = success_rank(roll, con)
         if difficulty == 'normal': return rank >= 1
         elif difficulty == 'hard': return rank >= 2
@@ -3369,10 +3418,11 @@ class CombatEngine:
         """Initialize each physical member's resources, including hidden additions."""
         data = self._summon_members[sid]
         data['ownerId'] = self._resolve_uid(owner_id)
+        scaled_sb = self._autochess_scale_shield_block(owner_id, template.get('shield_block', 0))
         defaults = {
             'zone_cooldown': 0, 'summon_mp': template.get('MP', 0),
-            'shield_block': template.get('shield_block', 0),
-            'shield_block_hp': template.get('shield_block', 0),
+            'shield_block': scaled_sb,
+            'shield_block_hp': scaled_sb,
             'shield_block_rate': template.get('shield_block_rate', 0.70),
             'react_dodge_w': template.get('react_dodge', 50),
             'react_counter_w': template.get('react_counter', 50),
@@ -3522,6 +3572,9 @@ class CombatEngine:
 
     def _get_effects(self): return self.get_json(f"combat_effects_{self.group_id}", [])
     def _set_effects(self, e):
+        for old in self._get_effects():
+            if old.get('seasonDomain') == 'burn_autumn' and old not in e:
+                self.get_char(old['sourceUserId']).phase = 1
         self._buff_cache.clear()  # Invalidate buff cache (preserves references)
         self.set_json(f"combat_effects_{self.group_id}", e if e else [])
     def _get_map(self): return self.get_json(f"combat_map_{self.group_id}")
@@ -3716,6 +3769,8 @@ class CombatEngine:
         buffs = self._get_active_buffs(uid); adjusted = base_val
         for b in buffs:
             # AUX 15: numeric modifier
+            if b.get('seasonAttackOnly') and skill_name in ('闪避', '格挡'):
+                continue
             if b.get('auxCode') == 15 and b.get('auxVal') not in (None,''):
                 try: adjusted += int(b['auxVal'])
                 except: pass
@@ -4448,6 +4503,9 @@ class CombatEngine:
         going through `_set_effects`.
         """
         physical = self._get_physical_buffs(uid) + self._frost_views(uid)
+        portal = getattr(self, '_portal_hit', None)
+        if portal and portal[1] == self._resolve_uid(uid):
+            physical = physical + [dict(auxCode=17, auxVal='闪避')]
         spirit = self._battle_spirit_character_views(uid)
         if spirit:
             physical = physical + spirit
@@ -4466,6 +4524,8 @@ class CombatEngine:
 
     def _zone_caster_coord(self, eff, il=None):
         """Current center for a zone. Follow-zones read the caster position live."""
+        if eff.get('seasonSource') and self._hp_safe(eff['sourceUserId'], 0) <= 0:
+            return ''
         if eff.get('sourceBound'):
             source = eff.get('sourceUserId', '')
             source_entry = self._unit_il_entry(source, il or self._get_initiative()) if source else None
@@ -4601,6 +4661,8 @@ class CombatEngine:
                 'effectKey': eff.get('effectKey', ''),
                 'stackable': eff.get('stackable', 0),
                 'sourceZone': True,
+                'seasonAttackOnly': eff.get('seasonAttackOnly', False),
+                'seasonSource': eff.get('seasonSource'),
             })
         return views
 
@@ -4771,6 +4833,9 @@ class CombatEngine:
                 self._apply_immunity_buff(target, uid)
 
     def _absorb_damage_with_shield(self, uid, dmg, hit_event=True):
+        portal = getattr(self, '_portal_hit', None)
+        if hit_event and portal and portal[1] == self._resolve_uid(uid):
+            dmg = max(0, dmg - portal[3])
         if dmg > 0:
             if hit_event:
                 self._clone_hit_protection(uid)
@@ -5088,7 +5153,11 @@ class CombatEngine:
             allies = [row['userId'] for row in self._battle_unit_entries()
                       if not self._rescue_landing(caster_id, row['userId'], rescue)[1]]
             return min(allies, key=lambda uid: (self._hp_safe(uid, 0), uid)) if allies else None
-        has_dmg = any(e['type']==1 for e in spell.get('effects',[]))
+        has_dmg = any(e['type']==1 for e in spell.get('effects',[])) or (
+            self._is_y17(caster_id)
+            and self._y17_spell_kind(caster_id, spell) == 'spear'
+            and (spell.get('_blood_options') or {}).get('mode') == 'throw'
+        )
         has_heal = any(e['type'] in (2,3,4) or (e['type']==8 and e.get('回复hp')) for e in spell.get('effects',[]))
         has_zone_dmg = any(e['type']==8 and e.get('每回合伤害骰') and not e.get('回复hp') for e in spell.get('effects',[]))
         # Type-4 buff/debuff with 客体=5 (enemy debuff) or 124 (legacy) targets an enemy
@@ -5399,6 +5468,8 @@ class CombatEngine:
         """
         il = self._get_initiative()
 
+        if self.get_json('sunset_casts', {}) and il:
+            return None
         # Count living non-summon characters per team (resolve multi-action UIDs)
         # "Alive" = HP > 0, OR in dying state WITH healing items available
         y_alive = set()
@@ -5965,6 +6036,9 @@ class CombatEngine:
             return {'applied': 0, 'absorbed_excess': 0, 'rescued': False, 'dead': True}
         target = self.get_char(target_id)
         max_hp = target.get_attr('体力上限', max(current, 1)) if target else max(current, 1)
+        sunset = self.get_json('sunset_casts', {}).get(self._resolve_uid(target_id))
+        if sunset:
+            max_hp = int(max_hp * sunset['rules']['sunset_heal_cap_ratio'])
         track = getattr(self, 'autochess_mode', False) or getattr(self, '_track_stats', False)
         stat_actor = healer_uid or target_id
         if dying is not None:
@@ -6169,6 +6243,8 @@ class CombatEngine:
                 label = aux_type or buff_entry.get('skillMod') or 'buff'
                 out += f'  {tname} 施加辅助效果: {label} {aux_val if aux_type else ""}{bonus_note}\n'.replace('  \n', '\n')
             self._set_effects(effects)
+            if aux_type == '沉默' and getattr(self.get_char(tid), 'serial', '') in ('Y18','Y19'):
+                self._end_season_bindings(self._resolve_uid(tid))
             return out
         return out
 
@@ -6244,6 +6320,227 @@ class CombatEngine:
         col, row = min(spots, key=lambda p: (max(abs(p[0]-point[0]), abs(p[1]-point[1])), p[0], p[1]))
         return format_coord(col, row), ''
 
+    def _begin_portal_hit(self, attacker, defender):
+        rnd = (self._get_state() or {}).get('round', 1)
+        for zone in self._get_effects():
+            if (zone.get('portalCharges', 0) <= 0 or self._battle_team_of(attacker) == zone['sourceTeam']
+                    or not self._zone_covers_uid(zone, defender)):
+                continue
+            source = zone['sourceUserId']
+            rules = self._passive_rules(source, 'seasons')
+            uses = zone.get('portalUses', 0) if zone.get('portalRound') == rnd else 0
+            if uses >= rules['summer_portal_per_round']:
+                continue
+            zone['portalUses'] = uses + 1
+            zone['portalCharges'] -= 1
+            zone['portalRound'] = rnd
+            self._portal_hit = (attacker, self._resolve_uid(defender), zone, rules['summer_portal_dr'])
+            self._set_effects(self._get_effects())
+            break
+
+    def _portal_escape(self, attacker, defender, zone, reduction):
+        if self._hp_safe(defender, 0) <= 0 or not self._in_range_of(attacker, defender, 2):
+            return
+        il = self._get_initiative()
+        entry = self._unit_il_entry(defender, il)
+        if not entry or row_band(self._get_map(), entry['team'], entry['coord']) != 'back':
+            return
+        origin = (self._unit_il_entry(attacker, il) or {}).get('coord')
+        center = self._zone_caster_coord(zone, il)
+        md = self._get_map()
+        if not origin or not center or not md:
+            return
+        cells = (format_coord(x,y) for x in range(md['width']) for y in range(md['height']))
+        valid = [cell for cell in cells if chebyshev_dist(cell, center) <= zone['radius']
+                 and chebyshev_dist(cell, origin) >= 3 and is_footprint_valid(md, cell, size=self._unit_size(defender))]
+        if valid:
+            spot = max(valid, key=lambda cell: (terrain_type(md, cell) in ('cover','leyline'), chebyshev_dist(cell, origin)))
+            self._commit_unit_position(defender, spot, reason='时光通道')
+
+    def _end_season_bindings(self, uid):
+        zone = self._season_zone(uid)
+        if zone:
+            self.end_skill_effects(uid, zone['spellIndex'])
+        if getattr(self.get_char(uid), 'serial', '') == 'Y18':
+            for mid, member in list(self._summon_members.items()):
+                if member.get('name') == '仙境生灵' and (self._get_summon_entry(mid) or {}).get('ownerId') == uid:
+                    self._init_combat_hp(mid, 0)
+            self._reconcile_summon_groups()
+
+    def _season_zone(self, uid):
+        uid = self._resolve_uid(uid)
+        return next((e for e in self._get_effects() if e.get('type') == 'zone'
+                     and e.get('sourceUserId') == uid and e.get('seasonDomain')), None)
+
+    def _season_targets(self, center, radius):
+        return [e for e in self._battle_unit_entries() if self._hp_safe(e['userId'], 0) > 0
+                and chebyshev_dist(center, e.get('coord', '')) <= radius]
+
+    def _spear_landing(self, uid, target):
+        if not target or not self._in_range_of(uid, target, 6):
+            return None
+        il = self._get_initiative()
+        origin = (self._unit_il_entry(uid, il) or {}).get('coord')
+        end = (self._unit_il_entry(target, il) or {}).get('coord')
+        if not origin or not end or self._battle_team_of(target) == self._battle_team_of(uid):
+            return None
+        if chebyshev_dist(origin, end) == 1:
+            return origin
+        col, row = parse_coord(end)
+        md = self._get_map()
+        spots = [format_coord(x, y) for x in range(max(0,col-1), min(md['width'],col+2))
+                 for y in range(max(0,row-1), min(md['height'],row+2)) if (x,y) != (col,row)]
+        return min((s for s in spots if is_footprint_valid(md, s, size=self._unit_size(uid))),
+                   key=lambda s: chebyshev_dist(origin, s), default=None)
+
+    def _season_preflight(self, uid, spell, target=None):
+        serial = getattr(self.get_char(uid), 'serial', '')
+        if serial not in ('Y18', 'Y19'):
+            return ''
+        if self._hp_safe(uid, 0) <= 0 or not self._can_cast_active_skill(uid):
+            return '当前无法施放主动技能'
+        index = spell['index']
+        zone = self._season_zone(uid) or {}
+        active = zone.get('spellIndex')
+        if serial == 'Y18' and index > 1:
+            if index == active or (index == 3 and active != 2) or (index == 2 and active in (3,4)):
+                return '当前四季领域无法切换到此乐章'
+        if serial == 'Y19':
+            if index == 2 and not any(self._hp_safe(t, 0) > 0 and self._spear_landing(uid, t) for t in
+                    ([target] if target else [e['userId'] for e in self._enemy_target_entries(uid)])):
+                return '没有可突进的敌人或相邻空格'
+            if index == 3 and active == 3:
+                return '焚羽已生效'
+            if index == 4 and not any(self._in_range_of(uid, e['userId'], 8) and
+                    self._leaf_marks(e['userId']) >= self._passive_rules(uid, 'burn_autumn')['sunset_min_mark']
+                    for e in self._enemy_target_entries(uid)):
+                return '夕阳需要范围内带有足够印记的敌人'
+        return ''
+
+    def _leaf_marks(self, uid):
+        return int(self.get_char(self._resolve_uid(uid)).get_attr('leaf_marks', 0))
+
+    def _leaf_hit(self, source, target, gain, rules):
+        if self._battle_team_of(source) == self._battle_team_of(target):
+            return
+        char = self.get_char(self._resolve_uid(target))
+        char.set_attr('leaf_marks', min(rules['mark_cap'], char.get_attr('leaf_marks', 0) + gain))
+
+    def _season_damage(self, source, uid, amount, floor=0, *, execute=False):
+        hp = self._hp_safe(uid, 0)
+        damage = max(0, min(hp - floor, amount))
+        if damage:
+            remaining, absorbed, _ = self._absorb_damage_with_shield(uid, damage)
+            if remaining:
+                self._set_combat_hp(uid, hp - remaining, source_dmg=remaining,
+                                    damage_source=source, bypass_conversion=execute)
+            self._pending_battle_events.append(
+                f'{self.get_char(source).name} → {self.get_char(uid).name}：领域伤害 {remaining}'
+                + (f'，护盾吸收 {absorbed}' if absorbed else ''))
+
+    def _season_round_start(self):
+        rnd = (self._get_state() or {}).get('round', 1)
+        for zone in list(self._get_effects()):
+            domain = zone.get('seasonDomain')
+            if not domain or zone.get('lastSeasonRound', zone.get('creationRound', rnd)) >= rnd:
+                continue
+            zone['lastSeasonRound'] = rnd
+            uid = zone['sourceUserId']
+            char = self.get_char(uid)
+            index = zone['spellIndex']
+            r = self._passive_rules(uid, domain)
+            center = self._zone_caster_coord(zone)
+            entries = self._season_targets(center, zone['radius']) if center else []
+            age = rnd - zone['creationRound']
+            winter = domain == 'seasons' and index == 4
+            if self._hp_safe(uid, 0) <= 0 or self._has_status(uid, '沉默'):
+                self.end_skill_effects(uid, index)
+                continue
+            if winter and age >= 2:
+                self.end_skill_effects(uid, index)
+                if not getattr(self, '_player_controllers', {}).get(uid) and not any(e['team'] != zone['sourceTeam'] for e in entries):
+                    continue
+                spent = char.get_attr('魔力', 0)
+                char.set_attr('魔力', 0)
+                base = roll_dice(r['winter_burst_base_dice'])
+                for entry in entries:
+                    tid = entry['userId']
+                    ally = entry['team'] == zone['sourceTeam']
+                    dodge = self._apply_buff_skill_mod(tid, self.get_char(tid).get_attr('闪避', 0), '闪避')
+                    roll, _ = self._roll_check_d100(tid, '闪避', extra_tokens=[r['winter_ally_dodge_bonus']] if ally else [])
+                    if success_rank(roll, dodge) <= 0:
+                        damage = int(base * r['winter_ally_fail_ratio']) if ally else base + min(
+                            r['winter_burst_mp_cap'], int(spent * r['winter_burst_mp_ratio']))
+                        self._season_damage(uid, tid, damage)
+                continue
+            upkeep = 'bloom' if domain == 'burn_autumn' else {2:'summer', 3:'autumn', 4:'winter'}[index]
+            cost = roll_dice(r[upkeep + '_upkeep_mp'])
+            if char.get_attr('魔力', 0) < cost:
+                self.end_skill_effects(uid, index)
+                continue
+            char.set_attr('魔力', char.get_attr('魔力') - cost)
+            for entry in entries:
+                tid = self._resolve_uid(entry['userId'])
+                ally = entry['team'] == zone['sourceTeam']
+                maximum = self.get_char(tid).get_attr('体力上限', self._hp_safe(tid))
+                floor = 0
+                if upkeep == 'winter' and not ally:
+                    damage = roll_dice('1d6+1')
+                elif upkeep == 'autumn':
+                    damage = roll_dice(r['autumn_summon_dot'] if entry.get('isSummon') else r['autumn_human_dot'])
+                    if not entry.get('isSummon'):
+                        floor = max(r['autumn_human_floor_min'], int(maximum * r['autumn_human_floor_ratio']))
+                elif upkeep == 'bloom':
+                    marks = self._leaf_marks(tid)
+                    if entry.get('isSummon'):
+                        damage = roll_dice(r['bloom_summon_dice']) + marks
+                    elif tid == uid:
+                        damage = int(maximum * r['bloom_self_pct']) if maximum > r['bloom_enemy_hp_threshold'] else 1
+                        floor = max(r['bloom_self_floor_min'], int(maximum * r['bloom_self_floor_ratio']))
+                    elif not ally:
+                        damage = (int(maximum*r['bloom_enemy_pct']) + 2*marks if maximum > r['bloom_enemy_hp_threshold']
+                                  else roll_dice(r['bloom_enemy_small_dice']) + marks)
+                    else:
+                        continue
+                else:
+                    continue
+                self._season_damage(uid, tid, damage, floor)
+        self._sunset_round_start(rnd)
+
+    def _sunset_round_start(self, rnd):
+        sunsets = self.get_json('sunset_casts', {})
+        for uid, cast in list(sunsets.items()):
+            if cast['lastRound'] >= rnd:
+                continue
+            cast['lastRound'] = rnd
+            r = cast['rules']
+            burst = rnd - cast['start'] >= 3
+            if burst:
+                damage = roll_dice(r['sunset_burst_base_dice']) + min(r['sunset_burst_mp_cap'],
+                            int(cast['spent'] * r['sunset_burst_mp_ratio']))
+                del sunsets[uid]
+            self.set_json('sunset_casts', sunsets)
+            caster_entry = self._unit_il_entry(uid, self._get_initiative()) or {}
+            center = cast['center'] if burst else caster_entry.get('coord', cast['center'])
+            for entry in self._season_targets(center, 8):
+                tid = entry['userId']
+                if not burst:
+                    marks = self._leaf_marks(tid)
+                    if entry['team'] == cast['team'] or not marks:
+                        continue
+                    hp = self._hp_safe(tid)
+                    maximum = self.get_char(tid).get_attr('体力上限', hp)
+                    damage = hp if hp <= max(r['sunset_exec_hp_min'], int(maximum*r['sunset_exec_hp_ratio'])) else min(
+                        int(maximum*r['sunset_stalk_cap_ratio']),
+                        int(hp*(r['sunset_stalk_base_pct'] + marks*r['sunset_stalk_mark_pct'])) + roll_dice('1d6'))
+                self._season_damage(uid, tid, damage, execute=not burst and damage >= self._hp_safe(tid))
+            if burst and self._unit_il_entry(uid, self._get_initiative()):
+                self.process_command(uid, '.unh')
+                self._init_combat_hp(uid, 0)
+                self._set_effects([e for e in self._get_effects()
+                                   if not (e.get('type') == 'dying' and e.get('targetUserId') == uid)])
+                self._remove_summons_of_owner(uid)
+
     def _execute_spell(self, caster_id, target_id, spell):
         if not spell.get('_once_per_battle') and self._get_cooldown(caster_id, spell.get('index', 0)) > 0:
             return ActionExecutionResult('技能冷却中', False, 'spell_rejected')
@@ -6254,6 +6551,25 @@ class CombatEngine:
                 return ActionExecutionResult(reason, False, 'spell_rejected')
             spell = dict(spell, effects=[dict(e, _landing=landing) if e.get('type') == 18 else dict(e)
                                         for e in spell['effects']])
+        serial = getattr(self.get_char(caster_id), 'serial', '')
+        index = spell.get('index')
+        if serial in ('Y18', 'Y19'):
+            caster_id = self._resolve_uid(caster_id)
+            if serial == 'Y19' and index == 2 and target_id in (None, caster_id):
+                target_id = next((e['userId'] for e in self._enemy_target_entries(caster_id)
+                                  if self._spear_landing(caster_id, e['userId'])), None)
+            reason = self._season_preflight(caster_id, spell, target_id)
+            if reason:
+                return ActionExecutionResult(reason, False, 'spell_rejected')
+            spell = dict(spell, effects=[dict(e) for e in spell['effects']])
+            if serial == 'Y18' and index == 1 and (self._season_zone(caster_id) or {}).get('spellIndex') in (2, 3):
+                r = self._passive_rules(caster_id, 'seasons')
+                spell['消耗mp'] = max(1, roll_dice(str(spell['消耗mp'])) - r['spring_summer_mp_discount'])
+                spell['effects'][0]['召唤个数'] = roll_dice('1d3') + r['spring_summer_extra_count']
+            if serial == 'Y19' and index == 2:
+                char = self.get_char(caster_id)
+                for e in spell['effects']:
+                    e['成功率'] = self._apply_buff_skill_mod(caster_id, char.get_attr('剑'), '剑')
         reason = self._y16_preflight(caster_id, spell)
         if reason:
             return ActionExecutionResult(reason, False, 'spell_rejected')
@@ -6576,6 +6892,10 @@ class CombatEngine:
             mp_cost += self._get_buff_mp_cost_flat(caster_id)  # AUX code 10
             mp_cost = max(0, mp_cost)
 
+        if serial == 'Y19' and index == 1:
+            mp_cost = min(6, max(1, mp_cost))
+        if serial == 'Y18' and index == 1 and (self._season_zone(caster_id) or {}).get('spellIndex') in (2, 3):
+            mp_cost = max(1, mp_cost)
         if any(self._get_counter(caster_id, kind) < amount for kind, amount in deferred_counters.items()):
             return ActionExecutionResult(f'{char.name} 资源不足。\n', False, 'spell_rejected')
         if mp_cost > 0:
@@ -6584,6 +6904,33 @@ class CombatEngine:
             char.set_attr('魔力', cur_mp - mp_cost); out += f'  消耗 {mp_cost} MP\n'
             if self._resolve_uid(caster_id) in getattr(self, '_summon_members', {}):
                 self._set_summon_entry_fields(caster_id, summon_mp=cur_mp - mp_cost)
+        if serial == 'Y18' and index > 1:
+            previous = self._season_zone(caster_id)
+            if previous:
+                self.end_skill_effects(caster_id, previous['spellIndex'])
+        if serial == 'Y19':
+            r = self._passive_rules(caster_id, 'burn_autumn')
+            if index == 1:
+                remaining, _ = self._get_summon_quota(caster_id, '锋叶魔物')
+                summon_plan[0] = min(mp_cost, remaining, 6)
+                summon_plan['_requested'][0] = mp_cost
+            elif index == 2:
+                self._commit_unit_position(caster_id, self._spear_landing(caster_id, target_id), reason='秋风矛')
+            elif index == 3:
+                char.phase = 2
+                char.set_attr('魔力', max(r['bloom_mp_reset_min'], int(char.get_attr('魔力上限') * r['bloom_mp_reset_ratio'])))
+            elif index == 4:
+                rnd = (self._get_state() or {}).get('round', 1)
+                entry = self._unit_il_entry(caster_id, self._get_initiative())
+                casts = self.get_json('sunset_casts', {})
+                casts[caster_id] = dict(start=rnd, lastRound=rnd, center=entry['coord'], team=entry['team'],
+                                        spent=char.get_attr('魔力'), rules=r)
+                self.set_json('sunset_casts', casts)
+                char.set_attr('魔力', 0)
+                self._set_combat_hp(caster_id, min(self._hp_safe(caster_id), max(1, int(char.get_attr('体力上限') * r['sunset_self_hp_ratio']))), bypass_conversion=True)
+                self._revive_use_ledger.add(once_key)
+                char._once_consumed = getattr(char, '_once_consumed', set()) | {spell['name']}
+                return out + '夕阳追猎开始'
         if moon_payment:
             moon_uid_cm, moon_char_cm, moon_mp_cm = moon_payment
             moon_char_cm.set_attr('魔力', 0)
@@ -7090,6 +7437,19 @@ class CombatEngine:
                 'creationRound': int((self._get_state() or {}).get('round', 1))}
             if eff.get('来源存活绑定') and is_passive_spell:
                 zone_entry['sourcePassive'] = True
+            serial = getattr(self.get_char(caster_id), 'serial', '')
+            if serial in ('Y18', 'Y19'):
+                zone_entry['seasonSource'] = serial
+            if serial == 'Y19' and spell['index'] == 3 and aux_code in (1, 3):
+                rules = self._passive_rules(caster_id, 'burn_autumn')
+                rule = 'bloom_self_vuln_pct' if str(of) == '1' else 'bloom_ally_dmg_pct' if aux_code == 3 else 'bloom_ally_vuln_pct'
+                zone_entry['auxVal'] = str(rules[rule])
+            if serial == 'Y18' and aux_code in (15, 16):
+                zone_entry['seasonAttackOnly'] = True
+            if serial in ('Y18','Y19') and eff_idx == 0:
+                zone_entry['seasonDomain'] = 'seasons' if serial == 'Y18' else 'burn_autumn'
+                if serial == 'Y18' and spell['index'] == 2:
+                    zone_entry['portalCharges'] = self._passive_rules(caster_id, 'seasons')['summer_portal_charges']
             effects.append(zone_entry)
             cooldown = self._autochess_effective_cd(caster_id, int(eff.get('cooldown_rounds', 0) or 0))
             if cooldown:
@@ -7355,6 +7715,12 @@ class CombatEngine:
             self._y17_note(caster_id, spell['blood_kind'] + '_damage', actual_loss)
             if blood_friendly_hit:
                 self._y17_note(caster_id, 'friendly_damage', actual_loss)
+        if spell_name == '秋风矛' and getattr(self.get_char(caster_id), 'serial', '') == 'Y19':
+            rules = self._passive_rules(caster_id, 'burn_autumn')
+            self._leaf_hit(caster_id, target_id, rules['spear_mark_gain'], rules)
+            if spell is not None and not spell.get('_spear_healed') and self._hp_safe(caster_id, 0) > 0:
+                spell['_spear_healed'] = True
+                self._apply_hp_heal_amount(caster_id, roll_dice('1d8+2'), allow_dying=False, healer_uid=caster_id)
         out += self._y17_collect_hit(caster_id, target_id,
                                     max(0, old_target_hp - self._hp_safe(target_id, 0)), spell)
 
@@ -7530,6 +7896,7 @@ class CombatEngine:
             te = self._unit_il_entry(target_id, il)
             is_friendly = ce and te and ce.get('team') == te.get('team')
 
+        self._begin_portal_hit(caster_id, target_id)
         # Success rate check with COC7 rank
         # If no explicit 成功率, fall back to caster's best melee skill for enemy-targeting spells.
         # Self-targeting effects (客体=1) without 成功率 are auto-success (e.g. self-buffs).
@@ -7553,6 +7920,9 @@ class CombatEngine:
             check_roll, bp_detail = self._roll_spell_success_bp(caster_id, eff, spell)
             bp_str = f', {bp_detail}' if bp_detail else ''
             crit_pct, crit_flat = self._get_buff_crit_adjustment(caster_id)
+            if spell.get('name') != '秋风矛':
+                sr += sum(int(b['auxVal']) for b in self._get_active_buffs(caster_id)
+                          if b.get('seasonAttackOnly') and b.get('auxCode') == 15)
             atk_rank = success_rank(check_roll, sr, crit_pct, crit_flat)
             if atk_rank <= 0:
                 out += f'  成功率检定: D100={check_roll}/{sr}{bp_str} {rank_text(atk_rank)}！\n'
@@ -8082,6 +8452,12 @@ class CombatEngine:
         return '\n'.join(messages) + '\n'
 
     def _frost_on_hit(self, source, target, spell_name=None):
+        member = getattr(self, '_summon_members', {}).get(self._resolve_uid(source), {})
+        if member.get('name') == '锋叶魔物':
+            entry = self._get_summon_entry(source)
+            rules = self._passive_rules(entry['ownerId'], 'burn_autumn')
+            if rules:
+                self._leaf_hit(source, target, rules['blade_mark_gain'], rules)
         if spell_name is not None and spell_name != '发送雪球':
             return ''
         owner = self._frost_owner(source)
@@ -8216,6 +8592,7 @@ class CombatEngine:
         previous = getattr(self, '_settling_round', False)
         self._settling_round = True
         try:
+            self._season_round_start()
             frost_text = self._frost_round_start()
             text = self._tick_down_effects()
             return '\n'.join(x for x in (frost_text, text) if x)
@@ -9001,6 +9378,7 @@ class FullBattleEngine(CombatEngine):
             state['activeIndex'] = (state['activeIndex'] + 1) % len(il)
             self._set_state(state)
 
+    @_portal_attack
     def _coc7_attack(self, atk_uid, def_uid, skill_name, skill_val, dmg_dice, pen, leth, bp_suffix="", dmg_adv=False, dmg_dis=False):
         """Full COC7 attack: roll → reaction → rank compare → damage by success level → shield → lethality."""
         achar = self.get_char(atk_uid); dchar = self.get_char(def_uid)
@@ -9018,6 +9396,7 @@ class FullBattleEngine(CombatEngine):
             lines.append(f'{aname} 无法近战飞行目标 {dname}！')
             return (def_uid, atk_uid, lines)
         self._mark_flying_dive(atk_uid, atk_range)
+        self._begin_portal_hit(atk_uid, def_uid)
         self._y17_weapon_used(atk_uid)
         if fly_penalty:
             # 飞行近战惩罚骰并入统一净额结算（不再与命令后缀拼成 'pb'）
@@ -9419,6 +9798,7 @@ class FullBattleEngine(CombatEngine):
     #  Spell/Skill Damage Reaction Support
     # ═══════════════════════════════════════════════════════════════
 
+    @_portal_attack
     def _handle_spell_damage_effect(self, caster_id, target_id, eff, spell):
         """Override: success rate -> reaction -> damage.
         Inserts dodge/counter reaction between success check and damage application."""
@@ -9508,6 +9888,9 @@ class FullBattleEngine(CombatEngine):
             bp_str = f', {bp_detail}' if bp_detail else ''
             # AUX 21/22: crit rate modifier for spells
             crit_pct, crit_flat = self._get_buff_crit_adjustment(caster_id)
+            if spell.get('name') != '秋风矛':
+                sr += sum(int(b['auxVal']) for b in self._get_active_buffs(caster_id)
+                          if b.get('seasonAttackOnly') and b.get('auxCode') == 15)
             atk_rank = success_rank(check_roll, sr, crit_pct, crit_flat)
             if atk_rank <= 0:
                 out += f'  成功率检定: D100={check_roll}/{sr}{bp_str} {rank_text(atk_rank)}！\n'
@@ -10082,6 +10465,10 @@ class FullBattleEngine(CombatEngine):
                                "skill_type":"attack","zone_heal_hp":"","zone_radius":0,"zone_duration":0,
                                "mp_cost":0,"cooldown_rounds":0})
         parsed = [dict(sk, mp_cost=_summon_skill_mp_cost(sk)) for sk in parsed]
+        if template_name == '仙境生灵' and (self._season_zone(caster_id) or {}).get('spellIndex') in (2, 3):
+            bonus = self._passive_rules(caster_id, 'seasons')['spring_summer_skill_bonus']
+            for sk in parsed:
+                sk['val'] += bonus
         if getattr(self, 'autochess_mode', False):
             sk_bonus = self._autochess_summon_skill_bonus(caster_id)
             if sk_bonus:
@@ -10200,6 +10587,7 @@ class FullBattleEngine(CombatEngine):
             self._register_summon_spawned(caster_id, template_name)
             return sid
         # ── No existing group: create normal initiative entry ──
+        scaled_sb = self._autochess_scale_shield_block(caster_id, tmpl.get("shield_block", 0))
         init_list.append({"userId":sid,"name":template_name,"displayName":summon_display_name,"team":team,"dex":dex,"initRoll":sum_init_roll,"initRank":sum_init_rank,
             "coord":coord,"isSummon":True,"ownerId":self._resolve_uid(caster_id),"skills":parsed,
             "skill_name":parsed[0]["name"],"skill_val":parsed[0]["val"],"dmg_dice":parsed[0]["dice"],
@@ -10207,7 +10595,7 @@ class FullBattleEngine(CombatEngine):
             "zone_cooldown": 0, "summon_mp": tmpl.get("MP", 0),
             "react_dodge_w":tmpl.get("react_dodge",50),"react_counter_w":tmpl.get("react_counter",50),
             "react_block_w":tmpl.get("react_block",0),
-            "shield_block":tmpl.get("shield_block",0),"shield_block_hp":tmpl.get("shield_block",0),
+            "shield_block":scaled_sb,"shield_block_hp":scaled_sb,
             "shield_block_rate":tmpl.get("shield_block_rate",0.70),
             "ignore_unreactable_block":tmpl.get("ignore_unreactable_block",0),
             "flying":tmpl.get("flying",False),
@@ -10721,8 +11109,9 @@ class FullBattleEngine(CombatEngine):
             merged["react_dodge_w"] = result_tmpl.get("react_dodge", 50)
             merged["react_counter_w"] = result_tmpl.get("react_counter", 50)
             merged["react_block_w"] = result_tmpl.get("react_block", 0)
-            merged["shield_block"] = result_tmpl.get("shield_block", 0)
-            merged["shield_block_hp"] = result_tmpl.get("shield_block", 0)
+            trinity_sb = self._autochess_scale_shield_block(owner_id, result_tmpl.get("shield_block", 0))
+            merged["shield_block"] = trinity_sb
+            merged["shield_block_hp"] = trinity_sb
             merged["shield_block_rate"] = result_tmpl.get("shield_block_rate", 0.70)
             # Parse skills from merge_result template
             skills_raw = result_tmpl.get("skills", [])
@@ -10759,19 +11148,28 @@ class FullBattleEngine(CombatEngine):
             merged["zone_skills"] = [sk for sk in parsed if sk.get("skill_type") == "zone_heal"]
             merged["zone_cooldown"] = 0
             merged["summon_mp"] = result_tmpl.get("MP", 0)
-            group = self._get_summon_group(merged['userId'])
-            if group:
-                group['template_name'] = result_name
-            data = self._summon_members.get(merged['userId'], {})
+            group_key = self._summon_group_key(merged['userId'])
+            group = self._summon_groups.setdefault(group_key, {
+                'members': [], 'template_name': result_name, 'ownerId': owner_id,
+                'representative_uid': merged['userId'],
+            })
+            group['template_name'] = result_name
+            group['ownerId'] = owner_id
+            group['representative_uid'] = merged['userId']
+            if merged['userId'] not in group.setdefault('members', []):
+                group['members'].append(merged['userId'])
+            group['initiative_entry'] = dict(merged)
+            data = self._summon_members.setdefault(merged['userId'], {})
             data.clear()
             data.update(userId=uid, ownerId=owner_id, coord=merged['coord'], team=merged['team'],
                         display_name=display_name, name=result_name, skills=parsed, dex=merged['dex'],
                         flying=result_tmpl.get('flying', False), ignited=False,
                         ignite_dmg_dice='', ignite_tick_dmg=0,
                         summon_mp=result_tmpl.get('MP', 0),
-                        shield_block=result_tmpl.get('shield_block', 0),
-                        shield_block_hp=result_tmpl.get('shield_block', 0),
-                        ignore_unreactable_block=result_tmpl.get('ignore_unreactable_block', 0))
+                        shield_block=trinity_sb,
+                        shield_block_hp=trinity_sb,
+                        ignore_unreactable_block=result_tmpl.get('ignore_unreactable_block', 0),
+                        summonGroupKey=group_key)
             self._register_summon_member_state(merged['userId'], result_tmpl, owner_id)
             # Update action count
             # Set character attrs needed for main-action formula
@@ -10971,6 +11369,7 @@ class FastBattleEngine(FullBattleEngine):
 
     # ---- Fast attack (simplified but with lethality + shield) ----
     # ---- Fast COC7 attack with success-rank damage + reaction (training mode) ----
+    @_portal_attack
     def _fast_coc7_attack(self, atk_uid, def_uid, skill_name, skill_val, dmg_dice, pen, leth):
         """Full COC7 attack for training: rank-based damage + trainable reaction."""
         achar = self.get_char(atk_uid); dchar = self.get_char(def_uid)
@@ -10988,6 +11387,7 @@ class FastBattleEngine(FullBattleEngine):
         if not can_melee:
             return (def_uid, atk_uid, 0, f"无法近战飞行目标")
         self._mark_flying_dive(atk_uid, atk_range)
+        self._begin_portal_hit(atk_uid, def_uid)
         self._y17_weapon_used(atk_uid)
         if fly_penalty:
             bp_suffix = 'p'  # 飞行近战惩罚骰

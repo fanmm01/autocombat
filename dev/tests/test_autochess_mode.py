@@ -14,7 +14,7 @@ class AutoChessModeTests(unittest.TestCase):
         match = AutoChessMatch(seed=19)
         cid = match.player_id
         cmd = match.commanders[cid]
-        for level, slots in enumerate((6, 6, 8, 8, 10, 10), start=1):
+        for level, slots in enumerate((6, 6, 8, 8, 10, 10, 10), start=1):
             cmd['level'] = level
             cmd['augments'] = []
             self.assertEqual(match.bench_capacity(cid), slots)
@@ -27,11 +27,17 @@ class AutoChessModeTests(unittest.TestCase):
             self.assertNotIn('aug_reserves', [a['id'] for a in cmd['pending_augments']])
 
         cmd['level'] = 5
-        cmd['gold'] = 4
+        cmd['gold'] = 12
         cmd['xp'] = ac_cat.LEVEL_TABLE[5]['xp_to_next'] - 4
         self.assertTrue(match.buy_xp(cid))
         self.assertEqual(cmd['level'], 6)
         self.assertEqual(match.max_pop(cid), 7)
+
+        cmd['xp'] = ac_cat.LEVEL_TABLE[6]['xp_to_next'] - 4
+        self.assertTrue(match.buy_xp(cid))
+        self.assertEqual(cmd['level'], 7)
+        self.assertEqual(match.max_pop(cid), 8)
+        self.assertFalse(match.buy_xp(cid))
 
     def test_round_twelve_offers_third_augment(self):
         match = AutoChessMatch(mode='pve12', seed=12)
@@ -53,7 +59,7 @@ class AutoChessModeTests(unittest.TestCase):
         self.assertEqual(cd.GLOBAL_RANGE_OVERRIDE, 1)
         self.assertEqual(combat_defaults.DEFAULTS['DEFAULT_MAP_SIZE'], '10x10')
         self.assertNotIn('Y60', ac_cat.UNIT_CATALOG)
-        self.assertEqual(len(ac_cat.UNIT_CATALOG), 17)
+        self.assertEqual(len(ac_cat.UNIT_CATALOG), 19)
 
         for cls in (be.FullBattleEngine, be.FastBattleEngine):
             eng = cls()
@@ -141,14 +147,14 @@ class AutoChessModeTests(unittest.TestCase):
         sresp = client.post('/api/ui/session', json={'name': 'ac-unit'})
         self.assertEqual(sresp.status_code, 200)
         cat = client.get('/api/ui/autochess/catalog').get_json()
-        self.assertEqual(len(cat['units']), 17)
-        self.assertEqual(len(cat['available_emblems']), 17)
+        self.assertEqual(len(cat['units']), 19)
+        self.assertEqual(len(cat['available_emblems']), 19)
         for u in cat['units']:
             self.assertTrue(u.get('emblem_url', '').startswith('/ui/icons/'), u)
             self.assertTrue(u.get('accent', '').startswith('#'), u)
         self.assertEqual(len(cat['synergies']), 8)
         self.assertEqual(len(cat['augments']), 15)
-        self.assertEqual(len(cat['wiki_units']), 17)
+        self.assertEqual(len(cat['wiki_units']), 19)
         self.assertNotIn('Y60', cat['wiki_units'])
         self.assertIn('2', cat['wiki_units']['Y1']['star_stats'])
         self.assertEqual(cat['wiki_units']['Y14']['skills'][0]['cooldown'], 3)
@@ -259,6 +265,203 @@ class AutoChessModeTests(unittest.TestCase):
         ac_il = eng_sum._unit_il_entry(sid_ac, eng_sum._get_initiative())
         cl_il = eng_classic._unit_il_entry(sid_cl, eng_classic._get_initiative())
         self.assertEqual(ac_il['skill_val'], cl_il['skill_val'] + 28)
+
+    def test_y12_autochess_summon_hp_and_shield_scaling(self):
+        # 1. Solo 1★ Y12 in Auto-Chess: summon HP & shield_block both scale by 0.55
+        eng1 = be.FullBattleEngine()
+        y_cfg1 = [{'uid': 'y_y12', 'serial': 'Y12', 'star': 1}]
+        x_cfg1 = [{'uid': 'x_y1', 'serial': 'Y1', 'star': 1}]
+        y_u1, _ = ac_cat.apply_autochess_modifiers(eng1, 'Y', y_cfg1, ac_cat.compute_active_synergies(y_cfg1))
+        x_u1, _ = ac_cat.apply_autochess_modifiers(eng1, 'X', x_cfg1, ac_cat.compute_active_synergies(x_cfg1))
+        eng1.setup_battle(y_u1, x_u1, arena_preset='autochess_citadel', autochess_mode=True)
+
+        self.assertAlmostEqual(eng1._autochess_summon_hp_mult('y_y12'), 0.55)
+        turtle1 = eng1._create_summon('y_y12', '玄武')
+        self.assertIsNotNone(turtle1)
+        self.assertEqual(eng1._get_combat_hp(turtle1), 56)
+        self.assertEqual(eng1._summon_members[turtle1]['shield_block'], 66)
+        self.assertEqual(eng1._summon_members[turtle1]['shield_block_hp'], 66)
+        entry1 = eng1._get_summon_entry(turtle1)
+        self.assertEqual(entry1['shield_block'], 66)
+        self.assertEqual(entry1['shield_block_hp'], 66)
+
+        for name in ('朱雀', '龙虎'):
+            uid = eng1._create_summon('y_y12', name)
+            self.assertIsNotNone(uid)
+            eng1._set_combat_hp(uid, 0)
+        eng1._check_trinity_merge()
+        self.assertEqual(eng1._summon_members[turtle1]['name'], '三合一')
+        self.assertEqual(eng1._get_combat_hp(turtle1), 110)
+        self.assertEqual(eng1._summon_members[turtle1]['shield_block'], 28)
+        self.assertEqual(eng1._summon_members[turtle1]['shield_block_hp'], 28)
+        merged_entry = eng1._get_summon_entry(turtle1)
+        self.assertEqual(merged_entry['shield_block'], 28)
+        self.assertEqual(merged_entry['shield_block_hp'], 28)
+
+        # 2. 2★ Y12 + 2-灵召: 1.5 * 1.25 * 0.55 = 1.03125 -> 玄武 HP=104, shield=124
+        eng2 = be.FullBattleEngine()
+        y_cfg2 = [{'uid': 'y_y12', 'serial': 'Y12', 'star': 2}, {'uid': 'y_y10', 'serial': 'Y10', 'star': 1}]
+        y_u2, _ = ac_cat.apply_autochess_modifiers(eng2, 'Y', y_cfg2, ac_cat.compute_active_synergies(y_cfg2))
+        x_u2, _ = ac_cat.apply_autochess_modifiers(eng2, 'X', x_cfg1, ac_cat.compute_active_synergies(x_cfg1))
+        eng2.setup_battle(y_u2, x_u2, arena_preset='autochess_citadel', autochess_mode=True)
+
+        self.assertAlmostEqual(eng2._autochess_summon_hp_mult('y_y12'), 1.03125)
+        turtle2 = eng2._create_summon('y_y12', '玄武')
+        self.assertEqual(eng2._get_combat_hp(turtle2), 104)
+        self.assertEqual(eng2._get_summon_entry(turtle2)['shield_block_hp'], 124)
+
+        # 3. Wiki metadata surfaces Auto-Chess summon offset and effective star multipliers
+        wiki = ac_cat.build_unit_wiki('Y12')
+        self.assertIn('自走棋召唤物生命/格挡盾 ×0.55', wiki['tuning_notes'])
+        self.assertEqual(wiki['star_stats']['1']['summon_hp_mult'], 0.55)
+        self.assertEqual(wiki['star_stats']['2']['summon_hp_mult'], 0.825)
+        self.assertEqual(wiki['star_stats']['3']['summon_hp_mult'], 1.21)
+
+        # 4. Classic mode (autochess_mode=False) remains strictly unaffected
+        eng_classic = be.FullBattleEngine()
+        cd.load_character_to_engine(eng_classic, copy.deepcopy(ac_cat.CHAR_DATA_BY_SERIAL['Y12']), 'c_y12')
+        cd.load_character_to_engine(eng_classic, copy.deepcopy(ac_cat.CHAR_DATA_BY_SERIAL['Y1']), 'c_x1')
+        eng_classic.setup_battle(['c_y12'], ['c_x1'], autochess_mode=False)
+
+        c_turtle = eng_classic._create_summon('c_y12', '玄武')
+        self.assertEqual(eng_classic._get_combat_hp(c_turtle), 101)
+        self.assertEqual(eng_classic._get_summon_entry(c_turtle)['shield_block_hp'], 120)
+        for name in ('朱雀', '龙虎'):
+            uid = eng_classic._create_summon('c_y12', name)
+            eng_classic._set_combat_hp(uid, 0)
+        eng_classic._check_trinity_merge()
+        self.assertEqual(eng_classic._get_combat_hp(c_turtle), 200)
+        self.assertEqual(eng_classic._get_summon_entry(c_turtle)['shield_block_hp'], 50)
+
+    def test_cost_tier_system_six_cost_and_legacy_save_compat(self):
+        expected_costs = {
+            'Y1': 2, 'Y2': 4, 'Y3': 1, 'Y4': 3, 'Y5': 3, 'Y6': 3,
+            'Y7': 2, 'Y8': 1, 'Y9': 3, 'Y10': 1, 'Y11': 1, 'Y12': 6,
+            'Y13': 3, 'Y14': 4, 'Y15': 2, 'Y16': 2, 'Y17': 2, 'Y18': 3, 'Y19': 3,
+        }
+        self.assertEqual({s: m['cost'] for s, m in ac_cat.UNIT_CATALOG.items()}, expected_costs)
+        self.assertEqual(set(ac_cat.POOL_COUNTS.keys()), set(range(1, 7)))
+        self.assertEqual(set(ac_cat.POOL_COUNTS_8P.keys()), set(range(1, 7)))
+        self.assertEqual(set(ac_cat.LEVEL_TABLE.keys()), set(range(1, 8)))
+
+        for lv, info in ac_cat.LEVEL_TABLE.items():
+            odds = info['odds']
+            self.assertEqual(set(odds.keys()), set(range(1, 7)), lv)
+            self.assertEqual(sum(odds.values()), 100, lv)
+            self.assertEqual(odds[5], 0, lv)
+            if lv <= 4:
+                self.assertEqual(odds[6], 0, lv)
+
+        self.assertEqual(ac_cat.LEVEL_TABLE[5]['odds'][1], 15)
+        self.assertEqual(ac_cat.LEVEL_TABLE[6]['odds'][1], 10)
+        self.assertLess(0, ac_cat.LEVEL_TABLE[5]['odds'][6])
+        self.assertLess(ac_cat.LEVEL_TABLE[5]['odds'][6], ac_cat.LEVEL_TABLE[6]['odds'][6])
+        self.assertLess(ac_cat.LEVEL_TABLE[6]['odds'][6], ac_cat.LEVEL_TABLE[7]['odds'][6])
+
+        # Verify aug_reroll odds helper across Lv.1-7 and Lv.5/6/7 6-cost boost
+        expected_boosted_1_cost = {4: 15, 5: 8, 6: 4}
+        for lv in range(1, 8):
+            boosted = AutoChessMatch._apply_reroll_odds_boost(ac_cat.LEVEL_TABLE[lv]['odds'], lv)
+            self.assertEqual(set(boosted.keys()), set(range(1, 7)), lv)
+            self.assertEqual(sum(boosted.values()), 100, lv)
+            self.assertEqual(boosted[5], 0, lv)
+            if lv in expected_boosted_1_cost:
+                self.assertEqual(boosted[1], expected_boosted_1_cost[lv], lv)
+            if lv >= 5:
+                self.assertGreater(boosted[6], ac_cat.LEVEL_TABLE[lv]['odds'][6], lv)
+
+        # Roll shops at Lv.6 / Lv.7 (including aug_reroll): never fails on 0-unit 5-cost and surfaces Y12
+        m = AutoChessMatch(mode='lobby4', seed=202611)
+        cmd = m.commanders['P1']
+        cmd['level'] = 7
+        saw_y12 = False
+        for idx in range(60):
+            if idx == 30:
+                cmd['augments'].append('aug_reroll')
+            self.assertTrue(m._roll_shop_for('P1', free=True))
+            if any(slot and slot['serial'] == 'Y12' for slot in cmd['shop']):
+                saw_y12 = True
+        self.assertTrue(saw_y12)
+
+        # Legacy save compatibility: pool_counts containing only keys '1'..'4'
+        legacy_payload = m.to_dict()
+        legacy_payload['pool_counts'] = {'1': 18, '2': 15, '3': 12, '4': 9}
+        restored = AutoChessMatch.from_dict(legacy_payload)
+        self.assertEqual(restored.pool_counts[5], ac_cat.POOL_COUNTS[5])
+        self.assertEqual(restored.pool_counts[6], ac_cat.POOL_COUNTS[6])
+
+        r_cmd = restored.commanders['P1']
+        r_cmd['units'].append({
+            'id': 'u_legacy_y12', 'serial': 'Y12', 'star': 1,
+            'location': 'bench', 'bench_idx': 0, 'coord': None, 'stance': 'balanced',
+        })
+        restored.pool['Y12'] = max(0, restored.pool.get('Y12', 9) - 1)
+        ok, msg = restored.sell_unit('P1', 'u_legacy_y12')
+        self.assertTrue(ok, msg)
+        self.assertIn('6G', msg)
+
+    def test_victory_grants_bonus_xp_total_three_while_loss_gives_two(self):
+        from unittest.mock import patch
+
+        # 1. Lobby4 win/loss + level-up carry-over + other_outcomes non-ghost vs ghost
+        m = AutoChessMatch(mode='lobby4', seed=77)
+        self.assertTrue(m.start_combat()[0])
+        for cid in m.commanders:
+            m.commanders[cid]['level'] = 1
+            m.commanders[cid]['xp'] = 0
+        b = m._live_bouts[0]
+        left_cid, right_cid = b['left_cid'], b['right_cid']
+        other_ids = [cid for cid in m.commanders if cid not in (left_cid, right_cid)]
+        o1, o2 = other_ids[0], other_ids[1]
+
+        # Test: left wins live bout (+1 XP); o1 loses to non-ghost o2 (o2 gets +1 XP, o1 gets 0);
+        # plus ghost bout where o1 fights ghost of left_cid and loses -> ghost source left_cid must NOT get extra +1 XP.
+        fake_live_out = {
+            'winner': 'Y', 'rounds': 4, 'timeout': False,
+            'surviving_y': 1, 'surviving_x': 0, 'telemetry': [], 'mvp': None,
+        }
+        m._live_matchup = {
+            'other_outcomes': [
+                (o1, o2, False, {'winner': 'X', 'rounds': 4, 'timeout': False, 'surviving_y': 0, 'surviving_x': 1}),
+                (o1, left_cid, True, {'winner': 'X', 'rounds': 4, 'timeout': False, 'surviving_y': 0, 'surviving_x': 1}),
+            ]
+        }
+        with patch.object(m, '_extract_bout_outcome', return_value=fake_live_out):
+            m._finalize_round()
+
+        # Immediately after _finalize_round: winners got +1 XP (still Lv.1 since xp_to_next == 2), losers got 0 XP
+        self.assertEqual((m.commanders[left_cid]['level'], m.commanders[left_cid]['xp']), (1, 1))
+        self.assertEqual((m.commanders[right_cid]['level'], m.commanders[right_cid]['xp']), (1, 0))
+        self.assertEqual((m.commanders[o2]['level'], m.commanders[o2]['xp']), (1, 1))
+        self.assertEqual((m.commanders[o1]['level'], m.commanders[o1]['xp']), (1, 0))
+        if left_cid == m.player_id or right_cid == m.player_id:
+            p1_won = (left_cid == m.player_id)
+            if p1_won:
+                self.assertTrue(any('胜利 (+1G/+1XP)' in ln for ln in m.logs))
+
+        # After next_round (+2 base XP): winners reach Lv.2 with 1 carry-over XP (+3 total); losers reach Lv.2 with 0 XP (+2 total)
+        self.assertTrue(m.next_round()[0])
+        self.assertEqual((m.commanders[left_cid]['level'], m.commanders[left_cid]['xp']), (2, 1))
+        self.assertEqual((m.commanders[right_cid]['level'], m.commanders[right_cid]['xp']), (2, 0))
+        self.assertEqual((m.commanders[o2]['level'], m.commanders[o2]['xp']), (2, 1))
+        self.assertEqual((m.commanders[o1]['level'], m.commanders[o1]['xp']), (2, 0))
+
+        # 2. Real PvE win verification (3★ Y12 beats wave 1 -> +1G/+1XP log & +3 XP total after next_round)
+        pve = AutoChessMatch(mode='pve12', seed=88)
+        p1 = pve.commanders[pve.player_id]
+        p1['level'] = 2
+        p1['xp'] = 4  # Lv.2 needs 6 XP -> +1 on win (5 XP), +2 on next_round -> Lv.3 with 1 carry-over XP
+        p1['units'] = [{
+            'id': 'u_boss', 'serial': 'Y12', 'star': 3,
+            'location': 'board', 'bench_idx': None, 'coord': 'C4', 'stance': 'balanced',
+        }]
+        ok, msg = pve.resolve_combat()
+        self.assertTrue(ok, msg)
+        self.assertTrue(pve.last_round_report['won'])
+        self.assertEqual((p1['level'], p1['xp']), (2, 5))
+        self.assertTrue(any('胜利 (+1G/+1XP)' in ln for ln in pve.logs))
+        self.assertTrue(pve.next_round()[0])
+        self.assertEqual((p1['level'], p1['xp']), (3, 1))
 
 
 if __name__ == '__main__':

@@ -97,7 +97,7 @@ RANKED_AI_ARCHETYPES = (
     },
     {
         'id': 'macro_fast_lv',
-        'label': '速升抢四流',
+        'label': '速升冲高流',
         'personality': 'fast_lv',
         'preferred_traits': (),
         'preferred_augs': ('aug_xp', 'aug_pop', 'aug_econ'),
@@ -553,7 +553,7 @@ def _legacy_commander_prep(match, cid):
         if personality == 'fast_lv' and gold >= 4 + (0 if lvl < 3 else 4):
             if not match.buy_xp(cid):
                 break
-        elif personality in ('econ', 'balanced') and gold - 4 >= interest_floor and need_xp <= 12:
+        elif personality in ('econ', 'balanced') and gold - 4 >= interest_floor and (need_xp <= 12 or gold >= interest_floor + 12):
             if not match.buy_xp(cid):
                 break
         elif personality == 'reroll' and ((lvl < 3 and gold >= 8) or (lvl < 4 and match.round_num >= 5 and gold >= 14)):
@@ -709,7 +709,7 @@ def _ranked_commander_prep(match, cid, profile):
         elif personality == 'fast_lv' and gold >= max(4, interest_floor + (0 if lvl < 3 else 4)):
             if not match.buy_xp(cid):
                 break
-        elif gold - 4 >= interest_floor and need_xp <= (16 if lvl_disc >= 1.0 else 12):
+        elif gold - 4 >= interest_floor and (need_xp <= (16 if lvl_disc >= 1.0 else 12) or (lvl >= 5 and gold >= interest_floor + 10)):
             if not match.buy_xp(cid):
                 break
         elif personality == 'reroll' and profile.get('band') != 'weak' and ((lvl < 3 and gold >= 8) or (lvl < 4 and match.round_num >= 5 and gold >= 14)):
@@ -774,7 +774,7 @@ def _ranked_commander_prep(match, cid, profile):
             cost = UNIT_CATALOG[s]['cost']
             if cmd['gold'] < cost:
                 same_1 = sum(1 for u in cmd['units'] if u['serial'] == s and u['star'] == 1)
-                if same_1 >= 2 or (same_1 >= 1 and cost >= 3):
+                if same_1 >= 2 or (same_1 >= 1 and cost >= 3) or cost >= 5:
                     wants_lock = True
                     break
         if wants_lock and roller.random() < lock_prob:

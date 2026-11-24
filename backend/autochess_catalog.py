@@ -22,16 +22,17 @@ CHAR_DATA_BY_SERIAL = {
     if isinstance(c, dict) and c.get('serial') and c.get('serial') != 'Y60'
 }
 
-POOL_COUNTS = {1: 18, 2: 15, 3: 12, 4: 9}
-POOL_COUNTS_8P = {1: 29, 2: 22, 3: 18, 4: 14}
+POOL_COUNTS = {1: 18, 2: 15, 3: 12, 4: 9, 5: 9, 6: 9}
+POOL_COUNTS_8P = {1: 29, 2: 22, 3: 18, 4: 14, 5: 11, 6: 9}
 
 LEVEL_TABLE = {
-    1: {'max_pop': 2, 'xp_to_next': 2, 'odds': {1: 75, 2: 25, 3: 0, 4: 0}},
-    2: {'max_pop': 3, 'xp_to_next': 6, 'odds': {1: 55, 2: 35, 3: 10, 4: 0}},
-    3: {'max_pop': 4, 'xp_to_next': 10, 'odds': {1: 30, 2: 40, 3: 25, 4: 5}},
-    4: {'max_pop': 5, 'xp_to_next': 16, 'odds': {1: 18, 2: 32, 3: 35, 4: 15}},
-    5: {'max_pop': 6, 'xp_to_next': 24, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
-    6: {'max_pop': 7, 'xp_to_next': 0, 'odds': {1: 10, 2: 25, 3: 35, 4: 30}},
+    1: {'max_pop': 2, 'xp_to_next': 2, 'odds': {1: 75, 2: 25, 3: 0, 4: 0, 5: 0, 6: 0}},
+    2: {'max_pop': 3, 'xp_to_next': 6, 'odds': {1: 55, 2: 35, 3: 10, 4: 0, 5: 0, 6: 0}},
+    3: {'max_pop': 4, 'xp_to_next': 10, 'odds': {1: 30, 2: 40, 3: 25, 4: 5, 5: 0, 6: 0}},
+    4: {'max_pop': 5, 'xp_to_next': 16, 'odds': {1: 18, 2: 34, 3: 33, 4: 15, 5: 0, 6: 0}},
+    5: {'max_pop': 6, 'xp_to_next': 24, 'odds': {1: 15, 2: 23, 3: 36, 4: 24, 5: 0, 6: 2}},
+    6: {'max_pop': 7, 'xp_to_next': 32, 'odds': {1: 10, 2: 18, 3: 34, 4: 30, 5: 0, 6: 8}},
+    7: {'max_pop': 8, 'xp_to_next': 0, 'odds': {1: 5, 2: 15, 3: 30, 4: 35, 5: 0, 6: 15}},
 }
 
 STAR_SCALING = {
@@ -66,12 +67,12 @@ STAR_SCALING = {
 
 UNIT_CATALOG = {
     'Y1': {
-        'serial': 'Y1', 'name': '炎焱', 'cost': 1, 'role': 'bruiser',
+        'serial': 'Y1', 'name': '炎焱', 'cost': 2, 'role': 'bruiser',
         'traits': ['炎域', '重盾'], 'range': 2,
         'tag': '烈焰前锋', 'blurb': '高血量火焰斗士，开火附魔后近战爆发极强。',
     },
     'Y2': {
-        'serial': 'Y2', 'name': '达尼厄斯', 'cost': 3, 'role': 'ranged',
+        'serial': 'Y2', 'name': '达尼厄斯', 'cost': 4, 'role': 'ranged',
         'traits': ['炎域', '星祈'], 'range': 7, 'dmg_pct_offset': -10,
         'tag': '火球魔导', 'blurb': '稳定远程火球输出并可召唤使魔牵制敌方。',
     },
@@ -91,7 +92,7 @@ UNIT_CATALOG = {
         'tag': '护盾治愈', 'blurb': '兼顾护盾、治疗、藤蔓控场与蜂鸟召唤。',
     },
     'Y4': {
-        'serial': 'Y4', 'name': '星闪', 'cost': 2, 'role': 'ranged',
+        'serial': 'Y4', 'name': '星闪', 'cost': 3, 'role': 'ranged',
         'traits': ['星祈', '破空'], 'range': 8,
         'tag': '远程星炮', 'blurb': '超远距离星闪火力，适合在掩体与后排持续压制。',
     },
@@ -101,7 +102,7 @@ UNIT_CATALOG = {
         'tag': '空袭吸血', 'blurb': '飞行越障切入后排，攻击附带吸血续航。',
     },
     'Y6': {
-        'serial': 'Y6', 'name': '雪人', 'cost': 2, 'role': 'ranged',
+        'serial': 'Y6', 'name': '雪人', 'cost': 3, 'role': 'ranged',
         'traits': ['破空', '秘愈'], 'range': 7,
         'tag': '霜雪控场', 'blurb': '远程雪球与雪带限制敌方走位与节奏。',
     },
@@ -111,7 +112,7 @@ UNIT_CATALOG = {
         'tag': '死神镰刃', 'blurb': '黑雾突进与高爆发镰刀收割。',
     },
     'Y14': {
-        'serial': 'Y14', 'name': '余烬', 'cost': 2, 'role': 'ranged',
+        'serial': 'Y14', 'name': '余烬', 'cost': 4, 'role': 'ranged',
         'traits': ['炎域', '破空'], 'range': 6,
         'tag': '街机切卡', 'blurb': '多卡带切换兼顾散射压制与高机动反打。',
     },
@@ -121,7 +122,7 @@ UNIT_CATALOG = {
         'tag': '花咏治愈', 'blurb': '大范围治愈领域、战意削弱与返生核心辅助。',
     },
     'Y9': {
-        'serial': 'Y9', 'name': '木落', 'cost': 3, 'role': 'summoner',
+        'serial': 'Y9', 'name': '木落-荣枯', 'cost': 3, 'role': 'summoner',
         'traits': ['灵召', '秘愈'], 'range': 5, 'hp_offset': 3, 'dmg_pct_offset': 12,
         'tag': '生灵统御', 'blurb': '召唤生灵并展开生命领域，越打越厚的阵地核心。',
     },
@@ -131,22 +132,32 @@ UNIT_CATALOG = {
         'tag': '飞行重装', 'blurb': '可越墙突入的魔力护体战士，承伤与爆发兼备。',
     },
     'Y15': {
-        'serial': 'Y15', 'name': '葬火', 'cost': 3, 'role': 'ranged',
+        'serial': 'Y15', 'name': '葬火', 'cost': 2, 'role': 'ranged',
         'traits': ['炎域', '秘愈'], 'range': 6, 'dmg_pct_offset': 12,
         'tag': '爆破焦土', 'blurb': '爆破圈叠加瞬爆造成毁灭性范围伤害。',
     },
     'Y12': {
-        'serial': 'Y12', 'name': '斯瑞提卡', 'cost': 4, 'role': 'tank',
-        'traits': ['重盾', '灵召'], 'range': 2,
+        'serial': 'Y12', 'name': '斯瑞提卡', 'cost': 6, 'role': 'tank',
+        'traits': ['重盾', '灵召'], 'range': 2, 'summon_hp_mult_offset': 0.55,
         'tag': '四象空间盾', 'blurb': '四灵召唤与高额格挡减伤，三位一体合体毁天灭地。',
     },
     'Y16': {
-        'serial': 'Y16', 'name': '罗杰', 'cost': 4, 'role': 'summoner',
+        'serial': 'Y16', 'name': '罗杰', 'cost': 2, 'role': 'summoner',
         'traits': ['星祈', '灵召'], 'range': 12, 'hp_offset': 2,
         'tag': '幻月王座', 'blurb': '虚假之月充能配合远距毁灭光束的主宰核心。',
     },
+    'Y18': {
+        'serial': 'Y18', 'name': '夕歌谣梦', 'cost': 3, 'role': 'summoner',
+        'traits': ['灵召', '星祈'], 'range': 6,
+        'tag': '四季咏唱', 'blurb': '召唤仙境生灵，在随身领域中治疗、强化或发动终曲。',
+    },
+    'Y19': {
+        'serial': 'Y19', 'name': '木落-焚秋', 'cost': 3, 'role': 'assassin',
+        'traits': ['炎域', '血月'], 'range': 3,
+        'tag': '焚羽追猎', 'blurb': '突进连击累积木落印记，展开燃域并发动夕阳终爆。',
+    },
     'Y17': {
-        'serial': 'Y17', 'name': '夜诏明', 'cost': 4, 'role': 'bruiser',
+        'serial': 'Y17', 'name': '夜诏明', 'cost': 2, 'role': 'bruiser',
         'traits': ['血月', '武斗'], 'range': 3, 'hp_offset': 3, 'dmg_pct_offset': 15, 'flat_dmg_offset': 1,
         'tag': '血律宗师', 'blurb': '庞大魔力与血池体系加持的多面手主C。',
     },
@@ -169,6 +180,8 @@ UNIT_TOKEN_DEFAULTS = {
     'Y14': ('cartridge', '#ab7fbd'),
     'Y15': ('cloak', '#c26742'),
     'Y16': ('quill', '#6686b6'),
+    'Y18': ('sunflower', '#d89b3c'),
+    'Y19': ('phoenixleaf', '#d95b38'),
     'Y17': ('bloodmoon', '#ae566e'),
 }
 
@@ -254,7 +267,7 @@ AUGMENTS = [
     {'id': 'aug_econ', 'name': '星辉投资', 'tier': '经济', 'desc': '立即获得 8 金币，且你的利息上限由 +5 提升至 +7。', 'instant_gold': 8, 'max_interest': 7},
     {'id': 'aug_xp', 'name': '秘典研习', 'tier': '经验', 'desc': '立即获得 6 点经验与 2 次免费商店刷新。', 'instant_xp': 6, 'free_rerolls': 2},
     {'id': 'aug_reroll', 'name': '黄金牌库', 'tier': '商店', 'desc': '立即获得 3 次免费刷新与 3 金币，刷新时更易搜到高费棋子。', 'instant_gold': 3, 'free_rerolls': 3},
-    {'id': 'aug_pop', 'name': '星核扩容', 'tier': '人口', 'desc': '你的最大上阵人口永久 +1（6 级时最多可上阵 8 人）。', 'pop_bonus': 1},
+    {'id': 'aug_pop', 'name': '星核扩容', 'tier': '人口', 'desc': '你的最大上阵人口永久 +1（7 级时最多可上阵 9 人）。', 'pop_bonus': 1},
     {'id': 'aug_bastion', 'name': '钢铁前线', 'tier': '防御', 'desc': '全队前排或掩体格减伤 +18%，开局获得 6 点护盾。', 'front_cover_dr_pct': 18, 'team_shield': 6},
     {'id': 'aug_execute', 'name': '绝地斩魄', 'tier': '输出', 'desc': '全队对体力低于 50% 的敌人伤害 +20%，低于 30% 时再 +20%。', 'low_hp_bonuses': [(0.5, 20), (0.3, 20)]},
     {'id': 'aug_blood', 'name': '血月盛宴', 'tier': '续航', 'desc': '所有友方单位获得 16% 全能汲取，溢出血量转为护盾。', 'bloodmoon_leech_pct': 16},
@@ -274,13 +287,18 @@ PVE_WAVES = [
     {'wave': 4, 'name': '霜雪拦截网', 'arena': 'autochess_standard', 'units': [('Y1', 2), ('Y6', 1), ('Y2', 2)]},
     {'wave': 5, 'name': '血月游猎团', 'arena': 'autochess_standard', 'units': [('Y5', 2), ('Y11', 2), ('Y8', 1)]},
     {'wave': 6, 'name': '像素轰炸队', 'arena': 'autochess_citadel', 'units': [('Y14', 2), ('Y15', 1), ('Y13', 1), ('Y10', 2)]},
-    {'wave': 7, 'name': '生灵圣愈阵', 'arena': 'autochess_citadel', 'units': [('Y9', 2), ('Y7', 2), ('Y3', 2), ('Y4', 2)]},
+    {'wave': 7, 'name': '生灵圣愈阵', 'arena': 'autochess_citadel', 'units': [('Y9', 2), ('Y18', 2), ('Y3', 2), ('Y4', 2)]},
     {'wave': 8, 'name': '空天强袭队', 'arena': 'autochess_standard', 'units': [('Y13', 2), ('Y5', 2), ('Y14', 2), ('Y6', 2), ('Y7', 1)]},
     {'wave': 9, 'name': '四象空间壁', 'arena': 'autochess_citadel', 'units': [('Y12', 2), ('Y9', 2), ('Y15', 2), ('Y10', 2), ('Y4', 2)]},
-    {'wave': 10, 'name': '血律统御者', 'arena': 'autochess_citadel', 'units': [('Y17', 2), ('Y11', 2), ('Y5', 2), ('Y7', 2), ('Y1', 2)]},
+    {'wave': 10, 'name': '血律统御者', 'arena': 'autochess_citadel', 'units': [('Y17', 2), ('Y19', 2), ('Y5', 2), ('Y7', 2), ('Y1', 2)]},
     {'wave': 11, 'name': '幻月星辰议会', 'arena': 'autochess_citadel', 'units': [('Y16', 2), ('Y12', 2), ('Y4', 3), ('Y7', 2), ('Y15', 2)]},
     {'wave': 12, 'name': '终焉星序共鸣', 'arena': 'autochess_citadel', 'units': [('Y12', 3), ('Y16', 2), ('Y17', 2), ('Y7', 2), ('Y13', 2), ('Y15', 2)]},
 ]
+
+
+def _star_mp(serial, base_mp, scale):
+    value = base_mp * scale
+    return int(value + 0.5) if serial in ('Y18', 'Y19') else round(value)
 
 
 def _pick_tier(syn_def, count):
@@ -427,7 +445,7 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         char.set_attr('体力', scaled_hp)
 
         base_mp = char.get_attr('魔力上限', char.get_attr('魔力', 10))
-        scaled_mp = max(0, int(round(base_mp * sc['mp_mult'])) + team_flat_mp)
+        scaled_mp = max(0, _star_mp(serial, base_mp, sc['mp_mult']) + team_flat_mp)
         char.set_attr('魔力上限', scaled_mp)
         char.set_attr('魔力', scaled_mp)
 
@@ -439,7 +457,7 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         syn_front_cover = team_front_cover_dr
         syn_bloodmoon = team_bloodmoon
         syn_cd = team_cd_red
-        syn_sum_hp = sc['summon_hp_mult'] * team_summon_hp_mult
+        syn_sum_hp = sc['summon_hp_mult'] * team_summon_hp_mult * float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
         syn_sum_sk = sc['summon_skill_bonus'] + team_summon_skill_bonus
         syn_zone_r = team_zone_radius_bonus
         syn_mv = team_move_bonus
@@ -477,7 +495,7 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
             char.set_attr('闪避', min(85, char.get_attr('闪避', 25) + dodge_bonus))
         if syn_skill:
             for attr_key, val in list(char.attrs.items()):
-                if attr_key in ('斗殴', '剑术', '武术', '射击:弓', '弓术', '魔法', '施法', '灵感', '格挡', '盾击', '神秘学', '技艺:演唱', '写作'):
+                if (serial == 'Y19' and attr_key == '剑') or attr_key in ('斗殴', '剑术', '武术', '射击:弓', '弓术', '魔法', '施法', '灵感', '格挡', '盾击', '神秘学', '技艺:演唱', '写作'):
                     if val > 0:
                         char.set_attr(attr_key, min(92, int(val) + syn_skill))
 
@@ -574,7 +592,7 @@ def _summarize_wiki_spell_effects(effects):
             _add(f"护盾 {eff['护盾值']}")
         if et == 5 or eff.get('召唤物模板'):
             tmpl = eff.get('召唤物模板') or '使魔'
-            cnt = eff.get('召唤个数', 1)
+            cnt = '实际消耗MP' if tmpl == '锋叶魔物' else eff.get('召唤个数', 1)
             _add(f"召唤 {tmpl}×{cnt}")
         if et == 6 or eff.get('制造物模板'):
             _add(f"制作 {eff.get('制造物模板') or '道具'}")
@@ -607,6 +625,10 @@ def _build_wiki_passives(passive_rules):
     if not isinstance(passive_rules, dict) or not passive_rules:
         return []
     out = []
+    if 'seasons' in passive_rules:
+        out.append('夏秋强化春之召唤。夏域开启时光通道，秋域凋零，冬域第三轮消耗剩余魔力引爆。')
+    if 'burn_autumn' in passive_rules:
+        out.append('锋叶与秋风矛累积印记。焚羽按完整层数增伤，夕阳启动后在施放位置引爆。')
     if 'frost' in passive_rules:
         fr = passive_rules['frost']
         out.append(
@@ -657,6 +679,7 @@ def build_unit_wiki(serial):
     block_val = int(attrs.get('格挡', 0) or 0) if can_block else 0
     flying = serial in ('Y5', 'Y13')
 
+    sum_hp_off = float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
     tuning_notes = []
     if meta.get('hp_offset'):
         hp_off = int(meta['hp_offset'])
@@ -667,6 +690,8 @@ def build_unit_wiki(serial):
     if meta.get('flat_dmg_offset'):
         fd_off = int(meta['flat_dmg_offset'])
         tuning_notes.append(f"自走棋附加伤害 {'+' if fd_off > 0 else ''}{fd_off}")
+    if abs(sum_hp_off - 1.0) > 1e-9:
+        tuning_notes.append(f"自走棋召唤物生命/格挡盾 ×{sum_hp_off:g}")
 
     star_stats = {}
     for star in (1, 2, 3):
@@ -674,18 +699,18 @@ def build_unit_wiki(serial):
         star_stats[str(star)] = {
             'star': star,
             'hp': max(1, int(round(base_hp * sc['hp_mult']))),
-            'mp': max(0, int(round(base_mp * sc['mp_mult']))),
+            'mp': max(0, _star_mp(serial, base_mp, sc['mp_mult'])),
             'skill_bonus': sc['skill_bonus'],
             'flat_dmg': sc['flat_dmg'] + int(meta.get('flat_dmg_offset', 0) or 0),
             'flat_dr': sc['flat_dr'],
             'dodge': min(85, base_dodge + (4 if star == 2 else 8 if star == 3 else 0)),
-            'summon_hp_mult': sc['summon_hp_mult'],
+            'summon_hp_mult': round(sc['summon_hp_mult'] * sum_hp_off, 4),
             'summon_skill_bonus': sc['summon_skill_bonus'],
         }
 
     skill_candidates = [
         (k, int(attrs[k]))
-        for k in ('斗殴', '剑术', '武术', '射击:弓', '弓术')
+        for k in ('斗殴', '剑', '剑术', '武术', '射击:弓', '弓术')
         if int(attrs.get(k, 0) or 0) > 0
     ]
     best_skill_name, best_skill_val = max(skill_candidates, key=lambda x: x[1], default=('斗殴', 50))

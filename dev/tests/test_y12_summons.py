@@ -88,6 +88,22 @@ class SummonRulesTests(unittest.TestCase):
             self.assertEqual(en._get_summon_entry(turtle)['shield_block_hp'], template.get('shield_block', 0))
             self.assertEqual([s['name'] for s in en.load_spells(turtle)], [s['name'] for s in template.get('spells', [])])
 
+    def test_trinity_merge_restores_missing_member_state(self):
+        for cls in (be.FullBattleEngine, be.FastBattleEngine):
+            en = setup(cls)
+            turtle = en._create_summon('actor', '玄武')
+            for name in ('朱雀', '龙虎'):
+                uid = en._create_summon('actor', name)
+                en._set_combat_hp(uid, 0)
+            group_key = en._summon_group_key(turtle)
+            en._summon_members.pop(turtle)
+            en._summon_groups.pop(group_key)
+
+            en._check_trinity_merge()
+
+            self.assertEqual(en._summon_members[turtle]['name'], '三合一')
+            self.assertEqual(en._summon_groups[group_key]['representative_uid'], turtle)
+
     def test_y12_06_open_template_baseline(self):
         skill = next(s for s in cd.SUMMON_TEMPLATES['三合一']['skills'] if s.get('hits'))
         self.assertEqual((skill['hits'], skill['on_whiff_aoe_dmg'], skill['on_whiff_mp_cost']), (2, '4d10', 10))

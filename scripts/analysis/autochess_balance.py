@@ -4,7 +4,7 @@
 Checks:
 1. Mirror side-swap symmetry (Y vs X win rate & 95% CI).
 2. Spatial Tactical AI vs Legacy Rule AI win rate on spatial arenas.
-3. 2v2 / 3v3 role & unit win rates, overtime/timeout rates across Y1-Y17.
+3. 2v2 / 3v3 role & unit win rates, overtime/timeout rates across the current roster.
 4. Full 4-commander AI lobby simulations (personality meta, round length, pool conservation).
 
 Outputs summary report to archive/artifacts/balance_autochess/report.md.
@@ -200,7 +200,7 @@ def bench_ai_lobbies(n_lobbies=40, seed=4004):
         preset = presets[idx % len(presets)]
         m = AutoChessMatch(mode='lobby4', arena_preset=preset, seed=seed + idx * 17, player_name='苍星·平衡测试AI')
         # Turn P1 into balanced AI commander for symmetrical 4-AI lobby telemetry
-        m.commanders['P1']['is_human'] = False
+        # P1 stays the live viewer slot; its shopping and deployment are AI-controlled.
         m.commanders['P1']['personality'] = 'balanced'
 
         guard = 0
@@ -267,7 +267,7 @@ def write_report(sym, svl, team_res, lobby_res, out_path):
         '# 空间与自走棋模式平衡性验证报告',
         '',
         f'- 生成时间：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
-        '- 测试基准：全部战斗均运行于 `autochess_mode=True` 独立分支；经典模式未受任何改动。',
+        '- 测试基准：全部战斗均运行于 `autochess_mode=True` 独立分支；统计范围为自走棋对局。',
         '',
         '## 1. 镜像换边对称性校验',
         '',

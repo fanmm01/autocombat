@@ -1971,5 +1971,161 @@
       "吟唱：起手支付费用，之后须再次使用同名技能，以主动作续唱；经过轮次不会自动完成吟唱。续唱不重复支付费用。可主动结束吟唱，已付费用不返还。吟唱期间仍可使用《凝血式-守》《凝血式-幻》《凝血式-存》《血染披风》和《血色突刺》。"
     ],
     "basic": "普通攻击基础骰：{{character.str_attrs.伤害值}}；斗殴 {{character.attrs.斗殴}}；基础闪避 {{character.attrs.闪避}}。"
+  },
+  "Y18": {
+    "emblem": "sunflower",
+    "color": "#d89b3c",
+    "role": "四季 · 仙境",
+    "traits": [
+      {
+        "name": "四季",
+        "description": "夏、秋、冬共享一个随身领域。"
+      },
+      {
+        "name": "仙境",
+        "description": "春召唤仙境生灵，夏秋领域强化召唤。"
+      }
+    ],
+    "skills": [
+      {
+        "id": "[\"Y18\",\"四季之歌·春\",0]",
+        "name": "四季之歌·春",
+        "phase": 0,
+        "timing": "主动／附加动作",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "自身召唤",
+        "description": "召唤仙境生灵，最多同时存在四只，持续四轮。维持夏或秋时少消耗一点魔力，多召一只，生灵斗殴提高十五点。施法者阵亡或沉默会使生灵消散。",
+        "facts": [
+          "基础召唤 {{spell.effects.0.召唤个数}} 只，强化后额外召唤 {{character.passive_rules.seasons.spring_summer_extra_count}} 只。"
+        ],
+        "icon": "/ui/icons/Y18-s1.svg"
+      },
+      {
+        "id": "[\"Y18\",\"四季之歌·夏\",0]",
+        "name": "四季之歌·夏",
+        "phase": 0,
+        "timing": "主动",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "半径 {{spell.effects.0.作用半径}} 格",
+        "description": "领域立即并在轮首为己方回复生命与魔力，提高斗殴、闪避、行动力和暴击率。时光通道有四次充能，每轮限一次，为受击友方提供闪避奖励骰与四点减伤。自走棋后排受近战攻击后可跃迁至域内安全格。",
+        "facts": [
+          "每次回复 {{spell.effects.0.回复hp}} HP 和 {{spell.effects.0.回复mp}} MP。每轮维持消耗 {{character.passive_rules.seasons.summer_upkeep_mp}} MP。"
+        ],
+        "icon": "/ui/icons/Y18-s2.svg"
+      },
+      {
+        "id": "[\"Y18\",\"四季之歌·秋\",0]",
+        "name": "四季之歌·秋",
+        "phase": 0,
+        "timing": "主动",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "半径 {{spell.effects.0.作用半径}} 格",
+        "description": "须从夏域改编。队友获得攻击奖励骰并提高伤害、斗殴、闪避与行动力，同时承受额外伤害。轮首凋零伤及双方，主体保留生命底线，召唤物可被凋零击倒。",
+        "facts": [
+          "主体凋零 {{character.passive_rules.seasons.autumn_human_dot}}，血线保留至最大生命的 30%，最低 4 点。召唤物受到 {{character.passive_rules.seasons.autumn_summon_dot}} 伤害。"
+        ],
+        "icon": "/ui/icons/Y18-s3.svg"
+      },
+      {
+        "id": "[\"Y18\",\"四季之歌·冬\",0]",
+        "name": "四季之歌·冬",
+        "phase": 0,
+        "timing": "主动",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "半径 {{spell.effects.0.作用半径}} 格",
+        "description": "替换当前领域，降低敌方行动力与闪避，使攻击获得惩罚骰并造成冻伤。己方降低闪避，获得暴击与命中修正。第三轮燃尽魔力引爆，敌方可闪避，友方以奖励骰闪避。施法者阵亡、沉默或主动取消会中止终曲。",
+        "facts": [
+          "第二轮消耗 {{character.passive_rules.seasons.winter_upkeep_mp}} MP。终曲基础伤害 {{character.passive_rules.seasons.winter_burst_base_dice}}，对敌额外计入燃尽魔力的 45%，最多 30 点。"
+        ],
+        "icon": "/ui/icons/Y18-s4.svg"
+      }
+    ],
+    "passives": [
+      "夏、秋、冬共享一个随身领域。",
+      "春召唤仙境生灵，夏秋领域强化召唤。"
+    ],
+    "basic": "普通攻击基础骰：{{character.str_attrs.伤害值}}；斗殴 {{character.attrs.斗殴}}；基础闪避 {{character.attrs.闪避}}。"
+  },
+  "Y19": {
+    "emblem": "phoenixleaf",
+    "color": "#d95b38",
+    "role": "木落印记 · 焚羽",
+    "traits": [
+      {
+        "name": "木落印记",
+        "description": "锋叶与秋风矛逐次命中累积印记。"
+      },
+      {
+        "name": "焚羽",
+        "description": "燃域强化近战，夕阳锁定原地终爆。"
+      }
+    ],
+    "skills": [
+      {
+        "id": "[\"Y19\",\"落叶的尖锐\",0]",
+        "name": "落叶的尖锐",
+        "phase": 0,
+        "timing": "主动／附加动作",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "自身召唤",
+        "description": "按实际消耗的魔力召唤锋叶魔物，最多同时存在八只，持续三轮。魔物每次命中给目标增加半层木落印记。",
+        "facts": [
+          "消耗 1–6 MP，同量召唤。每次命中叠加 {{character.passive_rules.burn_autumn.blade_mark_gain}} 层，最多 {{character.passive_rules.burn_autumn.mark_cap}} 层。"
+        ],
+        "icon": "/ui/icons/Y19-s1.svg"
+      },
+      {
+        "id": "[\"Y19\",\"秋风矛\",0]",
+        "name": "秋风矛",
+        "phase": 0,
+        "timing": "主动",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "射程 {{spell.effects.0.射程}} 格",
+        "description": "突进至六格内敌人的邻格，以剑术奖励骰发动两次贯穿攻击。每段命中增加一层印记，至少一段命中回复一次生命。",
+        "facts": [
+          "每段伤害 {{spell.effects.0.伤害骰}}。至少一次命中回复 1d8+2 HP。"
+        ],
+        "icon": "/ui/icons/Y19-s2.svg"
+      },
+      {
+        "id": "[\"Y19\",\"而彼落叶，将最后再绽放一次\",0]",
+        "name": "而彼落叶，将最后再绽放一次",
+        "phase": 0,
+        "timing": "主动",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "半径 {{spell.effects.0.作用半径}} 格",
+        "description": "激活焚羽时重置魔力。自身剑术、斗殴和行动力提高，完整印记层数放大直伤。友方造成与受到的伤害同时增加。轮首灼烧敌人、召唤物和施法者，自焚有生命底线。",
+        "facts": [
+          "轮首维持消耗 {{character.passive_rules.burn_autumn.bloom_upkeep_mp}} MP。自身直伤倍率为 1.15 加每完整层印记 0.15；队友增伤 35%，易伤 15%。"
+        ],
+        "icon": "/ui/icons/Y19-s3.svg"
+      },
+      {
+        "id": "[\"Y19\",\"在绚丽的秋日夕阳下\",0]",
+        "name": "在绚丽的秋日夕阳下",
+        "phase": 0,
+        "timing": "主动",
+        "reviewed": true,
+        "cost": "{{spell.消耗mp}} MP",
+        "limits": "半径 {{spell.effects.0.作用半径}} 格",
+        "description": "八格内有至少两层印记的敌人时可用，每场一次。燃尽魔力并限制自身生命与治疗。接下来两轮追猎带印记的敌人，第三轮从施放位置对敌我引爆，施法者阵亡仍会触发。",
+        "facts": [
+          "终爆基础伤害 {{spell.effects.0.伤害骰}}，额外计入燃尽魔力的 35%，最多 24 点。"
+        ],
+        "icon": "/ui/icons/Y19-s4.svg"
+      }
+    ],
+    "passives": [
+      "锋叶与秋风矛逐次命中累积印记。",
+      "燃域强化近战，夕阳锁定原地终爆。"
+    ],
+    "basic": "普通攻击基础骰：{{character.str_attrs.伤害值}}；斗殴 {{character.attrs.斗殴}}；基础闪避 {{character.attrs.闪避}}。"
   }
 }

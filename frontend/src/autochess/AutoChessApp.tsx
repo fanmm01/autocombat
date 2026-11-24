@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, BookOpen, Diamond, Image as ImageIcon, Shield, Trophy, UserCheck, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Image as ImageIcon, Shield, Trophy, UserCheck, UserPlus, X } from 'lucide-react';
 import { readPreferences, savePreferences } from '../settings';
 import { api } from '../types';
 import { getAuthMe, readGuestTokens } from './api';
@@ -74,7 +74,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
       <header className="ac-topbar">
         <div className="ac-topbar-brand">
           <span className="ac-topbar-mark" aria-hidden="true">
-            <Diamond size={18} strokeWidth={1.8} />
+            <img className="ac-topbar-logo" src="/ui/logo.svg" alt="" />
           </span>
           <div className="ac-topbar-title">
             <strong>星序自走棋</strong>

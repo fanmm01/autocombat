@@ -47,7 +47,7 @@ def _classify_vfx_kind(serial, cmd, skill_name, lines):
         'Y6': 'frost', 'Y4': 'star', 'Y16': 'star',
         'Y5': 'blood', 'Y11': 'blood', 'Y17': 'blood',
         'Y7': 'heal', 'Y8': 'heal', 'Y10': 'heal',
-        'Y9': 'summon', 'Y12': 'summon',
+        'Y18': 'summon', 'Y19': 'fire', 'Y9': 'summon', 'Y12': 'summon',
     }
     return by_serial.get(serial, 'slash')
 
@@ -346,6 +346,25 @@ class AutoChessMatch:
                     return coord
         return None
 
+    @staticmethod
+    def _apply_reroll_odds_boost(odds, lvl):
+        boosted = {int(k): int(v) for k, v in odds.items()}
+        min_one_cost = {4: 15, 5: 8, 6: 4}.get(lvl, 2)
+        take1 = min(8, max(0, boosted.get(1, 0) - min_one_cost))
+        boosted[1] = boosted.get(1, 0) - take1
+        rem = 8 - take1
+        take2 = min(rem, max(0, boosted.get(2, 0) - 5))
+        boosted[2] = boosted.get(2, 0) - take2
+        gained = take1 + take2
+        targets = ((6, 3), (4, 3), (3, 2)) if lvl >= 5 else ((3, 5), (4, 3))
+        for cost_tier, delta in targets:
+            if gained <= 0:
+                break
+            add = min(gained, delta)
+            boosted[cost_tier] = boosted.get(cost_tier, 0) + add
+            gained -= add
+        return boosted
+
     def _roll_shop_for(self, cid, free=False):
         cmd = self.commanders[cid]
         if cmd.get('eliminated'):
@@ -353,7 +372,7 @@ class AutoChessMatch:
         lvl = cmd['level']
         odds = dict(LEVEL_TABLE[lvl]['odds'])
         if any(a == 'aug_reroll' for a in cmd.get('augments', [])):
-            odds = {1: max(5, odds[1] - 8), 2: odds[2], 3: odds[3] + 5, 4: odds[4] + 3}
+            odds = self._apply_reroll_odds_boost(odds, lvl)
         temp_pool = dict(self.pool)
         slots = []
         for _ in range(5):
@@ -491,7 +510,8 @@ class AutoChessMatch:
         star = unit['star']
         refund = cost if star == 1 else max(cost, int(round(cost * (3 ** (star - 1)) * 0.7)))
         copies = 3 ** (star - 1)
-        cap = self.pool_counts[cost]
+        default_pc = POOL_COUNTS_8P if self.mode == 'ranked' else POOL_COUNTS
+        cap = self.pool_counts.get(cost, default_pc.get(cost, 9))
         self.pool[serial] = min(cap, self.pool.get(serial, 0) + copies)
         cmd['units'] = [u for u in cmd['units'] if u['id'] != unit_id]
         cmd['gold'] += refund
@@ -1379,10 +1399,11 @@ class AutoChessMatch:
         alive_left = sum(1 for c in self.commanders.values() if not c.get('eliminated'))
         cmd['placement'] = alive_left + 1
         # Return all units back to shared pool
+        default_pc = POOL_COUNTS_8P if self.mode == 'ranked' else POOL_COUNTS
         for u in cmd['units']:
             s = u['serial']
             cost = UNIT_CATALOG[s]['cost']
-            cap = self.pool_counts[cost]
+            cap = self.pool_counts.get(cost, default_pc.get(cost, 9))
             self.pool[s] = min(cap, self.pool.get(s, 0) + (3 ** (u['star'] - 1)))
         cmd['units'] = []
         self.logs.append(f'💀 {cmd["name"]} 被淘汰（第 {cmd["placement"]} 名）')
@@ -1429,6 +1450,7 @@ class AutoChessMatch:
             a_dmg = self._apply_combat_hp_and_streak(a_id, left_won, outcome['surviving_x'], defer_eliminate=True)
             if left_won:
                 self.commanders[a_id]['gold'] += 1
+                self._grant_xp(a_id, 1)
             opp_label_a = b.get('right_name') or (
                 f'{self.commanders[b_id]["name"]}' + (' (镜像)' if is_ghost else '')
                 if b_id in self.commanders else str(b_id)
@@ -1456,6 +1478,7 @@ class AutoChessMatch:
                 b_dmg = self._apply_combat_hp_and_streak(b_id, not left_won, outcome['surviving_y'], defer_eliminate=True)
                 if not left_won:
                     self.commanders[b_id]['gold'] += 1
+                    self._grant_xp(b_id, 1)
                 opp_label_b = self.commanders[a_id]['name']
                 self.round_reports[b_id] = {
                     'round': self.round_num,
@@ -1483,8 +1506,10 @@ class AutoChessMatch:
                 self._apply_combat_hp_and_streak(b_id, not a_won, res['surviving_y'], defer_eliminate=True)
                 if not a_won:
                     self.commanders[b_id]['gold'] += 1
+                    self._grant_xp(b_id, 1)
             if a_won:
                 self.commanders[a_id]['gold'] += 1
+                self._grant_xp(a_id, 1)
 
         # Fair simultaneous-elimination ordering: lowest raw_hp (heaviest overkill) eliminates first -> worst rank
         newly_down = [
@@ -1500,7 +1525,7 @@ class AutoChessMatch:
         p1_rep = self.last_round_report
         if p1_rep:
             self.combat_frames = list((last_snapshots.get(self.player_id) or {}).get('frames', self.combat_frames))
-            status_str = '胜利' if p1_rep['won'] else f'落败 (-{p1_rep["hp_damage"]}HP)'
+            status_str = '胜利 (+1G/+1XP)' if p1_rep['won'] else f'落败 (-{p1_rep["hp_damage"]}HP)'
             self.logs.append(f'第 {self.round_num} 回合结束：{status_str}（{p1_rep["battle_rounds"]}轮）')
         else:
             self.logs.append(f'第 {self.round_num} 回合全桌战斗结算完成')
@@ -1849,11 +1874,10 @@ class AutoChessMatch:
         obj.ranked_settlement = copy.deepcopy(data.get('ranked_settlement'))
         raw_pc = data.get('pool_counts')
         default_pc = POOL_COUNTS_8P if obj.mode == 'ranked' else POOL_COUNTS
-        obj.pool_counts = (
-            {int(k): int(v) for k, v in raw_pc.items()}
-            if isinstance(raw_pc, dict) and raw_pc
-            else dict(default_pc)
-        )
+        merged_pc = dict(default_pc)
+        if isinstance(raw_pc, dict) and raw_pc:
+            merged_pc.update({int(k): int(v) for k, v in raw_pc.items()})
+        obj.pool_counts = merged_pc
         obj.arena_preset = data.get('arena_preset', 'autochess_standard')
         obj.fill_bots = bool(data.get('fill_bots', True))
         obj.prep_duration = int(data.get('prep_duration', 30) or 30)
@@ -1865,6 +1889,8 @@ class AutoChessMatch:
         obj.winner_id = data.get('winner_id')
         obj.uid_seq = int(data.get('uid_seq', 1))
         obj.pool = dict(data.get('pool', {}))
+        for serial in ('Y18', 'Y19'):
+            obj.pool.setdefault(serial, obj.pool_counts[UNIT_CATALOG[serial]['cost']])
         obj.commanders = copy.deepcopy(data.get('commanders', {}))
         obj.player_id = 'P1'
         obj.logs = list(data.get('logs', []))

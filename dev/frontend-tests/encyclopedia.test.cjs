@@ -9,7 +9,7 @@ const { rawCatalog, catalog, profiles } = require('./catalog-fixture.cjs');
 const identity = ({ id, name, phase, icon }) => ({ id, name, phase, icon });
 const historical = [require('./fixtures/y9-y12-approved.json'), require('./fixtures/y17-y60-approved.json')];
 
-test('all 106 articles bind by name and phase after reordering without mutating data', () => {
+test('all 114 articles bind by name and phase after reordering without mutating data', () => {
   let count = 0;
   for (const input of rawCatalog) {
     const reversed = structuredClone(input);
@@ -24,7 +24,7 @@ test('all 106 articles bind by name and phase after reordering without mutating 
     }
     count += actual.skills.length;
   }
-  assert.equal(count, 106);
+  assert.equal(count, 114);
 });
 
 test('historical skill identities survive the data-reference migration', () => {

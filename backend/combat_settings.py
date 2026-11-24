@@ -15,6 +15,8 @@ import threading
 
 from combat_defaults import DEFAULTS
 
+LEGACY_TEAM_DIGESTS = {'TEAM_TABLES_2V2': '74cce2f523563ed4d54d584c9145c6327d412c4ec3e0359282ec878753099910', 'TEAM_TABLES_3V3': 'e37f00c4e600f7bc0f7db9af83366d156497ea4cf0f228c0eeacfdc5c7e23b72'}
+
 ALIASES = {'CUSTOM_BATTLE_DELAY': 'DELAY_CUSTOM_TURN'}
 READONLY = {'AI_SERVER_PORT', 'AI_SERVER_HOST', 'LOG_FILE', 'RESULT_FILE', 'BRACKET_FILE',
             'RANDOM_BONUS_1V1', 'RANDOM_BONUS_2V2', 'RANDOM_BONUS_3V3'}
@@ -186,6 +188,10 @@ class SettingsStore:
             if self._cached is None or self._stamp != stamp:
                 saved = json.loads(self.path.read_text(encoding='utf-8')) if stat else {}
                 if not isinstance(saved, dict): raise ValueError('设置文件必须是 JSON 对象')
+                # Older instances saved the whole settings form, including untouched team tables.
+                for key, digest in LEGACY_TEAM_DIGESTS.items():
+                    if key in saved and hashlib.sha256(json.dumps(saved[key]).encode()).hexdigest() == digest:
+                        saved.pop(key)
                 self._cached = validate({**copy.deepcopy(DEFAULTS), **saved})
                 self._stamp = stamp
             return copy.deepcopy(self._cached) if copy_values else self._cached

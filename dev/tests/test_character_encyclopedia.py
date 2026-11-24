@@ -168,7 +168,7 @@ class EncyclopediaTests(unittest.TestCase):
         response = client.get('/api/ui/catalog')
         self.assertEqual(response.status_code, 200)
         chars = response.get_json()['characters']
-        self.assertEqual(sum(len(c['spells']) for c in chars), 106)
+        self.assertEqual(sum(len(c['spells']) for c in chars), 114)
         for c in chars:
             self.assertNotIn('skills', c)
             self.assertNotIn('traits', c)
@@ -815,7 +815,7 @@ class Y7Y8EncyclopediaTests(unittest.TestCase):
         response = http_module().app.test_client().get('/api/ui/catalog')
         self.assertEqual(response.status_code, 200)
         characters = response.get_json()['characters']
-        self.assertEqual(sum(len(c['spells']) for c in characters), 106)
+        self.assertEqual(sum(len(c['spells']) for c in characters), 114)
         for card in self.cards():
             actual = next(c for c in characters if c['serial'] == card['serial'])
             self.assertEqual(actual['spells'], card['spells'])
@@ -1008,7 +1008,7 @@ class Y5Y6StaticEncyclopediaTests(unittest.TestCase):
         response = http_module().app.test_client().get('/api/ui/catalog')
         self.assertEqual(response.status_code, 200)
         characters = response.get_json()['characters']
-        self.assertEqual(sum(len(c['spells']) for c in characters), 106)
+        self.assertEqual(sum(len(c['spells']) for c in characters), 114)
         for card in (cd.XUETIANSHI, cd.XUEREN):
             actual = next(c for c in characters if c['serial'] == card['serial'])
             self.assertEqual(actual['spells'], card['spells'])

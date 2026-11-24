@@ -19,7 +19,7 @@ GET /log    → 查看实时日志
   python ai_battle.py --modes=2v2 --type=0   # 仅 2v2 预赛，跳过淘汰赛
 """
 
-import sys, os, random, math, json, re, time, threading, logging, itertools
+import sys, os, random, math, json, re, time, threading, logging, itertools, copy
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -313,7 +313,7 @@ class AIController:
         """Use Q-table if available, fall back to rule-based."""
         if engine._get_my_actions(user_id).get('主动', 0) <= 0:
             return '.i end'
-        if getattr(engine, 'autochess_mode', False):
+        if getattr(engine, 'autochess_mode', False) or self.char_data.get('serial') in ('Y18', 'Y19'):
             cmd, _reason = decide_tactical_action(engine, user_id)
             return cmd
         cmd = self._decide_action(engine, user_id)
@@ -1058,8 +1058,9 @@ class BattleEngine(FullBattleEngine):
 # ============================================================
 
 class Tournament:
-    def __init__(self, tournament_type=None, run_times=None, enabled_modes=None, settings=None):
+    def __init__(self, tournament_type=None, run_times=None, enabled_modes=None, settings=None, extra_characters=None):
         self._settings = settings if settings is not None else settings_snapshot()
+        self._extra_characters = [copy.deepcopy(c) for c in (extra_characters or [])]
         self.char_map = {}
         self.ai_map = {}
         self.results = []
@@ -1079,11 +1080,23 @@ class Tournament:
         self.char_season_status = {}  # Per-run per-character season avg status {serial: 0-100}
         self.enabled_modes = enabled_modes if enabled_modes is not None else self._settings['DEFAULT_ENABLED_MODES']  # Filter which formats to run
 
+    def _all_characters(self):
+        """Return effective roster with any in-memory extra_characters overlaid."""
+        if not self._extra_characters:
+            return ALL_CHARACTERS
+        by_serial = {c['serial']: c for c in self._extra_characters}
+        merged = [by_serial.get(c['serial'], c) for c in ALL_CHARACTERS]
+        existing = {c['serial'] for c in ALL_CHARACTERS}
+        for c in self._extra_characters:
+            if c['serial'] not in existing:
+                merged.append(c)
+        return merged
+
     @pinned
     def init_characters(self):
         engine = CombatEngine()
         AIController.load_q_table()  # Load trained weights if available
-        for c in ALL_CHARACTERS:
+        for c in self._all_characters():
             uid = f"char_{c['serial']}"
             load_character_to_engine(engine, c, uid)
             if not c.get('pre_transformed'):
@@ -1099,6 +1112,7 @@ class Tournament:
         Returns (a_uids, b_uids)."""
         a_uids = []; b_uids = []
         serial_use_index = {}  # serial → how many times used so far
+        roster = self._all_characters()
 
         def _resolve_one(serial, team_list):
             base_uid = self.char_map[serial]
@@ -1109,7 +1123,7 @@ class Tournament:
                 return
             # Need a clone — load independent copy into engine
             clone_uid = f"{base_uid}_clone{idx}"
-            c_data = next(c for c in ALL_CHARACTERS if c['serial'] == serial)
+            c_data = next(c for c in roster if c['serial'] == serial)
             load_character_to_engine(engine, c_data, clone_uid)
             if not c_data.get('pre_transformed'):
                 engine.process_command(clone_uid, '.hs')
@@ -1131,7 +1145,8 @@ class Tournament:
     @pinned
     def battle(self, team_a, team_b, map_size, phase_label='', best_of=1, display_level=None, delay=None, max_rounds=None):
         # Look up display names
-        name_map = {c['serial']: c['name'] for c in ALL_CHARACTERS}
+        roster = self._all_characters()
+        name_map = {c['serial']: c['name'] for c in roster}
         a_names = [name_map.get(s, s) for s in team_a]
         b_names = [name_map.get(s, s) for s in team_b]
         a_name = '+'.join(team_a)
@@ -1143,7 +1158,7 @@ class Tournament:
         engine = BattleEngine(display_level=display_level, delay=delay, max_rounds=max_rounds)
         # Only load fighting characters (not all 12) for speed
         fighting_serials = set(team_a + team_b)
-        for c in ALL_CHARACTERS:
+        for c in roster:
             if c['serial'] not in fighting_serials:
                 continue
             uid = self.char_map[c['serial']]
@@ -1571,7 +1586,7 @@ class Tournament:
         battle_log('info', '  胜=3分 败=0分 | 超时按HP占比分配(1.5~2.5)')
         battle_log('info', '=' * 60)
         # Log per-character season status
-        nm = {c['serial']: c['name'] for c in ALL_CHARACTERS}
+        nm = {c['serial']: c['name'] for c in self._all_characters()}
         status_lines = [f'{nm.get(s,s)}({s}):{self.char_season_status.get(s,"?")}' for s in singles]
         battle_log('info', f'  赛季平均状态(分角色): {", ".join(status_lines)}')
         battle_log('info', '')
@@ -1660,7 +1675,7 @@ class Tournament:
                 workers = min(workers, worker_limit)
             battle_log('info', f'预赛并行模式: {workers} workers')
             seeds = [random.getrandbits(63) for _ in full_pool]
-            with Battles(workers, {key: battle_setting(key) for key in _SETTING_DEFAULTS}, self.char_season_status) as executor:
+            with Battles(workers, {key: battle_setting(key) for key in _SETTING_DEFAULTS}, self.char_season_status, extra_characters=self._extra_characters) as executor:
                 def submit_matches():
                     max_rounds = battle_setting('MAX_ROUNDS_PRELIM')
                     rounds_by_format = battle_setting('MAX_ROUNDS_PRELIM_BY_FORMAT')
@@ -1889,7 +1904,8 @@ class Tournament:
             battle_log('info', '=' * 60)
 
             # Save bracket info before elimination starts
-            self._save_bracket_info()
+            if write_results_flag:
+                self._save_bracket_info()
 
             brackets = [{'label': label, 'top_teams': top_teams, 'map_size': ms}
                          for label, top_teams, ms in all_brackets]
@@ -1934,8 +1950,9 @@ class Tournament:
 
         # Parse results: each result is (a_name, b_name, winner, rounds, map_size, phase, is_bo)
         # a_name/b_name are like 'Y1+Y2+Y3'
-        all_chars = [c['serial'] for c in ALL_CHARACTERS]
-        name_map = {c['serial']: c['name'] for c in ALL_CHARACTERS}
+        roster = self._all_characters()
+        all_chars = [c['serial'] for c in roster]
+        name_map = {c['serial']: c['name'] for c in roster}
 
         # Per-character: battles where they were in team, and battles where they weren't
         # For each format (2v2, 3v3)
@@ -2156,7 +2173,7 @@ class Tournament:
         Returns list of (serial, name, avg_wins, avg_battles, avg_rate) sorted by avg_wins desc."""
         if not self._run_stats:
             return []
-        name_map = {c['serial']: c['name'] for c in ALL_CHARACTERS}
+        name_map = {c['serial']: c['name'] for c in self._all_characters()}
         n_runs = len(self._run_stats)
         all_chars = set()
         for wc, bc in self._run_stats:
@@ -2257,7 +2274,7 @@ class Tournament:
         lines.append('=' * 70)
         lines.append('  战斗详情')
         lines.append('=' * 70)
-        name_map = {c['serial']: c['name'] for c in ALL_CHARACTERS}
+        name_map = {c['serial']: c['name'] for c in self._all_characters()}
         for a, b, winner, rounds, map_sz, phase, is_bo7 in self.results:
             bo7_tag = ' [系列赛]' if is_bo7 else ''
             a_disp = '+'.join(name_map.get(s, s) for s in a.split('+'))

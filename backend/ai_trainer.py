@@ -723,6 +723,8 @@ def get_available_actions(engine, uid):
             sp = next((s for s in spells if s['index'] == idx), None)
             if not sp:
                 continue
+            if engine._season_preflight(uid, sp):
+                continue
             if sp:
                 if engine._is_y17(uid):
                     if engine._y17_preflight(uid, sp, ai=True):

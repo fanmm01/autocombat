@@ -20,6 +20,7 @@ const COST_COLORS: Record<number, string> = {
   3: '#4a90e2',
   4: '#b064e8',
   5: '#f0b23a',
+  6: '#f43f5e',
 };
 
 function cropFileToTokenDataUrl(file: File): Promise<string> {
