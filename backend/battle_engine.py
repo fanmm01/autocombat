@@ -6622,8 +6622,9 @@ class CombatEngine:
             consumed = getattr(char, '_once_consumed', set())
             if once_key in ledger or once_name in consumed:
                 return ActionExecutionResult(f'{char.name} 的【{once_name}】本场战斗已使用过，无法再次施放。\n', False, 'spell_rejected')
-            if self._get_cooldown(caster_id, spell.get('index', 0)) > 0:
-                return ActionExecutionResult(f'{char.name} 的【{once_name}】冷却中（剩余 {self._get_cooldown(caster_id, spell.get('index', 0))} 回合）。\n', False, 'spell_rejected')
+            cd_rem = self._get_cooldown(caster_id, spell.get('index', 0))
+            if cd_rem > 0:
+                return ActionExecutionResult(f'{char.name} 的【{once_name}】冷却中（剩余 {cd_rem} 回合）。\n', False, 'spell_rejected')
 
         # ── 未指定目标→随机敌对目标 ──
         # hostile 判定需覆盖所有"应对敌方施放"的效果类型，否则 type=4 敌方减益 /

@@ -13,7 +13,7 @@ const env = (import.meta as unknown as { env?: Record<string, string | undefined
 const rawTransport = (env.VITE_MG_TRANSPORT || '').trim().toLowerCase();
 const cloudEnv = (env.VITE_MG_CLOUD_ENV || '').trim();
 const cloudService = (env.VITE_MG_CLOUD_SERVICE || '').trim();
-const apiBase = (env.VITE_MG_API_BASE || 'http://127.0.0.1:8889/api/ui').replace(/\/+$/, '');
+const apiBase = (env.VITE_MG_API_BASE || 'http://154.8.155.71:8889/api/ui').replace(/\/+$/, '');
 
 export const MG_CONFIG: MiniGameConfig = {
   transport: rawTransport === 'cloud' || Boolean(cloudEnv && rawTransport !== 'http') ? 'cloud' : 'http',
