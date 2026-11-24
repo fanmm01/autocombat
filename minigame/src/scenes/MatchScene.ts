@@ -27,6 +27,7 @@ import {
   tierColor,
 } from '../engine/ui';
 import { VfxEngine } from '../engine/vfx';
+import { WikiModal } from '../engine/wikiModal';
 
 export interface MatchHost {
   stage: Stage;
@@ -71,6 +72,7 @@ export class MatchScene {
   private hideRoundResult = false;
   private lastFrameCount = 0;
   private readonly vfx = new VfxEngine();
+  private readonly wikiModal = new WikiModal();
 
   constructor(host: MatchHost) {
     this.host = host;
@@ -85,6 +87,7 @@ export class MatchScene {
     this.hideRoundResult = false;
     this.lastFrameCount = match.combat_frames?.length || 0;
     this.vfx.clear();
+    this.wikiModal.close();
     this.stopTimers();
 
     if (this.room) {
@@ -97,6 +100,7 @@ export class MatchScene {
   onLeave(): void {
     this.stopTimers();
     this.vfx.clear();
+    this.wikiModal.close();
   }
 
   setForeground(active: boolean): void {
@@ -230,6 +234,19 @@ export class MatchScene {
     return meta?.accent || costColor(meta?.cost || 1);
   }
 
+  private unitEmblem(serial: string, isSummon = false): string {
+    const meta = this.host.getCatalog()?.units.find(u => u.serial === serial);
+    if (meta?.emblem) return meta.emblem;
+    return isSummon ? 'star' : 'flame';
+  }
+
+  private unitCustomImage(serial: string, team: 'Y' | 'X', inCombat: boolean, m: AutoChessMatchState): WxImage | null {
+    const url = inCombat
+      ? m.bout_token_overrides?.[team]?.[serial]
+      : this.host.getAccount()?.token_overrides?.[serial];
+    return this.host.stage.getCachedImage(url);
+  }
+
   private allOwnedUnits(m: AutoChessMatchState): AutoChessOwnedUnit[] {
     return [...m.player.board, ...m.player.bench];
   }
@@ -305,6 +322,7 @@ export class MatchScene {
     } else if (m.phase === 'finished') {
       this.renderFinishedModal(m);
     }
+    this.wikiModal.render(stage, this.host.getCatalog());
   }
 
   private renderTopHud(padX: number, rightX: number, m: AutoChessMatchState): void {
@@ -335,23 +353,13 @@ export class MatchScene {
             ? '回合结算'
             : '已结束';
 
-    drawPill(ctx, padX + 94, 15, 148, 28, 'rgba(156,134,236,0.16)', PALETTE.violet, `${modeLabel} · R${m.round_num}`, PALETTE.textMain, 12);
-    drawPill(ctx, padX + 250, 15, 102, 28, 'rgba(92,225,208,0.12)', PALETTE.cyan, phaseLabel, PALETTE.cyan, 12);
+    drawPill(ctx, padX + 90, 15, 138, 28, 'rgba(156,134,236,0.16)', PALETTE.violet, `${modeLabel} · R${m.round_num}`, PALETTE.textMain, 12);
+    drawPill(ctx, padX + 234, 15, 92, 28, 'rgba(92,225,208,0.12)', PALETTE.cyan, phaseLabel, PALETTE.cyan, 12);
 
-    let countdownText = '';
-    if (m.phase === 'prep' && m.prep_deadline) {
-      const leftSec = Math.max(0, Math.ceil(m.prep_deadline - Date.now() / 1000));
-      countdownText = ` · ${leftSec}s`;
-    }
-
-    const p = m.player;
-    const statsText = `HP ${p.hp}/${p.max_hp}   金币 ${p.gold}G   Lv.${p.level} (${p.xp}/${p.xp_to_next})   人口 ${p.board.length}/${p.max_pop}   连胜 ${p.streak}${countdownText}`;
-    drawClippedText(ctx, statsText, padX + 366, 29, rightX - padX - 560, PALETTE.gold, '700 14px "PingFang SC", sans-serif');
-
-    let rx = rightX;
+    let rx = stage.topbarRightEdge;
     if (m.phase !== 'finished') {
-      rx -= 82;
-      drawButton(stage, ctx, { x: rx, y: 11, w: 82, h: 36 }, '投降', () => {
+      rx -= 76;
+      drawButton(stage, ctx, { x: rx, y: 11, w: 76, h: 36 }, '投降', () => {
         void (async () => {
           if (await confirmAction('确认投降', '确定放弃当前对局并直接结算排名吗？')) {
             await this.dispatchAction('surrender');
@@ -361,22 +369,35 @@ export class MatchScene {
     }
 
     if (m.phase === 'prep') {
-      rx -= 96;
-      drawButton(stage, ctx, { x: rx, y: 11, w: 88, h: 36 }, '一键布阵', () => {
+      rx -= 92;
+      drawButton(stage, ctx, { x: rx, y: 11, w: 84, h: 36 }, '一键布阵', () => {
         void this.dispatchAction('auto_arrange', {}, true);
       }, { fontSize: 13 });
     } else if (m.phase === 'combat') {
       if (!this.room) {
-        rx -= 84;
-        drawButton(stage, ctx, { x: rx, y: 11, w: 76, h: 36 }, '跳过', () => {
+        rx -= 78;
+        drawButton(stage, ctx, { x: rx, y: 11, w: 70, h: 36 }, '跳过', () => {
           void this.dispatchAction('resolve_combat', {}, true);
         }, { fontSize: 13, border: PALETTE.goldSoft, color: PALETTE.gold });
       }
-      rx -= 84;
-      drawButton(stage, ctx, { x: rx, y: 11, w: 76, h: 36 }, this.combatSpeed2x ? '2x 速度' : '1x 速度', () => {
+      rx -= 80;
+      drawButton(stage, ctx, { x: rx, y: 11, w: 72, h: 36 }, this.combatSpeed2x ? '2x 速度' : '1x 速度', () => {
         this.combatSpeed2x = !this.combatSpeed2x;
       }, { fontSize: 13, border: PALETTE.cyan, color: PALETTE.cyan });
     }
+
+    let countdownText = '';
+    if (m.phase === 'prep' && m.prep_deadline) {
+      const leftSec = Math.max(0, Math.ceil(m.prep_deadline - Date.now() / 1000));
+      countdownText = ` · ${leftSec}s`;
+    }
+
+    const p = m.player;
+    const statsText = `HP ${p.hp}/${p.max_hp} · ${p.gold}G · Lv.${p.level}(${p.xp}/${p.xp_to_next}) · 人口 ${p.board.length}/${p.max_pop} · 连胜${p.streak}${countdownText}`;
+    const statsX = padX + 336;
+    const statsMaxW = Math.max(120, rx - statsX - 12);
+    drawClippedText(ctx, statsText, statsX, 29, statsMaxW, PALETTE.gold, '700 13px "PingFang SC", sans-serif');
+    void rightX;
   }
 
   private renderLeftSidebar(x: number, y: number, w: number, h: number, m: AutoChessMatchState): void {
@@ -430,7 +451,10 @@ export class MatchScene {
       return;
     }
 
-    drawClippedText(ctx, `${sel.name} ${'★'.repeat(sel.star)}`, x + 20, cardY + 22, w - 40, costColor(sel.cost), '700 15px "PingFang SC", sans-serif');
+    drawClippedText(ctx, `${sel.name} ${'★'.repeat(sel.star)}`, x + 20, cardY + 22, w - 92, costColor(sel.cost), '700 15px "PingFang SC", sans-serif');
+    drawButton(stage, ctx, { x: x + w - 66, y: cardY + 10, w: 48, h: 24 }, '详情', () => {
+      this.wikiModal.open('units', sel.serial);
+    }, { fontSize: 11, border: PALETTE.cyan, color: PALETTE.cyan, radius: 6 });
     drawClippedText(
       ctx,
       `${AUTOCHESS_ROLE_LABELS[sel.role] || sel.role} · ${sel.traits.join('/')} · 射程${sel.range}`,
@@ -667,7 +691,7 @@ export class MatchScene {
 
     // Draw units
     if (combatSnap) {
-      this.renderCombatUnits(ctx, combatSnap.units, cellCenter, cellSize);
+      this.renderCombatUnits(ctx, combatSnap.units, cellCenter, cellSize, m);
       this.vfx.render(ctx, cellCenter);
     } else {
       for (const u of m.player.board) {
@@ -686,7 +710,16 @@ export class MatchScene {
           ctx.stroke();
           ctx.restore();
         }
-        drawEmblemBadge(ctx, center.x, center.y - 3, radius, u.serial, accent, PALETTE.cyan);
+        drawEmblemBadge(
+          ctx,
+          center.x,
+          center.y - 3,
+          radius,
+          this.unitEmblem(u.serial),
+          accent,
+          PALETTE.cyan,
+          this.unitCustomImage(u.serial, 'Y', false, m),
+        );
         drawClippedText(ctx, '★'.repeat(u.star), center.x, center.y - radius - 6, cellSize, PALETTE.gold, '700 10px sans-serif', 'center', 'middle');
         drawClippedText(ctx, u.name, center.x, center.y + radius + 5, cellSize + 6, PALETTE.textMain, '600 11px "PingFang SC", sans-serif', 'center', 'middle');
       }
@@ -698,6 +731,7 @@ export class MatchScene {
     units: AutoChessCombatUnit[],
     cellCenter: (coord: string) => { x: number; y: number } | null,
     cellSize: number,
+    m: AutoChessMatchState,
   ): void {
     const radius = Math.max(13, Math.floor(cellSize * 0.31));
     for (const u of units) {
@@ -709,7 +743,17 @@ export class MatchScene {
 
       ctx.save();
       if (u.hp <= 0) ctx.globalAlpha = 0.32;
-      drawEmblemBadge(ctx, center.x, center.y - 3, radius, u.serial, accent, teamColor);
+      drawEmblemBadge(
+        ctx,
+        center.x,
+        center.y - 3,
+        radius,
+        this.unitEmblem(u.serial, u.is_summon),
+        accent,
+        teamColor,
+        this.unitCustomImage(u.serial, u.team, true, m),
+        u.is_summon,
+      );
       const barW = Math.max(26, cellSize * 0.72);
       drawProgressBar(
         ctx,
@@ -774,7 +818,16 @@ export class MatchScene {
         selected ? 2 : 1.1,
       );
       if (unit) {
-        drawEmblemBadge(ctx, sx + 22, by0 + slotH / 2, 15, unit.serial, this.unitAccent(unit.serial));
+        drawEmblemBadge(
+          ctx,
+          sx + 22,
+          by0 + slotH / 2,
+          15,
+          this.unitEmblem(unit.serial),
+          this.unitAccent(unit.serial),
+          undefined,
+          this.unitCustomImage(unit.serial, 'Y', false, m),
+        );
         drawClippedText(ctx, unit.name, sx + 42, by0 + 18, slotW - 48, PALETTE.textMain, '700 12px "PingFang SC", sans-serif');
         drawClippedText(ctx, `${'★'.repeat(unit.star)} ${unit.cost}G`, sx + 42, by0 + 38, slotW - 48, PALETTE.gold, '600 11px sans-serif');
         stage.addHitRegion({
@@ -860,7 +913,16 @@ export class MatchScene {
       fillRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, PALETTE.bgCard);
       strokeRoundRect(ctx, cx, shopY, cardW, ctrlH, 10, slot.hint ? PALETTE.gold : cColor, slot.hint ? 2 : 1.3);
 
-      drawEmblemBadge(ctx, cx + 26, shopY + 28, 16, slot.serial, this.unitAccent(slot.serial));
+      drawEmblemBadge(
+        ctx,
+        cx + 26,
+        shopY + 28,
+        16,
+        this.unitEmblem(slot.serial),
+        this.unitAccent(slot.serial),
+        undefined,
+        this.unitCustomImage(slot.serial, 'Y', false, m),
+      );
       drawClippedText(ctx, slot.name, cx + 50, shopY + 22, cardW - 92, PALETTE.textMain, '700 14px "PingFang SC", sans-serif');
       drawClippedText(ctx, `${slot.cost}G`, cx + cardW - 12, shopY + 22, 42, PALETTE.gold, '700 14px sans-serif', 'right', 'middle');
       drawClippedText(ctx, slot.traits.join(' · '), cx + 12, shopY + 54, cardW - 24, PALETTE.textSub, '12px "PingFang SC", sans-serif');

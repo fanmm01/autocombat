@@ -1,3 +1,5 @@
+import { drawEmblemIcon } from './emblems';
+
 export const VIRTUAL_W = 1280;
 export const VIRTUAL_H = 720;
 
@@ -328,30 +330,47 @@ export function drawEmblemBadge(
   cx: number,
   cy: number,
   radius: number,
-  serial: string,
+  emblemName: string,
   accent: string,
   teamBorder?: string,
+  customImage?: WxImage | null,
+  isSummon = false,
 ): void {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fillStyle = '#181e36';
   ctx.fill();
-  ctx.lineWidth = teamBorder ? 2.5 : 1.8;
+  ctx.lineWidth = teamBorder ? 2.6 : 1.8;
   ctx.strokeStyle = teamBorder || accent;
   ctx.stroke();
 
+  const innerR = Math.max(4, radius - 2.2);
   ctx.beginPath();
-  ctx.arc(cx, cy, radius * 0.78, 0, Math.PI * 2);
-  ctx.fillStyle = `${accent}33`;
+  ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+  ctx.fillStyle = `${accent}3d`;
   ctx.fill();
 
-  const shortTag = serial.replace(/^Y/i, '').slice(0, 3);
-  ctx.fillStyle = '#f6f8ff';
-  ctx.font = `700 ${Math.max(11, Math.round(radius * 0.75))}px "PingFang SC", "Microsoft YaHei", sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(shortTag, cx, cy + 0.5);
+  if (teamBorder) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(3, radius - 3.6), 0, Math.PI * 2);
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = `${accent}cc`;
+    ctx.stroke();
+  }
+
+  if (customImage) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(3, radius - 3), 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(customImage, cx - radius + 3, cy - radius + 3, (radius - 3) * 2, (radius - 3) * 2);
+    ctx.restore();
+  } else {
+    const iconName = emblemName || 'star';
+    const iconColor = isSummon ? '#ffe48c' : '#f4f6ff';
+    drawEmblemIcon(ctx, iconName, cx, cy, radius * 1.38, iconColor, 2.2);
+  }
   ctx.restore();
 }
 
@@ -404,12 +423,14 @@ export class Stage {
   private offsetY = 0;
   safeLeft = 16;
   safeRight = 16;
+  topbarRightEdge = 930;
   private hitRegions: HitRegion[] = [];
   private scrollZones: ScrollZone[] = [];
   private toastMsg = '';
   private toastUntil = 0;
   private logoImg: WxImage | null = null;
   private logoReady = false;
+  private imageCache = new Map<string, { img: WxImage; ready: boolean }>();
 
   private activeTouchId: number | null = null;
   private downX = 0;
@@ -472,6 +493,43 @@ export class Stage {
       this.safeLeft = Math.max(14, Math.round(info.safeArea.left / this.scale));
       this.safeRight = Math.max(14, Math.round((this.winW - info.safeArea.right) / this.scale));
     }
+
+    let nextTopRight = Math.min(VIRTUAL_W - this.safeRight, 930);
+    if (wx.getMenuButtonBoundingClientRect) {
+      try {
+        const menu = wx.getMenuButtonBoundingClientRect();
+        if (menu && menu.left > 0) {
+          const menuLeftVirtual = (menu.left - this.offsetX) / this.scale;
+          // Reserve space for both the capsule (··· | ⊙) and adjacent "更多游戏" pill.
+          nextTopRight = Math.max(820, Math.min(VIRTUAL_W - this.safeRight, Math.round(menuLeftVirtual - 205)));
+        }
+      } catch {
+        // Keep safe fallback.
+      }
+    }
+    this.topbarRightEdge = nextTopRight;
+  }
+
+  getCachedImage(url?: string): WxImage | null {
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:image/'))) {
+      return null;
+    }
+    const existing = this.imageCache.get(url);
+    if (existing) {
+      return existing.ready ? existing.img : null;
+    }
+    try {
+      const img = wx.createImage();
+      const entry = { img, ready: false };
+      this.imageCache.set(url, entry);
+      img.onload = () => {
+        entry.ready = true;
+      };
+      img.src = url;
+    } catch {
+      // Ignore invalid image URLs.
+    }
+    return null;
   }
 
   toVirtual(clientX: number, clientY: number): { x: number; y: number } {

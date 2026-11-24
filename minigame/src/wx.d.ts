@@ -53,6 +53,7 @@ interface WxCanvasRenderingContext2D {
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void;
+  bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void;
   arc(x: number, y: number, radius: number, startAngle: number, endAngle: number, anticlockwise?: boolean): void;
   rect(x: number, y: number, w: number, h: number): void;
   clip(): void;
@@ -110,6 +111,14 @@ interface WxApi {
   createImage(): WxImage;
   getWindowInfo?(): WxWindowInfo;
   getSystemInfoSync(): WxWindowInfo;
+  getMenuButtonBoundingClientRect?(): {
+    width: number;
+    height: number;
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
   onTouchStart(cb: (e: WxTouchEvent) => void): void;
   onTouchMove(cb: (e: WxTouchEvent) => void): void;
   onTouchEnd(cb: (e: WxTouchEvent) => void): void;

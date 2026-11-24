@@ -32,6 +32,7 @@ export type {
   AutoChessRoomSummary,
   AutoChessRoundReport,
   AutoChessShopSlot,
+  AutoChessSynergyDef,
   AutoChessUnitMeta,
   AutoChessUnitWiki,
   AutoChessVfxEvent,

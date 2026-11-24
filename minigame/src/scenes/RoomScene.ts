@@ -184,21 +184,22 @@ export class RoomScene {
       }
     }, { fontSize: 14 });
 
+    const topRight = stage.topbarRightEdge;
     drawClippedText(
       ctx,
       this.activeRoom ? `联机候战室 · ${this.activeRoom.name}` : '好友联机房间大厅',
       padX + 132,
       34,
-      540,
+      Math.max(180, topRight - (padX + 132) - (this.activeRoom ? 12 : 292)),
       PALETTE.textMain,
       '700 20px "PingFang SC", sans-serif',
     );
 
     if (!this.activeRoom) {
-      drawButton(stage, ctx, { x: rightX - 280, y: 15, w: 132, h: 38 }, '房间码加入', () => {
+      drawButton(stage, ctx, { x: topRight - 274, y: 15, w: 132, h: 38 }, '房间码加入', () => {
         void this.handleJoinCode();
       }, { fontSize: 14 });
-      drawButton(stage, ctx, { x: rightX - 134, y: 15, w: 134, h: 38 }, '+ 创建房间', () => {
+      drawButton(stage, ctx, { x: topRight - 134, y: 15, w: 134, h: 38 }, '+ 创建房间', () => {
         void this.handleCreateRoom();
       }, { fontSize: 14, bg: PALETTE.violetDark, border: '#b39eff' });
 

@@ -1,5 +1,4 @@
 import {
-  AUTOCHESS_ROLE_LABELS,
   bindWeChatAccount,
   createAutoChessMatch,
   createRankedMatch,
@@ -26,10 +25,8 @@ import {
   PALETTE,
   Stage,
   confirmAction,
-  costColor,
   drawButton,
   drawClippedText,
-  drawEmblemBadge,
   drawPill,
   drawWrappedText,
   fillRoundRect,
@@ -37,6 +34,7 @@ import {
   strokeRoundRect,
   tierColor,
 } from '../engine/ui';
+import { WikiModal } from '../engine/wikiModal';
 
 export interface LobbyHost {
   stage: Stage;
@@ -48,8 +46,7 @@ export interface LobbyHost {
   openRooms(): void;
 }
 
-type ModalState = 'none' | 'auth' | 'leaderboard' | 'wiki';
-type WikiTab = 'units' | 'synergies' | 'augments';
+type ModalState = 'none' | 'auth' | 'leaderboard';
 
 export class LobbyScene {
   private readonly host: LobbyHost;
@@ -63,9 +60,8 @@ export class LobbyScene {
   private leaderboard: AutoChessLeaderboardResponse | null = null;
   private lbTier = 'all';
   private lbScroll = 0;
-  private wikiTab: WikiTab = 'units';
-  private wikiScroll = 0;
   private matchScroll = 0;
+  private readonly wikiModal = new WikiModal();
 
   constructor(host: LobbyHost) {
     this.host = host;
@@ -77,6 +73,7 @@ export class LobbyScene {
 
   onLeave(): void {
     this.modal = 'none';
+    this.wikiModal.close();
   }
 
   async refreshAll(): Promise<void> {
@@ -228,15 +225,15 @@ export class LobbyScene {
     ctx.fillRect(0, 67, 1280, 1);
 
     stage.drawLogo(ctx, padX, 13, 42);
-    drawClippedText(ctx, '星序自走棋', padX + 54, 26, 220, PALETTE.textMain, '700 20px "PingFang SC", sans-serif');
-    drawClippedText(ctx, 'STARLIGHT AUTO-CHESS', padX + 54, 48, 220, PALETTE.textMuted, '600 11px sans-serif');
+    drawClippedText(ctx, '星序自走棋', padX + 54, 26, 160, PALETTE.textMain, '700 20px "PingFang SC", sans-serif');
+    drawClippedText(ctx, 'STARLIGHT AUTO-CHESS', padX + 54, 48, 160, PALETTE.textMuted, '600 11px sans-serif');
 
     // Connection pill
     drawPill(
       ctx,
-      padX + 240,
+      padX + 220,
       20,
-      146,
+      132,
       28,
       this.connected ? 'rgba(72, 214, 141, 0.14)' : 'rgba(241, 108, 141, 0.16)',
       this.connected ? PALETTE.emerald : PALETTE.rose,
@@ -245,22 +242,22 @@ export class LobbyScene {
       12,
     );
 
-    // Right actions
-    let rx = rightX;
+    // Right actions (anchored clear of WeChat capsule + "更多游戏" floating pill)
+    let rx = stage.topbarRightEdge;
     rx -= 96;
     drawButton(stage, ctx, { x: rx, y: 15, w: 96, h: 38 }, '百科图鉴', () => {
-      this.wikiScroll = 0;
-      this.modal = 'wiki';
+      this.modal = 'none';
+      this.wikiModal.open('units');
     }, { fontSize: 14 });
 
-    rx -= 98;
+    rx -= 96;
     drawButton(stage, ctx, { x: rx, y: 15, w: 88, h: 38 }, '排行榜', () => {
       void this.loadLeaderboard('all');
     }, { fontSize: 14, border: PALETTE.goldSoft, color: PALETTE.gold });
 
-    rx -= 176;
+    rx -= 164;
     const accLabel = acc ? `${acc.display_name}${acc.wx_bound ? ' [微信]' : ''}` : '登录 / 绑定';
-    drawButton(stage, ctx, { x: rx, y: 15, w: 166, h: 38 }, accLabel, () => {
+    drawButton(stage, ctx, { x: rx, y: 15, w: 156, h: 38 }, accLabel, () => {
       this.modal = 'auth';
     }, {
       fontSize: 14,
@@ -269,16 +266,18 @@ export class LobbyScene {
     });
 
     if (acc?.ranked) {
-      rx -= 160;
+      rx -= 154;
       const rk = acc.ranked.rank_info;
-      drawButton(stage, ctx, { x: rx, y: 15, w: 150, h: 38 }, `${rk.full_label} · ${acc.ranked.coins}币`, () => {
-        void this.loadLeaderboard('all');
-      }, {
-        fontSize: 12,
-        bg: '#1c223b',
-        border: tierColor(rk.tier_id),
-        color: tierColor(rk.tier_id),
-      });
+      if (rx > padX + 360) {
+        drawButton(stage, ctx, { x: rx, y: 15, w: 146, h: 38 }, `${rk.full_label} · ${acc.ranked.coins}币`, () => {
+          void this.loadLeaderboard('all');
+        }, {
+          fontSize: 12,
+          bg: '#1c223b',
+          border: tierColor(rk.tier_id),
+          color: tierColor(rk.tier_id),
+        });
+      }
     }
 
     // Left Column: Mode Cards + Arena Selector
@@ -478,9 +477,8 @@ export class LobbyScene {
       this.renderAuthModal();
     } else if (this.modal === 'leaderboard') {
       this.renderLeaderboardModal();
-    } else if (this.modal === 'wiki') {
-      this.renderWikiModal();
     }
+    this.wikiModal.render(stage, this.host.getCatalog());
   }
 
   private renderAuthModal(): void {
@@ -619,90 +617,6 @@ export class LobbyScene {
         drawClippedText(ctx, `${e.total_lp} LP`, listRect.x + 490, y + 23, 110, PALETTE.textMain, '600 14px sans-serif');
         drawClippedText(ctx, `胜率 ${Math.round(e.win_rate * 100)}% (${e.wins}/${e.games})`, listRect.x + 620, y + 23, 200, PALETTE.textSub, '13px "PingFang SC", sans-serif');
       });
-    }
-    ctx.restore();
-  }
-
-  private renderWikiModal(): void {
-    const stage = this.host.stage;
-    const ctx = stage.ctx;
-    const cat = this.host.getCatalog();
-    fillRoundRect(ctx, 0, 0, 1280, 720, 0, 'rgba(6, 8, 16, 0.78)');
-    stage.addHitRegion({ x: 0, y: 0, w: 1280, h: 720, onTap: () => { this.modal = 'none'; } });
-
-    const mw = 1040;
-    const mh = 600;
-    const mx = (1280 - mw) / 2;
-    const my = (720 - mh) / 2;
-    fillRoundRect(ctx, mx, my, mw, mh, 16, PALETTE.bgPanel);
-    strokeRoundRect(ctx, mx, my, mw, mh, 16, PALETTE.violet, 1.8);
-    stage.addHitRegion({ x: mx, y: my, w: mw, h: mh, onTap: () => {} });
-
-    drawClippedText(ctx, '星序自走棋百科图鉴', mx + 24, my + 32, 320, PALETTE.textMain, '700 20px "PingFang SC", sans-serif');
-    drawButton(stage, ctx, { x: mx + mw - 56, y: my + 14, w: 40, h: 34 }, '✕', () => { this.modal = 'none'; }, { fontSize: 16 });
-
-    const tabs: Array<[WikiTab, string]> = [
-      ['units', `棋子图鉴 (${cat?.units.length || 0})`],
-      ['synergies', `羁绊效果 (${cat?.synergies.length || 0})`],
-      ['augments', `星序海克斯 (${cat?.augments.length || 0})`],
-    ];
-    tabs.forEach(([id, label], i) => {
-      const active = this.wikiTab === id;
-      drawButton(stage, ctx, { x: mx + 24 + i * 168, y: my + 62, w: 158, h: 34 }, label, () => {
-        this.wikiTab = id;
-        this.wikiScroll = 0;
-      }, {
-        fontSize: 13,
-        bg: active ? PALETTE.violetDark : PALETTE.bgCard,
-        border: active ? '#bba7ff' : PALETTE.border,
-      });
-    });
-
-    const listRect = { x: mx + 24, y: my + 110, w: mw - 48, h: mh - 134 };
-    if (!cat) return;
-
-    const rows =
-      this.wikiTab === 'units'
-        ? cat.units.length
-        : this.wikiTab === 'synergies'
-          ? cat.synergies.length
-          : cat.augments.length;
-    const rowH = this.wikiTab === 'units' ? 84 : 78;
-    stage.addScrollZone({
-      ...listRect,
-      key: 'wiki-scroll',
-      contentHeight: rows * (rowH + 10),
-      getOffset: () => this.wikiScroll,
-      onScroll: v => { this.wikiScroll = v; },
-    });
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(listRect.x, listRect.y, listRect.w, listRect.h);
-    ctx.clip();
-
-    for (let i = 0; i < rows; i += 1) {
-      const y = listRect.y + i * (rowH + 10) - this.wikiScroll;
-      if (y + rowH < listRect.y || y > listRect.y + listRect.h) continue;
-      fillRoundRect(ctx, listRect.x, y, listRect.w, rowH, 10, PALETTE.bgCard);
-
-      if (this.wikiTab === 'units') {
-        const u = cat.units[i];
-        const col = u.accent || costColor(u.cost);
-        drawEmblemBadge(ctx, listRect.x + 36, y + 42, 22, u.serial, col);
-        drawClippedText(ctx, `${u.name} · ${u.cost}费 [${AUTOCHESS_ROLE_LABELS[u.role] || u.role}]`, listRect.x + 72, y + 22, 420, costColor(u.cost), '700 16px "PingFang SC", sans-serif');
-        drawClippedText(ctx, `羁绊：${u.traits.join(' / ')} · 射程 ${u.range}`, listRect.x + 520, y + 22, 420, PALETTE.textSub, '13px "PingFang SC", sans-serif');
-        drawWrappedText(ctx, `${u.tag} — ${u.blurb}`, listRect.x + 72, y + 40, listRect.w - 92, 18, PALETTE.textSub, '13px "PingFang SC", sans-serif', 2);
-      } else if (this.wikiTab === 'synergies') {
-        const s = cat.synergies[i];
-        const tierLabel = s.tiers.map(t => `${t.count}:${t.label}`).join(' · ');
-        drawClippedText(ctx, `${s.name}（${tierLabel}）`, listRect.x + 18, y + 22, listRect.w - 36, PALETTE.gold, '700 15px "PingFang SC", sans-serif');
-        drawWrappedText(ctx, s.desc, listRect.x + 18, y + 40, listRect.w - 36, 18, PALETTE.textSub, '13px "PingFang SC", sans-serif', 2);
-      } else {
-        const a = cat.augments[i];
-        drawClippedText(ctx, `${a.name}${a.tier ? ` [${a.tier}]` : ''}`, listRect.x + 18, y + 22, listRect.w - 36, PALETTE.cyan, '700 15px "PingFang SC", sans-serif');
-        drawWrappedText(ctx, a.desc || '', listRect.x + 18, y + 40, listRect.w - 36, 18, PALETTE.textSub, '13px "PingFang SC", sans-serif', 2);
-      }
     }
     ctx.restore();
   }
