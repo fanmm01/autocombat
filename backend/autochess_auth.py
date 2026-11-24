@@ -213,7 +213,7 @@ class AutoChessAuthService:
                     'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
                     'ranked': default_ranked_profile(),
                 }
-                self.store.put(KIND_ACCOUNT, rec)
+                self.store.put(KIND_ACCOUNT, rec, updated_at=0.5)
                 return rec
             if rec.get('role') != ROLE_SUPER_ADMIN or rec.get('permissions') != list(ALL_PERMISSIONS):
                 rec['role'] = ROLE_SUPER_ADMIN

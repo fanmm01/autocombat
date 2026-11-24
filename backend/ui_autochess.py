@@ -310,6 +310,22 @@ class AutoChessUI:
             self.cond.notify_all()
             return doc
 
+    def invalidate_matches(self, match_ids):
+        """Drop in-memory match caches for records updated via peer database sync."""
+        if not match_ids:
+            return
+        with self.lock:
+            changed = False
+            for mid in match_ids:
+                if mid in self.matches:
+                    self.matches.pop(mid, None)
+                    changed = True
+                if mid in self.versions:
+                    self.versions[mid] = self.versions.get(mid, 0) + 1
+                    changed = True
+            if changed:
+                self.cond.notify_all()
+
     def ranked_leaderboard(self):
         acc = self._current_account()
         tier_filter = request.args.get('tier', 'all')

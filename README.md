@@ -1,4 +1,4 @@
-# autocombat — CoC魔法少女半自动战斗系统 v0.5.0.1
+# autocombat — CoC魔法少女半自动战斗系统 v0.5.0.3
 
 [目录结构、开发验证与发布流程](docs/PROJECT_STRUCTURE.md)
 

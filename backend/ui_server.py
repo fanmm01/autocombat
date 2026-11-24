@@ -917,6 +917,16 @@ def register_ui(app, ns):
     from ui_autochess import AutoChessUI
     autochess = AutoChessUI(bp, locals(), store, auth=auth)
     app.extensions['combat_ui']['autochess'] = autochess
+    from ui_db_sync import DatabaseSync
+    db_sync = DatabaseSync(
+        bp,
+        store,
+        auth=auth,
+        on_records_changed=lambda changed: autochess.invalidate_matches(
+            [rid for kind, rid in changed if kind == 'autochess_match']
+        ),
+    )
+    app.extensions['combat_ui']['db_sync'] = db_sync
     from ui_utilities import register_utilities
     register_utilities(bp, locals())
     app.register_blueprint(bp)
