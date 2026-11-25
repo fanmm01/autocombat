@@ -179,3 +179,55 @@ class SeasonalCombatTests(unittest.TestCase):
             advance(engine, 4)
             self.assertLess(engine._hp_safe('old'), before)
             self.assertFalse(engine.get_json('sunset_casts'))
+
+    def test_autochess_sunset_burst_skips_allies(self):
+        for autochess_mode in (True, False):
+            with self.subTest(autochess_mode=autochess_mode):
+                engine = be.FastBattleEngine()
+                for uid, card in [('leaf', MULUO_FENQIU), ('ally', ZHANGSHIYAO), ('enemy', MULUO)]:
+                    load_character_to_engine(engine, card, uid)
+                    engine.process_command(uid, '.hs')
+                engine.setup_battle(
+                    ['leaf', 'ally'], ['enemy'], '10x10',
+                    autochess_mode=autochess_mode,
+                    season_status=50,
+                    initial_coords={'leaf': 'D3', 'ally': 'C3', 'enemy': 'F3'},
+                )
+                engine.get_char('enemy').set_attr('leaf_marks', 2)
+                cast(engine, 'leaf', 4)
+                ally_before = engine._hp_safe('ally')
+                enemy_before = engine._hp_safe('enemy')
+                advance(engine, 2)
+                advance(engine, 3)
+                advance(engine, 4)
+                self.assertLess(engine._hp_safe('enemy'), enemy_before)
+                if autochess_mode:
+                    self.assertEqual(engine._hp_safe('ally'), ally_before)
+                else:
+                    self.assertLess(engine._hp_safe('ally'), ally_before)
+
+    def test_y19_ai_holds_sunset_until_low_hp(self):
+        from ai_tactics import decide_tactical_action
+
+        engine = be.FastBattleEngine()
+        for uid, card in [('leaf', MULUO_FENQIU), ('enemy', MULUO)]:
+            load_character_to_engine(engine, card, uid)
+            engine.process_command(uid, '.hs')
+        engine.setup_battle(
+            ['leaf'], ['enemy'], '10x10',
+            autochess_mode=True,
+            initial_coords={'leaf': 'D3', 'enemy': 'F3'},
+        )
+        engine.get_char('enemy').set_attr('leaf_marks', 2)
+        cast(engine, 'leaf', 3)
+        max_hp = engine.get_char('leaf').get_attr('体力上限')
+
+        # Healthy Y19 should not suicide with S4
+        engine._init_combat_hp('leaf', max_hp)
+        cmd_healthy, _ = decide_tactical_action(engine, 'leaf')
+        self.assertFalse(cmd_healthy.startswith('.s4'), f'Expected healthy Y19 to hold S4, got {cmd_healthy}')
+
+        # Low-HP Y19 (<= 35%) should trigger S4 as last-stand finisher
+        engine._init_combat_hp('leaf', max(1, int(max_hp * 0.30)))
+        cmd_low, _ = decide_tactical_action(engine, 'leaf')
+        self.assertTrue(cmd_low.startswith('.s4'), f'Expected low-HP Y19 to cast S4, got {cmd_low}')

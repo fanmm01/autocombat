@@ -450,6 +450,28 @@ def _team_allies(engine, uid):
     return allies
 
 
+def _bihami_cake_action(engine, char, uid, failed):
+    """Use a cake from a Bihami ally when the recipient can benefit from it."""
+    supply_items = ('蛋糕MP', '蛋糕幸运', '蛋糕轻盈')
+    supported_items = {
+        item['item'] for item in char.inventory if item.get('item') in supply_items and item.get('count', 0) > 0
+        and engine._autochess_unit_mods.get(item.get('sourceUserId'), {}).get('cake_star')
+    }
+    if not supported_items:
+        return None
+    max_mp = char.get_attr('魔力上限', 0)
+    low_mp = char.get_attr('魔力', 0) < max_mp / 2
+    active_buffs = {buff.get('spellName') for buff in engine._get_physical_buffs(uid)}
+    for item in supply_items:
+        if item not in supported_items:
+            continue
+        useful = low_mp if item == '蛋糕MP' else f'食用【{item}】' not in active_buffs
+        cmd = f'.a eat {uid} item={item}'
+        if useful and cmd not in failed:
+            return cmd, f'食用【{item}】补给'
+    return None
+
+
 def score_tile(engine, uid, coord, role='bruiser', stance='balanced', weights=None,
                desired_range=2, focus_coord=None):
     """Score the tactical desirability of standing on ``coord``."""
@@ -981,6 +1003,13 @@ def decide_tactical_action(engine, uid, weights=None):
                 engine._last_ai_reason = reason
                 return give_cmd, reason
 
+    if my_acts.get('附加', 0) > 0:
+        cake_action = _bihami_cake_action(engine, char, base, failed)
+        if cake_action:
+            cmd, reason = cake_action
+            engine._last_ai_reason = reason
+            return cmd, reason
+
     if getattr(char, 'serial', '') in ('Y18', 'Y19'):
         zone = engine._season_zone(base) or {}
         if char.serial == 'Y18':
@@ -988,7 +1017,13 @@ def decide_tactical_action(engine, uid, weights=None):
             order = {None: (2, 1, 4), 2: (1, 3, 4), 3: (1, 4), 4: (1,)}[active]
         else:
             marked = any(engine._leaf_marks(e['userId']) >= 2 for e in enemies)
-            order = (4, 2, 1, 3) if zone else (3, 2, 1) if marked else (1, 2, 3)
+            low_hp = hp_ratio <= 0.35
+            if zone:
+                order = (4, 2, 1, 3) if low_hp else (2, 1)
+            elif marked:
+                order = (3, 4, 2, 1) if low_hp else (3, 2, 1)
+            else:
+                order = (1, 2, 3)
         for index in order:
             spell = next((s for s in spells if s['index'] == index), None)
             cmd = _can_cast_spell(engine, base, spell, my_acts, failed) if spell else None
@@ -1078,7 +1113,23 @@ def decide_tactical_action(engine, uid, weights=None):
                 need_heal_allies.append((1.0 - ahp / amhp, missing, a_uid, a_entry.get('name', a_uid)))
         need_heal_allies.sort(reverse=True)
 
+        feast_items = {}
+        if char.serial == 'Y8':
+            from autochess_catalog import BIHAMI_FEAST_ITEMS
+            feast_items = BIHAMI_FEAST_ITEMS
         for spell in spells:
+            feast_item = feast_items.get(spell.get('skill_id'))
+            if feast_item:
+                if any(not is_self and not entry.get('isSummon')
+                       and not engine._find_personal_item(ally_uid, item_name=feast_item)
+                       for ally_uid, entry, is_self in allies):
+                    cmd = (_can_cast_spell(engine, base, spell, dict(my_acts, 主动=0), failed)
+                           or _can_cast_spell(engine, base, spell, my_acts, failed))
+                    if cmd:
+                        score = (weights['support_heal_weight'] * st_mults['heal_mult']
+                                 if feast_item == '蛋糕HP' else weights['buff_weight'] + 6.0)
+                        candidates.append((score, cmd, None, f"施放【{spell['name']}】为队友补给"))
+                continue
             cmd = _can_cast_spell(engine, base, spell, my_acts, failed)
             if not cmd:
                 continue

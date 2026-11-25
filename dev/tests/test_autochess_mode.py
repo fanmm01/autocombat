@@ -1,5 +1,6 @@
 import copy
 import unittest
+from unittest.mock import patch
 
 import autochess_catalog as ac_cat
 from autochess_match import AutoChessMatch
@@ -10,6 +11,71 @@ import combat_defaults
 
 
 class AutoChessModeTests(unittest.TestCase):
+    def test_bihami_cakes_scale_with_the_baker_in_every_inventory(self):
+        for star, heal, combat_bonus, combat_rounds, mov, utility_rounds in (
+            (1, 10, 10, 1, 5, 5),
+            (2, 17, 20, 2, 6, 6),
+            (3, 25, 25, 3, 7, 7),
+        ):
+            with self.subTest(star=star):
+                eng = be.FullBattleEngine()
+                team = [{'uid': 'baker', 'serial': 'Y8', 'star': star},
+                        {'uid': 'ally', 'serial': 'Y4', 'star': 3}]
+                ac_cat.apply_autochess_modifiers(eng, 'Y', team, {})
+                cd.load_character_to_engine(eng, ac_cat.CHAR_DATA_BY_SERIAL['Y1'], 'enemy')
+                eng.setup_battle(['baker', 'ally'], ['enemy'], autochess_mode=True)
+                eng.get_char('ally').set_attr('体力上限', 100)
+                eng.get_char('ally').set_attr('魔力上限', 100)
+                spells = {s['index']: s for s in eng.load_spells('baker')}
+
+                def eat(item, user='ally', source='personal'):
+                    self.assertTrue(eng._eat_cake(user, 'ally', item_name=item, source=source)[1])
+                    return next(e for e in eng._get_active_buffs('ally')
+                                if e.get('spellName') == f'食用【{item}】')
+
+                with patch.object(be, 'roll_dice', side_effect=lambda value: 0 if str(value) == '0' else 10):
+                    eng._set_combat_hp('ally', 10)
+                    buff = eat('蛋糕HP', user='baker')
+                    self.assertEqual(eng._get_combat_hp('ally'), 10 + 2 * heal)
+                    self.assertEqual((buff['skillMod'], buff['remainingRounds']),
+                                     (f'闪避+{combat_bonus}', combat_rounds))
+
+                    if star == 1:
+                        self.assertNotIn(4, spells)
+                        self.assertNotIn(7, spells)
+                    else:
+                        feast = spells[4]
+                        self.assertTrue(feast['_once_per_battle'])
+                        self.assertTrue(spells[7]['_once_per_battle'])
+                        offense_items = {e['制造物模板'] for e in spells[7]['effects']}
+                        self.assertEqual(offense_items, {'蛋糕幸运'} if star == 2 else {'蛋糕轻盈', '蛋糕幸运'})
+                        for effect in feast['effects']:
+                            eng._execute_misc_effect('baker', 'baker', effect, feast, False)
+                        for _ in range(2):
+                            eng._set_combat_hp('ally', 10)
+                            eat('蛋糕HP')
+                            self.assertEqual(eng._get_combat_hp('ally'), 10 + 2 * heal)
+                        eng.get_char('ally').set_attr('魔力', 0)
+                        self.assertTrue(eng._execute_ai_command('ally', '.a eat ally item=蛋糕MP').committed)
+                        buff = next(e for e in eng._get_active_buffs('ally') if e.get('spellName') == '食用【蛋糕MP】')
+                        self.assertEqual(eng.get_char('ally').get_attr('魔力'), heal)
+                        self.assertEqual((buff['skillMod'], buff['remainingRounds']),
+                                         (f'斗殴+{combat_bonus}', combat_rounds))
+                    eng.add_item_to_inventory('ally', '蛋糕HP', 1, metadata={'sourceUserId': 'ally'})
+                    eng._set_combat_hp('ally', 10)
+                    buff = eat('蛋糕HP')
+                    self.assertEqual(eng._get_combat_hp('ally'), 20)
+                    self.assertEqual(buff['skillMod'], f'闪避+{combat_bonus}')
+
+                for index, item, effect_key, value in ((5, '蛋糕轻盈', 'skillMod', f'MOV+{mov}'),
+                                                       (6, '蛋糕幸运', 'auxVal', 'b')):
+                    spell = spells[index]
+                    eng._execute_misc_effect('baker', 'baker', spell['effects'][0], spell, False)
+                    buff = eat(item, source='shared')
+                    self.assertEqual((buff[effect_key], buff['remainingRounds']), (value, utility_rounds))
+                    self.assertFalse(list(eng._ready_shared_cakes('ally', item_name=item)))
+                self.assertEqual(be._calc_net_bp([buff]), 'b')
+
     def test_bench_capacity_by_level_and_augment(self):
         match = AutoChessMatch(seed=19)
         cid = match.player_id
@@ -462,6 +528,71 @@ class AutoChessModeTests(unittest.TestCase):
         self.assertTrue(any('胜利 (+1G/+1XP)' in ln for ln in pve.logs))
         self.assertTrue(pve.next_round()[0])
         self.assertEqual((p1['level'], p1['xp']), (3, 1))
+
+    def test_y1_hp_override_applies_only_at_three_stars(self):
+        wiki = ac_cat.build_unit_wiki('Y1')
+        for star, expected_hp in ((1, 15), (2, 25), (3, 41)):
+            with self.subTest(star=star):
+                engine = be.FullBattleEngine()
+                units = [{'uid': 'y_y1', 'serial': 'Y1', 'star': star}]
+                ac_cat.apply_autochess_modifiers(engine, 'Y', units, {})
+                self.assertEqual(engine.get_char('y_y1').get_attr('体力上限'), expected_hp)
+                self.assertEqual(wiki['star_stats'][str(star)]['hp'], expected_hp)
+        self.assertIn('3★ 体力倍率 ×2.75', wiki['tuning_notes'])
+
+    def test_y17_shared_star_scaling_and_monotonicity(self):
+        # Verify Y17 1★ unchanged, 2★/3★ strictly monotonic, and global template unmutated.
+        snapshots = {}
+        for star in (1, 2, 3):
+            eng = be.FullBattleEngine()
+            y_cfg = [{'uid': 'y_y17', 'serial': 'Y17', 'star': star}]
+            x_cfg = [{'uid': 'x_y1', 'serial': 'Y1', 'star': 1}]
+            y_u, _ = ac_cat.apply_autochess_modifiers(eng, 'Y', y_cfg, ac_cat.compute_active_synergies(y_cfg))
+            x_u, _ = ac_cat.apply_autochess_modifiers(eng, 'X', x_cfg, ac_cat.compute_active_synergies(x_cfg))
+            eng.setup_battle(y_u, x_u, arena_preset='autochess_standard', autochess_mode=True)
+            ch = eng.get_char('y_y17')
+            um = eng._autochess_unit_mods['y_y17']
+            guard_sp = next(s for s in ch.spells if s.get('skill_id') == 'Y17-S003')
+            guard_val = int(guard_sp['effects'][0]['辅助效果值'])
+            snapshots[star] = {
+                'hp': ch.get_attr('体力上限'),
+                'dmg_pct': um['dmg_pct'],
+                'flat_dmg': um['flat_dmg'],
+                'flat_dr': um['flat_dr'],
+                'leech': um['bloodmoon_leech_pct'],
+                'guard_dr': guard_val,
+            }
+
+        self.assertEqual(snapshots[1], {
+            'hp': 12, 'dmg_pct': 15, 'flat_dmg': 1, 'flat_dr': 0, 'leech': 0, 'guard_dr': -1,
+        })
+        self.assertEqual(snapshots[2], {
+            'hp': 25, 'dmg_pct': 37, 'flat_dmg': 4, 'flat_dr': 1, 'leech': 12, 'guard_dr': -2,
+        })
+        self.assertEqual(snapshots[3], {
+            'hp': 38, 'dmg_pct': 47, 'flat_dmg': 7, 'flat_dr': 2, 'leech': 15, 'guard_dr': -3,
+        })
+        for key in ('hp', 'dmg_pct', 'flat_dmg', 'flat_dr', 'leech'):
+            self.assertLess(snapshots[1][key], snapshots[2][key], key)
+            self.assertLess(snapshots[2][key], snapshots[3][key], key)
+        self.assertGreater(snapshots[1]['guard_dr'], snapshots[2]['guard_dr'])
+        self.assertGreater(snapshots[2]['guard_dr'], snapshots[3]['guard_dr'])
+
+        # Global CHAR_DATA_BY_SERIAL['Y17'] must stay unmutated
+        raw_guard = next(s for s in ac_cat.CHAR_DATA_BY_SERIAL['Y17']['spells'] if s.get('skill_id') == 'Y17-S003')
+        self.assertEqual(raw_guard['effects'][0]['辅助效果值'], '-1')
+
+        # Wiki star stats & tuning notes reflect the overrides
+        wiki = ac_cat.build_unit_wiki('Y17')
+        self.assertEqual(wiki['star_stats']['1']['hp'], 12)
+        self.assertEqual(wiki['star_stats']['2']['hp'], 25)
+        self.assertEqual(wiki['star_stats']['3']['hp'], 38)
+        self.assertEqual(wiki['star_stats']['2']['flat_dmg'], 4)
+        self.assertEqual(wiki['star_stats']['3']['flat_dmg'], 7)
+        self.assertEqual(wiki['star_stats']['2']['flat_dr'], 1)
+        self.assertEqual(wiki['star_stats']['3']['flat_dr'], 2)
+        self.assertTrue(any('2★ 血律强化' in n for n in wiki['tuning_notes']))
+        self.assertTrue(any('3★ 血律强化' in n for n in wiki['tuning_notes']))
 
 
 if __name__ == '__main__':

@@ -66,6 +66,40 @@ STAR_SCALING = {
     },
 }
 
+BIHAMI_CAKE_SCALING = {
+    2: {'recovery_mult': 1.75, 'combat_bonus': 20, 'combat_rounds': 2,
+        'move_bonus': 6, 'utility_rounds': 6},
+    3: {'recovery_mult': 2.5, 'combat_bonus': 25, 'combat_rounds': 3,
+        'move_bonus': 7, 'utility_rounds': 7},
+}
+BIHAMI_FEAST_ITEMS = {'Y8-S004': '蛋糕HP', 'Y8-S007': '蛋糕幸运'}
+
+# Shared per-unit star scaling overrides (active in both standard and future half_hs rulesets).
+# Strictly monotonic across 1★ <= 2★ <= 3★.
+SHARED_STAR_OVERRIDES = {
+    'Y1': {
+        3: {'hp_mult': 2.75},
+    },
+    'Y17': {
+        2: {
+            'hp_mult': 2.05,
+            'extra_dmg_pct': 22,
+            'extra_flat_dmg': 2,
+            'extra_flat_dr': 1,
+            'extra_bloodmoon_leech_pct': 12,
+            'guard_dr': -2,
+        },
+        3: {
+            'hp_mult': 3.15,
+            'extra_dmg_pct': 32,
+            'extra_flat_dmg': 3,
+            'extra_flat_dr': 1,
+            'extra_bloodmoon_leech_pct': 15,
+            'guard_dr': -3,
+        },
+    },
+}
+
 UNIT_CATALOG = {
     'Y1': {
         'serial': 'Y1', 'name': '炎焱', 'cost': 2, 'role': 'bruiser',
@@ -433,6 +467,25 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         raw = CHAR_DATA_BY_SERIAL[serial]
         cdata = copy.deepcopy(raw)
         cdata['name'] = f"{raw['name']}{'★' * star if star > 1 else ''}"
+        if serial == 'Y8':
+            for spell in cdata['spells']:
+                feast_item = BIHAMI_FEAST_ITEMS.get(spell.get('skill_id'))
+                if not feast_item:
+                    continue
+                if star == 1:
+                    spell['_disabled'] = True
+                    continue
+                spell['_once_per_battle'] = True
+                if star == 2 and feast_item == '蛋糕幸运':
+                    spell['effects'] = [e for e in spell['effects'] if e.get('制造物模板') == feast_item]
+        star_ov = SHARED_STAR_OVERRIDES.get(serial, {}).get(star, {})
+        if serial == 'Y17' and star_ov.get('guard_dr') is not None:
+            guard_val = str(star_ov['guard_dr'])
+            for spell in cdata.get('spells', []):
+                if spell.get('skill_id') == 'Y17-S003':
+                    for eff in spell.get('effects', []):
+                        if eff.get('辅助效果') == '受到伤害加值':
+                            eff['辅助效果值'] = guard_val
         load_character_to_engine(engine, cdata, uid)
         char = engine.get_char(uid)
         sc = STAR_SCALING[star]
@@ -440,8 +493,9 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         traits = set(meta.get('traits', ()))
 
         # Compute effective HP/MP scaling (plus optional Auto-Chess-only per-unit offsets)
+        hp_mult = float(star_ov.get('hp_mult', sc['hp_mult']))
         base_hp = char.get_attr('体力上限', char.get_attr('体力', 10)) + int(meta.get('hp_offset', 0) or 0)
-        scaled_hp = max(1, int(round(base_hp * sc['hp_mult'] * (1.0 + team_hp_pct / 100.0))) + team_flat_hp)
+        scaled_hp = max(1, int(round(base_hp * hp_mult * (1.0 + team_hp_pct / 100.0))) + team_flat_hp)
         char.set_attr('体力上限', scaled_hp)
         char.set_attr('体力', scaled_hp)
 
@@ -451,12 +505,17 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         char.set_attr('魔力', scaled_mp)
 
         # Trait-specific synergy modifiers
-        syn_skill = team_skill_bonus + sc['skill_bonus']
-        syn_dmg_pct = int(meta.get('dmg_pct_offset', 0) or 0)
-        syn_flat_dmg = team_flat_dmg + sc['flat_dmg'] + int(meta.get('flat_dmg_offset', 0) or 0)
-        syn_flat_dr = team_flat_dr + sc['flat_dr']
+        syn_skill = team_skill_bonus + int(star_ov.get('skill_bonus', sc['skill_bonus']))
+        syn_dmg_pct = int(meta.get('dmg_pct_offset', 0) or 0) + int(star_ov.get('extra_dmg_pct', 0) or 0)
+        syn_flat_dmg = (
+            team_flat_dmg
+            + int(star_ov.get('flat_dmg', sc['flat_dmg']))
+            + int(meta.get('flat_dmg_offset', 0) or 0)
+            + int(star_ov.get('extra_flat_dmg', 0) or 0)
+        )
+        syn_flat_dr = team_flat_dr + int(star_ov.get('flat_dr', sc['flat_dr'])) + int(star_ov.get('extra_flat_dr', 0) or 0)
         syn_front_cover = team_front_cover_dr
-        syn_bloodmoon = team_bloodmoon
+        syn_bloodmoon = team_bloodmoon + int(star_ov.get('extra_bloodmoon_leech_pct', 0) or 0)
         syn_cd = team_cd_red
         syn_sum_hp = sc['summon_hp_mult'] * team_summon_hp_mult * float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
         syn_sum_sk = sc['summon_skill_bonus'] + team_summon_skill_bonus
@@ -512,6 +571,8 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
             'zone_radius_bonus': syn_zone_r,
             'low_hp_bonuses': syn_low_hp,
         }
+        if serial == 'Y8' and star in BIHAMI_CAKE_SCALING:
+            unit_mods[uid]['cake_star'] = star
         if syn_rng:
             range_bonus[uid] = syn_rng
         if syn_mv:
@@ -682,6 +743,29 @@ def build_unit_wiki(serial):
 
     sum_hp_off = float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
     tuning_notes = []
+    if serial == 'Y8':
+        tuning_notes.append('1★ 使用基础蛋糕效果')
+        for star, cake in BIHAMI_CAKE_SCALING.items():
+            tuning_notes.append(
+                f"{star}★ 蛋糕回复 ×{cake['recovery_mult']:g}，闪避或斗殴 +{cake['combat_bonus']}"
+                f"（{cake['combat_rounds']} 回合），轻盈 MOV +{cake['move_bonus']}、"
+                f"幸运奖励骰 +1（各 {cake['utility_rounds']} 回合）"
+            )
+        tuning_notes.append('2★ 解锁恢复款待和进攻款待。进攻款待分发幸运蛋糕，3★ 额外分发轻盈蛋糕。各款待每场可施放一次。')
+    if serial == 'Y17' and 'Y17' in SHARED_STAR_OVERRIDES:
+        for star, ov in SHARED_STAR_OVERRIDES['Y17'].items():
+            total_pct = int(meta.get('dmg_pct_offset', 0) or 0) + int(ov.get('extra_dmg_pct', 0) or 0)
+            total_fd = (
+                STAR_SCALING[star]['flat_dmg']
+                + int(meta.get('flat_dmg_offset', 0) or 0)
+                + int(ov.get('extra_flat_dmg', 0) or 0)
+            )
+            total_dr = STAR_SCALING[star]['flat_dr'] + int(ov.get('extra_flat_dr', 0) or 0)
+            tuning_notes.append(
+                f"{star}★ 血律强化：体力倍率 ×{ov['hp_mult']:g}，总输出倍率 +{total_pct}%，"
+                f"附加伤害 +{total_fd}，固定减伤 {total_dr}，额外吸血 +{ov['extra_bloodmoon_leech_pct']}%，"
+                f"凝血式-守减伤 {ov['guard_dr']}"
+            )
     if meta.get('hp_offset'):
         hp_off = int(meta['hp_offset'])
         tuning_notes.append(f"自走棋基础体力 {'+' if hp_off > 0 else ''}{hp_off}")
@@ -697,16 +781,20 @@ def build_unit_wiki(serial):
     star_stats = {}
     for star in (1, 2, 3):
         sc = STAR_SCALING[star]
+        ov = SHARED_STAR_OVERRIDES.get(serial, {}).get(star, {})
+        hp_mult = float(ov.get('hp_mult', sc['hp_mult']))
+        if serial == 'Y1' and hp_mult != sc['hp_mult']:
+            tuning_notes.append(f'{star}★ 体力倍率 ×{hp_mult:g}')
         star_stats[str(star)] = {
             'star': star,
-            'hp': max(1, int(round(base_hp * sc['hp_mult']))),
+            'hp': max(1, int(round(base_hp * hp_mult))),
             'mp': max(0, _star_mp(serial, base_mp, sc['mp_mult'])),
-            'skill_bonus': sc['skill_bonus'],
-            'flat_dmg': sc['flat_dmg'] + int(meta.get('flat_dmg_offset', 0) or 0),
-            'flat_dr': sc['flat_dr'],
+            'skill_bonus': int(ov.get('skill_bonus', sc['skill_bonus'])),
+            'flat_dmg': int(ov.get('flat_dmg', sc['flat_dmg'])) + int(meta.get('flat_dmg_offset', 0) or 0) + int(ov.get('extra_flat_dmg', 0) or 0),
+            'flat_dr': int(ov.get('flat_dr', sc['flat_dr'])) + int(ov.get('extra_flat_dr', 0) or 0),
             'dodge': min(85, base_dodge + (4 if star == 2 else 8 if star == 3 else 0)),
-            'summon_hp_mult': round(sc['summon_hp_mult'] * sum_hp_off, 4),
-            'summon_skill_bonus': sc['summon_skill_bonus'],
+            'summon_hp_mult': round(float(ov.get('summon_hp_mult', sc['summon_hp_mult'])) * sum_hp_off, 4),
+            'summon_skill_bonus': int(ov.get('summon_skill_bonus', sc['summon_skill_bonus'])),
         }
 
     skill_candidates = [

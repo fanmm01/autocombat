@@ -1927,12 +1927,17 @@ class CombatEngine:
             return reject(f'{slot}动作已用尽', 'no_actions')
         if cmd.startswith('.a eat') or cmd.startswith('.a give'):
             giving = cmd.startswith('.a give')
-            target = cmd.split(maxsplit=2)[2].strip() if len(cmd.split(maxsplit=2)) == 3 else uid
+            parts = cmd.split(maxsplit=2)
+            target = parts[2].strip() if len(parts) == 3 else uid
+            item_name = None
+            if self.autochess_mode and not giving and len(parts) == 3:
+                target, _, item_name = target.partition(' item=')
             target = self._resolve_uid(target)
             if giving and (target == self._resolve_uid(uid)
                            or self._battle_team_of(target) != self._battle_team_of(uid)):
                 return reject('没有可给予的同队目标', 'invalid_target')
-            text, ok = self._eat_cake(uid, target)
+            text, ok = self._eat_cake(uid, target, item_name=item_name or None,
+                                      source='personal' if item_name else None)
             return ActionExecutionResult(text, ok, '' if ok else 'no_cake', slot)
         if cmd.startswith('.a m '):
             return self._move_explicit(uid, cmd[5:])
@@ -6524,7 +6529,10 @@ class CombatEngine:
             center = cast['center'] if burst else caster_entry.get('coord', cast['center'])
             for entry in self._season_targets(center, 8):
                 tid = entry['userId']
-                if not burst:
+                if burst:
+                    if getattr(self, 'autochess_mode', False) and entry['team'] == cast['team']:
+                        continue
+                else:
                     marks = self._leaf_marks(tid)
                     if entry['team'] == cast['team'] or not marks:
                         continue
@@ -9133,23 +9141,41 @@ class CombatEngine:
         from characters_data import ITEM_TEMPLATES
         ITEM_TEMPLATES = getattr(self, '_item_templates_snapshot', ITEM_TEMPLATES)
         item = ITEM_TEMPLATES[item_name]
+        meta = metadata or {}
+        maker = self._resolve_uid(meta.get('sourceUserId'))
+        cake_star = self._autochess_unit_mods.get(maker, {}).get('cake_star', 0) if self.autochess_mode else 0
+        recovery_mult = 1.0
+        if cake_star:
+            from autochess_catalog import BIHAMI_CAKE_SCALING
+            cake = BIHAMI_CAKE_SCALING[cake_star]
+            if item_name in ('蛋糕HP', '蛋糕MP'):
+                skill = '闪避' if item_name == '蛋糕HP' else '斗殴'
+                item = dict(item, 技能加减值=f"{skill}+{cake['combat_bonus']}", buff持续回合=cake['combat_rounds'])
+                recovery_mult = cake['recovery_mult']
+            elif item_name == '蛋糕轻盈':
+                item = dict(item, 技能加减值=f"MOV+{cake['move_bonus']}", buff持续回合=cake['utility_rounds'])
+            elif item_name == '蛋糕幸运':
+                item = dict(item, buff持续回合=cake['utility_rounds'])
+            else:
+                cake_star = 0
         tchar = self.get_char(target_id)
         tname = tchar.name if tchar else target_id
-        hp_heal = int(roll_dice(item.get('回复hp', '0')) * self._get_buff_heal_pct(target_id, 'hp'))
+        hp_mult = self._get_buff_heal_pct(target_id, 'hp') * recovery_mult
+        mp_mult = self._get_buff_heal_pct(target_id, 'mp') * recovery_mult
+        hp_heal = int(roll_dice(item.get('回复hp', '0')) * hp_mult)
         hp_heal += self._get_buff_heal_flat(target_id, 'hp')
-        mp_heal = int(roll_dice(item.get('回复mp', '0')) * self._get_buff_heal_pct(target_id, 'mp'))
+        mp_heal = int(roll_dice(item.get('回复mp', '0')) * mp_mult)
         mp_heal += self._get_buff_heal_flat(target_id, 'mp')
         san_heal = roll_dice(item.get('回复san', '0'))
-        meta = metadata or {}
-        # Tasting is a consumption event, not a spell: only cakes marked by
-        # the maker contribute the extra healing, and only once per cake.
+        # A scaled stack grants its marked tasting bonus for each piece consumed.
         extra_dice = meta.get('消费追加回复hp', '')
-        if extra_dice and not meta.get('消费追加已触发'):
-            hp_heal += int(roll_dice(str(extra_dice)) * self._get_buff_heal_pct(target_id, 'hp'))
-            meta['消费追加已触发'] = 1
+        if extra_dice and (cake_star or not meta.get('消费追加已触发')):
+            hp_heal += int(roll_dice(str(extra_dice)) * hp_mult)
+            if not cake_star:
+                meta['消费追加已触发'] = 1
         parts = []
         if hp_heal > 0:
-            outcome = self._apply_hp_heal_amount(target_id, hp_heal)
+            outcome = self._apply_hp_heal_amount(target_id, hp_heal, healer_uid=maker if cake_star else None)
             if outcome['rescued']:
                 parts.append(f"脱离濒死 +{outcome['applied']} HP")
             elif outcome['applied']:
@@ -9174,20 +9200,28 @@ class CombatEngine:
                         and self._resolve_uid(e.get('targetUserId', '')) == self._resolve_uid(target_id)
                         and e.get('spellName') == f'食用【{item_name}】'):
                     existing = e; break
-            if existing:
-                existing['remainingRounds'] = max(existing.get('remainingRounds', 0), buff_dur)
-            else:
-                effects.append({
-                    'type': 'buff', 'remainingRounds': buff_dur,
-                    'skillMod': skill_mod,
-                    'auxType': aux_type, 'auxVal': aux_val,
-                    'auxCode': AUX_NAME_TO_CODE.get(aux_type, 0),
-                    'sourceUserId': target_id, 'targetUserId': target_id,
-                    'spellName': f'食用【{item_name}】', 'spellIndex': 0,
-                    'persistent': 0, 'stackable': 0,
-                })
-            self._set_effects(effects)
-            buff_msg = f"，{skill_mod or (aux_type + ' ' + aux_val)}({buff_dur}回合)"
+            existing_star = existing.get('cakeStar', 0) if existing else 0
+            if cake_star >= existing_star:
+                if existing is not None and cake_star == existing_star:
+                    existing['remainingRounds'] = max(existing.get('remainingRounds', 0), buff_dur)
+                else:
+                    buff = {
+                        'type': 'buff', 'remainingRounds': buff_dur,
+                        'skillMod': skill_mod,
+                        'auxType': aux_type, 'auxVal': aux_val,
+                        'auxCode': AUX_NAME_TO_CODE.get(aux_type, 0),
+                        'sourceUserId': target_id, 'targetUserId': target_id,
+                        'spellName': f'食用【{item_name}】', 'spellIndex': 0,
+                        'persistent': 0, 'stackable': 0,
+                    }
+                    if cake_star:
+                        buff['cakeStar'] = cake_star
+                    if existing is None:
+                        effects.append(buff)
+                    else:
+                        existing.update(buff)
+                self._set_effects(effects)
+                buff_msg = f"，{skill_mod or (aux_type + ' ' + aux_val)}({buff_dur}回合)"
         return f"食用【{item_name}】→ {tname} 回复 {'+'.join(parts) or '0'}{buff_msg}"
 
     def _eat_cake(self, eater_id, target_id=None, *, item_name=None, source=None):
@@ -9212,9 +9246,9 @@ class CombatEngine:
             return ('所选蛋糕已不可用' if item_name else '无可用的蛋糕', False)
         index, cake = shared
         effects = self._get_effects()
-        result = self._apply_item_heal(cake['template'], tid, metadata=cake)
         effects.pop(index)
         self._set_effects(effects)
+        result = self._apply_item_heal(cake['template'], tid, metadata=cake)
         return (result, True)
 
     def _ready_shared_cakes(self, uid=None, *, item_name=None):
