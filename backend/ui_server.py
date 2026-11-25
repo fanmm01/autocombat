@@ -25,6 +25,7 @@ from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound
 from combat_settings import value as setting, snapshot as settings_snapshot, settings_scope, instance_name
 
 from project_paths import PROJECT_ROOT as ROOT
+from ui_origin import check_origin
 
 
 def register_ui(app, ns):
@@ -64,10 +65,7 @@ def register_ui(app, ns):
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             raise BadRequest('请求必须为 JSON 对象')
-        # Same-origin UI writes; also allow WeChat Mini Game/Program client origins.
-        origin = request.headers.get('Origin')
-        if origin and origin.rstrip('/') != request.host_url.rstrip('/') and not origin.startswith('https://servicewechat.com'):
-            raise Forbidden('请从战术室页面发起操作')
+        check_origin()
         return data
 
     def catalog():

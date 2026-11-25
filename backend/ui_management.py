@@ -23,6 +23,7 @@ from autochess_auth import (
     PRIMARY_ADMIN_USERNAME,
 )
 from ui_effects import EffectComments, format_character, runtime_character
+from ui_origin import check_origin
 from skill_identity import identify_skills, validate_global_skill_ids
 from project_paths import runtime_dir
 
@@ -71,12 +72,6 @@ class Management:
     @staticmethod
     def _auth_err(exc):
         return jsonify(error=True, message=str(exc)), exc.status
-
-    @staticmethod
-    def _check_origin():
-        origin = request.headers.get('Origin')
-        if origin and origin.rstrip('/') != request.host_url.rstrip('/') and not origin.startswith('https://servicewechat.com'):
-            raise Forbidden('请从战术室页面发起操作')
 
     def _auth_token(self):
         auth_header = (request.headers.get('Authorization') or '').strip()
@@ -173,7 +168,7 @@ class Management:
         return self._apply_admin_permissions(actor, target, data.get('permissions'))
 
     def put_admin_permissions(self, account_id):
-        self._check_origin()
+        check_origin()
         actor = self.require_super_admin()
         data = self.c['body']() or {}
         return self._apply_admin_permissions(actor, account_id, data.get('permissions'))
@@ -200,7 +195,7 @@ class Management:
         return self._revoke_admin_target(actor, target)
 
     def delete_admin(self, account_id):
-        self._check_origin()
+        check_origin()
         actor = self.require_super_admin()
         return self._revoke_admin_target(actor, account_id)
 
@@ -234,7 +229,7 @@ class Management:
         return self._delete_player_target(actor, target)
 
     def delete_player(self, account_id):
-        self._check_origin()
+        check_origin()
         actor = self.require_permission(PERM_PLAYER_MANAGE)
         return self._delete_player_target(actor, account_id)
 

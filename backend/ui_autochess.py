@@ -14,6 +14,7 @@ from autochess_auth import AuthError, AutoChessAuthService, exchange_wechat_code
 from autochess_catalog import catalog_summary
 from autochess_lore import get_story_detail, list_story_index
 from autochess_match import AutoChessMatch
+from ui_origin import check_origin
 
 _STORE_KIND = 'autochess_match'
 _ROOM_KIND = 'autochess_room'
@@ -85,9 +86,7 @@ class AutoChessUI:
 
     @staticmethod
     def _check_origin():
-        origin = request.headers.get('Origin')
-        if origin and origin.rstrip('/') != request.host_url.rstrip('/') and not origin.startswith('https://servicewechat.com'):
-            raise Forbidden('请从自走棋页面发起操作')
+        check_origin('请从自走棋页面发起操作')
 
     def _auth_token(self):
         auth_header = (request.headers.get('Authorization') or '').strip()

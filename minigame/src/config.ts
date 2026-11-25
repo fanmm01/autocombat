@@ -16,7 +16,7 @@ const cloudService = (env.VITE_MG_CLOUD_SERVICE || 'backend').trim();
 const apiBase = (env.VITE_MG_API_BASE || 'https://xingxu-fz.fun/api/ui').replace(/\/+$/, '');
 
 export const MG_CONFIG: MiniGameConfig = {
-  transport: rawTransport === 'cloud' ? 'cloud' : 'http',
+  transport: rawTransport === 'cloud' || Boolean(cloudEnv && rawTransport !== 'http') ? 'cloud' : 'http',
   cloudEnv,
   cloudService,
   apiBase,

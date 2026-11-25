@@ -307,6 +307,25 @@ class BrowserUITests(unittest.TestCase):
         response = self.client.post('/api/ui/session', json={}, headers={'Origin':'https://other.invalid'})
         self.assertEqual(response.status_code, 403)
 
+    def test_same_origin_browser_writes_behind_https_proxy(self):
+        headers = {'Origin': 'https://play.example.test', 'Sec-Fetch-Site': 'same-origin'}
+        base_url = 'http://backend:8889'
+        session = self.client.post('/api/ui/session', base_url=base_url, json={'name': '房主'}, headers=headers)
+        self.assertEqual(session.status_code, 200, session.get_json())
+        room = self.client.post('/api/ui/rooms', base_url=base_url, headers=headers,
+                                json={'team_a': ['Y1'], 'team_b': ['Y2'], 'local': True})
+        self.assertEqual(room.status_code, 200, room.get_json())
+        logout = self.client.post('/api/ui/autochess/auth/logout', base_url=base_url, headers=headers)
+        self.assertEqual(logout.status_code, 200, logout.get_json())
+
+        for site, origin in [('cross-site', 'https://other.invalid'),
+                             ('same-site', 'https://other.example.test'),
+                             ('same-origin', 'null')]:
+            with self.subTest(site=site, origin=origin):
+                denied = self.client.post('/api/ui/session', base_url=base_url, json={},
+                                          headers={'Origin': origin, 'Sec-Fetch-Site': site})
+                self.assertEqual(denied.status_code, 403, denied.get_json())
+
     def test_ai_single_step_reaches_end_with_mirror_match(self):
         self.create(team_a=['Y1'], team_b=['Y1'], ai_slots=['Y:Y1','X:Y1'])
         self.control(op='start')

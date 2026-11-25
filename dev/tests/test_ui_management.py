@@ -476,7 +476,10 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/ui/admins/permissions', json={'account_id': 'moderator_one', 'permissions': []}).status_code, 400)
 
         # Primary admin CAN delete another admin via player management; roles persist across reload
-        self.assertEqual(self.client.delete('/api/ui/players/moderator_one').status_code, 200)
+        deleted = self.client.delete('/api/ui/players/moderator_one', headers={
+            'Origin': 'https://play.example.test', 'Sec-Fetch-Site': 'same-origin',
+        })
+        self.assertEqual(deleted.status_code, 200, deleted.get_json())
         self.assertIsNone(self.store.get('autochess_account', 'moderator_one'))
 
         reloaded_auth = AutoChessAuthService(Store(self.store.path))
