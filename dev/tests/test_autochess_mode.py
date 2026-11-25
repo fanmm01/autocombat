@@ -381,7 +381,7 @@ class AutoChessModeTests(unittest.TestCase):
         self.assertIn('自走棋召唤物生命/格挡盾 ×0.55', wiki['tuning_notes'])
         self.assertEqual(wiki['star_stats']['1']['summon_hp_mult'], 0.55)
         self.assertEqual(wiki['star_stats']['2']['summon_hp_mult'], 0.825)
-        self.assertEqual(wiki['star_stats']['3']['summon_hp_mult'], 1.21)
+        self.assertEqual(wiki['star_stats']['3']['summon_hp_mult'], 1.4575)
 
         # 4. Classic mode (autochess_mode=False) remains strictly unaffected
         eng_classic = be.FullBattleEngine()
@@ -512,7 +512,7 @@ class AutoChessModeTests(unittest.TestCase):
         self.assertEqual((m.commanders[o2]['level'], m.commanders[o2]['xp']), (2, 1))
         self.assertEqual((m.commanders[o1]['level'], m.commanders[o1]['xp']), (2, 0))
 
-        # 2. Real PvE win verification (3★ Y12 beats wave 1 -> +1G/+1XP log & +3 XP total after next_round)
+        # 2. PvE victory grants the same XP bonus regardless of the wave's balance.
         pve = AutoChessMatch(mode='pve12', seed=88)
         p1 = pve.commanders[pve.player_id]
         p1['level'] = 2
@@ -521,8 +521,10 @@ class AutoChessModeTests(unittest.TestCase):
             'id': 'u_boss', 'serial': 'Y12', 'star': 3,
             'location': 'board', 'bench_idx': None, 'coord': 'C4', 'stance': 'balanced',
         }]
-        ok, msg = pve.resolve_combat()
+        ok, msg = pve.start_combat()
         self.assertTrue(ok, msg)
+        with patch.object(pve, '_extract_bout_outcome', return_value=fake_live_out):
+            pve._finalize_round()
         self.assertTrue(pve.last_round_report['won'])
         self.assertEqual((p1['level'], p1['xp']), (2, 5))
         self.assertTrue(any('胜利 (+1G/+1XP)' in ln for ln in pve.logs))

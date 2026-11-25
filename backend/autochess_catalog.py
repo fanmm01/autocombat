@@ -7,6 +7,9 @@ from characters_data import ALL_CHARACTERS, load_character_to_engine
 from autochess_lore import get_unit_lore, list_story_index
 from autochess_ranked import ranked_rules_summary
 
+RULESETS = ('standard', 'half_hs')
+DEFAULT_RULESET = 'standard'
+
 AUTOCHESS_RANGE_OVERRIDES = {
     '火球术': 7,
     '星闪攻击': 8,
@@ -34,6 +37,27 @@ LEVEL_TABLE = {
     5: {'max_pop': 6, 'xp_to_next': 24, 'odds': {1: 15, 2: 23, 3: 36, 4: 24, 5: 0, 6: 2}},
     6: {'max_pop': 7, 'xp_to_next': 32, 'odds': {1: 10, 2: 18, 3: 34, 4: 30, 5: 0, 6: 8}},
     7: {'max_pop': 8, 'xp_to_next': 0, 'odds': {1: 5, 2: 15, 3: 30, 4: 35, 5: 0, 6: 15}},
+}
+
+HALF_HS_COST_OVERRIDES = {
+    # 1G (4张): Y17, Y10, Y11, Y7
+    'Y17': 1, 'Y10': 1, 'Y11': 1, 'Y7': 1,
+    # 2G (4张): Y8, Y18, Y13, Y3
+    'Y8': 2, 'Y18': 2, 'Y13': 2, 'Y3': 2,
+    # 3G (5张): Y19, Y15, Y5, Y9, Y2
+    'Y19': 3, 'Y15': 3, 'Y5': 3, 'Y9': 3, 'Y2': 3,
+    # 4G (6张): Y14, Y4, Y12, Y16, Y1, Y6
+    'Y14': 4, 'Y4': 4, 'Y12': 4, 'Y16': 4, 'Y1': 4, 'Y6': 4,
+}
+
+LEVEL_TABLE_HALF_HS = {
+    1: {'max_pop': 2, 'xp_to_next': 2,  'odds': {1: 75, 2: 25, 3: 0,  4: 0,  5: 0, 6: 0}},
+    2: {'max_pop': 3, 'xp_to_next': 6,  'odds': {1: 55, 2: 35, 3: 10, 4: 0,  5: 0, 6: 0}},
+    3: {'max_pop': 4, 'xp_to_next': 10, 'odds': {1: 30, 2: 40, 3: 25, 4: 5,  5: 0, 6: 0}},
+    4: {'max_pop': 5, 'xp_to_next': 16, 'odds': {1: 18, 2: 34, 3: 33, 4: 15, 5: 0, 6: 0}},
+    5: {'max_pop': 6, 'xp_to_next': 24, 'odds': {1: 15, 2: 23, 3: 36, 4: 26, 5: 0, 6: 0}},
+    6: {'max_pop': 7, 'xp_to_next': 32, 'odds': {1: 10, 2: 18, 3: 34, 4: 38, 5: 0, 6: 0}},
+    7: {'max_pop': 8, 'xp_to_next': 0,  'odds': {1: 5,  2: 15, 3: 30, 4: 50, 5: 0, 6: 0}},
 }
 
 STAR_SCALING = {
@@ -98,6 +122,33 @@ SHARED_STAR_OVERRIDES = {
             'guard_dr': -3,
         },
     },
+    'Y11': {
+        2: {
+            'hp_mult': 1.45,
+            'skill_bonus': 6,
+        },
+        3: {
+            'extra_dmg_pct': 12,
+            'extra_flat_dmg': 1,
+            'extra_bloodmoon_leech_pct': 8,
+        },
+    },
+    'Y6': {
+        3: {
+            'hp_mult': 2.20,
+            'summon_hp_mult': 1.85,
+            'skill_bonus': 14,
+            'flat_dmg': 2,
+            'flat_dr': 0,
+        },
+    },
+    'Y12': {
+        3: {
+            'summon_hp_mult': 2.65,
+            'summon_skill_bonus': 22,
+            'flat_dr': 2,
+        },
+    },
 }
 
 UNIT_CATALOG = {
@@ -143,7 +194,7 @@ UNIT_CATALOG = {
     },
     'Y11': {
         'serial': 'Y11', 'name': '蓝', 'cost': 1, 'role': 'assassin',
-        'traits': ['血月', '武斗'], 'range': 2, 'flat_dmg_offset': 1,
+        'traits': ['血月', '武斗'], 'range': 2,
         'tag': '死神镰刃', 'blurb': '黑雾突进与高爆发镰刀收割。',
     },
     'Y14': {
@@ -331,6 +382,89 @@ PVE_WAVES = [
 ]
 
 
+HALF_HS_STAR_OVERRIDES = {'Y16': {1: {'hp_mult': 0.80}}}
+
+
+def normalize_ruleset(ruleset=None):
+    return 'half_hs' if ruleset == 'half_hs' else DEFAULT_RULESET
+
+
+def get_unit_cost(serial, ruleset=DEFAULT_RULESET):
+    if ruleset == 'half_hs' and serial in HALF_HS_COST_OVERRIDES:
+        return HALF_HS_COST_OVERRIDES[serial]
+    return UNIT_CATALOG[serial]['cost']
+
+
+def get_level_table(ruleset=DEFAULT_RULESET):
+    return LEVEL_TABLE_HALF_HS if ruleset == 'half_hs' else LEVEL_TABLE
+
+
+def get_catalog_units(ruleset=DEFAULT_RULESET):
+    return {serial: dict(meta, cost=get_unit_cost(serial, ruleset))
+            for serial, meta in UNIT_CATALOG.items()}
+
+
+def _effective_star_override(serial, star, ruleset):
+    shared = SHARED_STAR_OVERRIDES.get(serial, {}).get(star, {})
+    if ruleset == 'half_hs':
+        return {**shared, **HALF_HS_STAR_OVERRIDES.get(serial, {}).get(star, {})}
+    return shared
+
+
+def _summon_hp_offset(meta, ruleset):
+    return 1.0 if ruleset == 'half_hs' else float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
+
+
+def _half_hs_attributes(get_attr, serial):
+    from battle_engine import ALL_COMBAT_SKILLS
+
+    level = get_attr('等级', 1) or 1
+    hp = get_attr('体力上限', get_attr('体力', 10))
+    mp = get_attr('魔力上限', get_attr('魔力', 10))
+    dodge = get_attr('闪避', 25)
+
+    def boost(value):
+        return max(value, min(value + 20, 80))
+
+    combat_skills = ALL_COMBAT_SKILLS + (['弓术'] if serial == 'Y17' else [])
+    skills = {skill: boost(get_attr(skill, 0)) for skill in combat_skills if get_attr(skill, 0) > 0}
+    return {
+        '体力上限': max(1, int(hp * (5 + level) / 2)),
+        '魔力上限': max(0, int(mp * (2 + 0.5 * level) / 2)),
+        '闪避': boost(dodge),
+        '体格': get_attr('体格', 0) + 1,
+        '行动力': get_attr('行动力', 8) + 3,
+    }, skills
+
+
+def apply_half_hs_transform(engine, uid, serial):
+    from battle_engine import _DB_TABLE
+
+    char = engine.get_char(uid)
+    stats, skills = _half_hs_attributes(char.get_attr, serial)
+    stats.update({'体力': stats['体力上限'], '魔力': stats['魔力上限']})
+    char.hs_orig = {key: char.get_attr(key) for key in stats}
+    char.hs_orig['skills'] = {key: char.get_attr(key) for key in skills}
+    char.hs_transformed = True
+    for key, value in {**stats, **skills}.items():
+        char.set_attr(key, value)
+    char.set_str('db', _DB_TABLE.get(int(stats['体格']), '0'))
+
+
+def build_half_hs_summon_templates():
+    from characters_data import SUMMON_TEMPLATES
+
+    snapshot = copy.deepcopy(SUMMON_TEMPLATES)
+    for name, template in snapshot.items():
+        if not isinstance(template, dict) or template.get('_meta') or name == '虚假之月':
+            continue
+        for field in ('HP', 'MP', 'shield_block'):
+            value = template.get(field)
+            if isinstance(value, (int, float)) and value > 0:
+                template[field] = max(1, round(value * 0.5))
+    return snapshot
+
+
 def _star_mp(serial, base_mp, scale):
     value = base_mp * scale
     return int(value + 0.5) if serial in ('Y18', 'Y19') else round(value)
@@ -376,11 +510,15 @@ def compute_active_synergies(board_units):
     return active
 
 
-def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies, augments=None):
+def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies, augments=None,
+                             ruleset=DEFAULT_RULESET):
     """Instantiate board units onto ``engine`` with star, synergy, and augment scaling.
 
     Never mutates global ALL_CHARACTERS or engine defaults outside autochess dicts.
     """
+    ruleset = normalize_ruleset(ruleset)
+    if ruleset == 'half_hs' and getattr(engine, '_summon_templates_snapshot', None) is None:
+        engine._summon_templates_snapshot = build_half_hs_summon_templates()
     augments = list(augments or ())
     aug_defs = {a['id']: a for a in AUGMENTS}
     resolved_augs = [aug_defs[a] if isinstance(a, str) and a in aug_defs else a for a in augments]
@@ -478,7 +616,7 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
                 spell['_once_per_battle'] = True
                 if star == 2 and feast_item == '蛋糕幸运':
                     spell['effects'] = [e for e in spell['effects'] if e.get('制造物模板') == feast_item]
-        star_ov = SHARED_STAR_OVERRIDES.get(serial, {}).get(star, {})
+        star_ov = _effective_star_override(serial, star, ruleset)
         if serial == 'Y17' and star_ov.get('guard_dr') is not None:
             guard_val = str(star_ov['guard_dr'])
             for spell in cdata.get('spells', []):
@@ -487,6 +625,8 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
                         if eff.get('辅助效果') == '受到伤害加值':
                             eff['辅助效果值'] = guard_val
         load_character_to_engine(engine, cdata, uid)
+        if ruleset == 'half_hs':
+            apply_half_hs_transform(engine, uid, serial)
         char = engine.get_char(uid)
         sc = STAR_SCALING[star]
         meta = UNIT_CATALOG.get(serial, {})
@@ -500,7 +640,7 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         char.set_attr('体力', scaled_hp)
 
         base_mp = char.get_attr('魔力上限', char.get_attr('魔力', 10))
-        scaled_mp = max(0, _star_mp(serial, base_mp, sc['mp_mult']) + team_flat_mp)
+        scaled_mp = max(0, _star_mp(serial, base_mp, star_ov.get('mp_mult', sc['mp_mult'])) + team_flat_mp)
         char.set_attr('魔力上限', scaled_mp)
         char.set_attr('魔力', scaled_mp)
 
@@ -517,8 +657,8 @@ def apply_autochess_modifiers(engine, team_code, unit_configs, active_synergies,
         syn_front_cover = team_front_cover_dr
         syn_bloodmoon = team_bloodmoon + int(star_ov.get('extra_bloodmoon_leech_pct', 0) or 0)
         syn_cd = team_cd_red
-        syn_sum_hp = sc['summon_hp_mult'] * team_summon_hp_mult * float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
-        syn_sum_sk = sc['summon_skill_bonus'] + team_summon_skill_bonus
+        syn_sum_hp = star_ov.get('summon_hp_mult', sc['summon_hp_mult']) * team_summon_hp_mult * _summon_hp_offset(meta, ruleset)
+        syn_sum_sk = star_ov.get('summon_skill_bonus', sc['summon_skill_bonus']) + team_summon_skill_bonus
         syn_zone_r = team_zone_radius_bonus
         syn_mv = team_move_bonus
         syn_rng = team_range_bonus
@@ -721,13 +861,18 @@ def _build_wiki_passives(passive_rules):
     return out
 
 
-def build_unit_wiki(serial):
+def build_unit_wiki(serial, ruleset=DEFAULT_RULESET):
     """Build Auto-Chess-specific wiki data strictly matching Auto-Chess mechanics and stats."""
+    ruleset = normalize_ruleset(ruleset)
     meta = UNIT_CATALOG[serial]
+    cost = get_unit_cost(serial, ruleset)
     raw = CHAR_DATA_BY_SERIAL[serial]
     attrs = raw.get('attrs', {}) or {}
     str_attrs = raw.get('str_attrs', {}) or {}
     passive_rules = raw.get('passive_rules') or {}
+    if ruleset == 'half_hs':
+        stats, skills = _half_hs_attributes(attrs.get, serial)
+        attrs = {**attrs, **stats, **skills}
 
     base_hp = int(attrs.get('体力上限', attrs.get('体力', 10)) or 10) + int(meta.get('hp_offset', 0) or 0)
     base_mp = int(attrs.get('魔力上限', attrs.get('魔力', 10)) or 0)
@@ -741,8 +886,10 @@ def build_unit_wiki(serial):
     block_val = int(attrs.get('格挡', 0) or 0) if can_block else 0
     flying = serial in ('Y5', 'Y13')
 
-    sum_hp_off = float(meta.get('summon_hp_mult_offset', 1.0) or 1.0)
+    sum_hp_off = _summon_hp_offset(meta, ruleset)
     tuning_notes = []
+    if ruleset == 'half_hs':
+        tuning_notes.append('半变身：开局使用 1/2 经典变身和半量召唤物模板')
     if serial == 'Y8':
         tuning_notes.append('1★ 使用基础蛋糕效果')
         for star, cake in BIHAMI_CAKE_SCALING.items():
@@ -781,14 +928,27 @@ def build_unit_wiki(serial):
     star_stats = {}
     for star in (1, 2, 3):
         sc = STAR_SCALING[star]
-        ov = SHARED_STAR_OVERRIDES.get(serial, {}).get(star, {})
+        ov = _effective_star_override(serial, star, ruleset)
         hp_mult = float(ov.get('hp_mult', sc['hp_mult']))
-        if serial == 'Y1' and hp_mult != sc['hp_mult']:
-            tuning_notes.append(f'{star}★ 体力倍率 ×{hp_mult:g}')
+        if serial != 'Y17':
+            labels = {
+                'hp_mult': ('体力倍率', '×'),
+                'skill_bonus': ('技能', '+'),
+                'flat_dmg': ('附加伤害', '+'),
+                'flat_dr': ('固定减伤', ''),
+                'summon_hp_mult': ('召唤物体力倍率', '×'),
+                'summon_skill_bonus': ('召唤物技能', '+'),
+                'extra_dmg_pct': ('额外伤害百分比', '+'),
+                'extra_flat_dmg': ('额外附伤', '+'),
+                'extra_bloodmoon_leech_pct': ('额外吸血百分比', '+'),
+            }
+            changes = [f'{label} {prefix}{ov[key]:g}' for key, (label, prefix) in labels.items() if key in ov]
+            if changes:
+                tuning_notes.append(f'{star}★ ' + '，'.join(changes))
         star_stats[str(star)] = {
             'star': star,
             'hp': max(1, int(round(base_hp * hp_mult))),
-            'mp': max(0, _star_mp(serial, base_mp, sc['mp_mult'])),
+            'mp': max(0, _star_mp(serial, base_mp, ov.get('mp_mult', sc['mp_mult']))),
             'skill_bonus': int(ov.get('skill_bonus', sc['skill_bonus'])),
             'flat_dmg': int(ov.get('flat_dmg', sc['flat_dmg'])) + int(meta.get('flat_dmg_offset', 0) or 0) + int(ov.get('extra_flat_dmg', 0) or 0),
             'flat_dr': int(ov.get('flat_dr', sc['flat_dr'])) + int(ov.get('extra_flat_dr', 0) or 0),
@@ -838,7 +998,8 @@ def build_unit_wiki(serial):
             'timing': _TIMING_LABELS.get(str(sp.get('timing', '2')), str(sp.get('timing', '主动作'))),
             'phase': phase,
             'phase_label': phase_label,
-            'mp_cost': sp.get('消耗mp', 0),
+            'mp_cost': ((sp.get('_mp_formula_transformed') if ruleset == 'half_hs' else None)
+                        or sp.get('消耗mp', 0)),
             'range': eff_range,
             'cooldown': cooldown,
             'summary': _summarize_wiki_spell_effects(effs),
@@ -847,8 +1008,8 @@ def build_unit_wiki(serial):
     return {
         'serial': serial,
         'name': meta['name'],
-        'cost': meta['cost'],
-        'pool_count': POOL_COUNTS[meta['cost']],
+        'cost': cost,
+        'pool_count': POOL_COUNTS[cost],
         'role': meta['role'],
         'traits': list(meta['traits']),
         'range': meta['range'],
@@ -880,15 +1041,19 @@ def build_unit_wiki(serial):
     }
 
 
-def catalog_summary():
+def catalog_summary(ruleset=DEFAULT_RULESET):
     """Return UI-friendly catalog metadata dictionary."""
+    ruleset = normalize_ruleset(ruleset)
+    levels = get_level_table(ruleset)
     return {
-        'units': sorted(UNIT_CATALOG.values(), key=lambda u: (u['cost'], u['serial'])),
-        'wiki_units': {s: build_unit_wiki(s) for s in sorted(UNIT_CATALOG, key=lambda x: int(x[1:]))},
+        'ruleset': ruleset,
+        'units': sorted(get_catalog_units(ruleset).values(), key=lambda u: (u['cost'], u['serial'])),
+        'wiki_units': {s: build_unit_wiki(s, ruleset) for s in sorted(UNIT_CATALOG, key=lambda x: int(x[1:]))},
         'story_index': list_story_index(),
         'synergies': list(SYNERGIES.values()),
         'augments': AUGMENTS,
-        'levels': LEVEL_TABLE,
+        'levels': levels,
+        'level_table': levels,
         'pool_counts': POOL_COUNTS,
         'pool_counts_8p': dict(POOL_COUNTS_8P),
         'ranked_rules': ranked_rules_summary(),

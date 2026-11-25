@@ -12,12 +12,15 @@ from autochess_ai import generate_ranked_bots, run_commander_prep
 from autochess_catalog import (
     AUGMENTS,
     CHAR_DATA_BY_SERIAL,
-    LEVEL_TABLE,
     POOL_COUNTS,
     POOL_COUNTS_8P,
     PVE_WAVES,
     UNIT_CATALOG,
     apply_autochess_modifiers,
+    get_catalog_units,
+    get_level_table,
+    get_unit_cost,
+    normalize_ruleset,
     apply_opening_shields,
     compute_active_synergies,
 )
@@ -93,9 +96,11 @@ class AutoChessMatch:
         fill_bots=True,
         prep_duration=30,
         ranked_tier='bronze',
+        ruleset='standard',
     ):
         self.id = match_id or f'ac_{uuid.uuid4().hex[:10]}'
         self.mode = mode if mode in ('lobby4', 'pve12', 'pvp_room', 'ranked') else 'lobby4'
+        self.ruleset = normalize_ruleset(ruleset) if self.mode in ('lobby4', 'ranked') else 'standard'
         self.ranked_tier = ranked_tier if ranked_tier in RANK_TIER_BY_ID else 'bronze'
         self.arena_preset = arena_preset if arena_preset in ARENA_PRESETS else 'autochess_standard'
         self.seed = int(seed if seed is not None else random.randint(1, 10**9))
@@ -110,8 +115,8 @@ class AutoChessMatch:
         self.uid_seq = 1
         self.pool_counts = dict(POOL_COUNTS_8P if self.mode == 'ranked' else POOL_COUNTS)
         self.pool = {
-            serial: self.pool_counts[meta['cost']]
-            for serial, meta in UNIT_CATALOG.items()
+            serial: self.pool_counts[get_unit_cost(serial, self.ruleset)]
+            for serial in UNIT_CATALOG
         }
         self.ranked_settlement = None
         self.logs = []
@@ -301,7 +306,7 @@ class AutoChessMatch:
         return uid
 
     def _deal_starter_units(self):
-        one_costs = [s for s, m in UNIT_CATALOG.items() if m['cost'] == 1]
+        one_costs = [s for s in UNIT_CATALOG if get_unit_cost(s, self.ruleset) == 1]
         for cid, cmd in self.commanders.items():
             starter = self._rng.choice(one_costs)
             if self.pool.get(starter, 0) > 0:
@@ -327,7 +332,7 @@ class AutoChessMatch:
 
     def max_pop(self, cid):
         cmd = self.commanders[cid]
-        return LEVEL_TABLE[cmd['level']]['max_pop'] + int(cmd.get('pop_bonus', 0) or 0)
+        return get_level_table(self.ruleset)[cmd['level']]['max_pop'] + int(cmd.get('pop_bonus', 0) or 0)
 
     def board_units(self, cid):
         return [u for u in self.commanders[cid]['units'] if u['location'] == 'board']
@@ -368,7 +373,7 @@ class AutoChessMatch:
         return None
 
     @staticmethod
-    def _apply_reroll_odds_boost(odds, lvl):
+    def _apply_reroll_odds_boost(odds, lvl, ruleset='standard'):
         boosted = {int(k): int(v) for k, v in odds.items()}
         min_one_cost = {4: 15, 5: 8, 6: 4}.get(lvl, 2)
         take1 = min(8, max(0, boosted.get(1, 0) - min_one_cost))
@@ -382,6 +387,8 @@ class AutoChessMatch:
             if gained <= 0:
                 break
             add = min(gained, delta)
+            if ruleset == 'half_hs' and cost_tier == 6:
+                cost_tier = 4
             boosted[cost_tier] = boosted.get(cost_tier, 0) + add
             gained -= add
         return boosted
@@ -391,16 +398,16 @@ class AutoChessMatch:
         if cmd.get('eliminated'):
             return False
         lvl = cmd['level']
-        odds = dict(LEVEL_TABLE[lvl]['odds'])
+        odds = dict(get_level_table(self.ruleset)[lvl]['odds'])
         if any(a == 'aug_reroll' for a in cmd.get('augments', [])):
-            odds = self._apply_reroll_odds_boost(odds, lvl)
+            odds = self._apply_reroll_odds_boost(odds, lvl, self.ruleset)
         temp_pool = dict(self.pool)
         slots = []
         for _ in range(5):
             # Sample cost tier filtered by costs that still have available copies
             avail_costs = [
                 cost for cost, w in odds.items()
-                if w > 0 and any(temp_pool.get(s, 0) > 0 for s, m in UNIT_CATALOG.items() if m['cost'] == cost)
+                if w > 0 and any(temp_pool.get(s, 0) > 0 for s in UNIT_CATALOG if get_unit_cost(s, self.ruleset) == cost)
             ]
             if not avail_costs:
                 avail_all = [s for s, cnt in temp_pool.items() if cnt > 0]
@@ -412,8 +419,8 @@ class AutoChessMatch:
                 weights = [odds[c] for c in avail_costs]
                 picked_cost = self._rng.choices(avail_costs, weights=weights, k=1)[0]
                 pool_cands = []
-                for s, m in UNIT_CATALOG.items():
-                    if m['cost'] == picked_cost and temp_pool.get(s, 0) > 0:
+                for s in UNIT_CATALOG:
+                    if get_unit_cost(s, self.ruleset) == picked_cost and temp_pool.get(s, 0) > 0:
                         pool_cands.extend([s] * temp_pool[s])
                 picked = self._rng.choice(pool_cands)
             temp_pool[picked] -= 1
@@ -483,7 +490,7 @@ class AutoChessMatch:
         if not slot or slot.get('bought'):
             return False, '该栏位已售空'
         serial = slot['serial']
-        cost = UNIT_CATALOG[serial]['cost']
+        cost = get_unit_cost(serial, self.ruleset)
         if cmd['gold'] < cost:
             return False, '金币不足'
         if self.pool.get(serial, 0) <= 0:
@@ -527,7 +534,7 @@ class AutoChessMatch:
         if not unit:
             return False, '未找到棋子'
         serial = unit['serial']
-        cost = UNIT_CATALOG[serial]['cost']
+        cost = get_unit_cost(serial, self.ruleset)
         star = unit['star']
         refund = cost if star == 1 else max(cost, int(round(cost * (3 ** (star - 1)) * 0.7)))
         copies = 3 ** (star - 1)
@@ -561,7 +568,7 @@ class AutoChessMatch:
         if self.phase != 'prep':
             return False
         cmd = self.commanders[cid]
-        if cmd['level'] >= max(LEVEL_TABLE):
+        if cmd['level'] >= max(get_level_table(self.ruleset)):
             return False
         if cmd['gold'] < 4:
             return False
@@ -572,13 +579,13 @@ class AutoChessMatch:
     def _grant_xp(self, cid, amount):
         cmd = self.commanders[cid]
         cmd['xp'] += int(amount)
-        while cmd['level'] < max(LEVEL_TABLE):
-            need = LEVEL_TABLE[cmd['level']]['xp_to_next']
+        while cmd['level'] < max(get_level_table(self.ruleset)):
+            need = get_level_table(self.ruleset)[cmd['level']]['xp_to_next']
             if need <= 0 or cmd['xp'] < need:
                 break
             cmd['xp'] -= need
             cmd['level'] += 1
-        if cmd['level'] >= max(LEVEL_TABLE):
+        if cmd['level'] >= max(get_level_table(self.ruleset)):
             cmd['xp'] = 0
 
     def deploy_unit(self, cid, unit_id, coord=None):
@@ -697,7 +704,7 @@ class AutoChessMatch:
         if chosen.get('pop_bonus'):
             cmd['pop_bonus'] += int(chosen['pop_bonus'])
         if chosen.get('gift_cost'):
-            two_costs = [s for s, m in UNIT_CATALOG.items() if m['cost'] == chosen['gift_cost'] and self.pool.get(s, 0) > 0]
+            two_costs = [s for s in UNIT_CATALOG if get_unit_cost(s, self.ruleset) == chosen['gift_cost'] and self.pool.get(s, 0) > 0]
             if two_costs:
                 owned_serials = {u['serial'] for u in cmd['units']}
                 pair_cands = [s for s in two_costs if s in owned_serials]
@@ -793,8 +800,8 @@ class AutoChessMatch:
 
         y_syn = compute_active_synergies(y_configs)
         x_syn = compute_active_synergies(x_configs)
-        y_uids, y_shields = apply_autochess_modifiers(eng, 'Y', y_configs, y_syn, left_cfg.get('augments', []))
-        x_uids, x_shields = apply_autochess_modifiers(eng, 'X', x_configs, x_syn, right_cfg.get('augments', []))
+        y_uids, y_shields = apply_autochess_modifiers(eng, 'Y', y_configs, y_syn, left_cfg.get('augments', []), ruleset=self.ruleset)
+        x_uids, x_shields = apply_autochess_modifiers(eng, 'X', x_configs, x_syn, right_cfg.get('augments', []), ruleset=self.ruleset)
 
         eng.setup_battle(
             y_uids, x_uids,
@@ -1425,7 +1432,7 @@ class AutoChessMatch:
         default_pc = POOL_COUNTS_8P if self.mode == 'ranked' else POOL_COUNTS
         for u in cmd['units']:
             s = u['serial']
-            cost = UNIT_CATALOG[s]['cost']
+            cost = get_unit_cost(s, self.ruleset)
             cap = self.pool_counts.get(cost, default_pc.get(cost, 9))
             self.pool[s] = min(cap, self.pool.get(s, 0) + (3 ** (u['star'] - 1)))
         cmd['units'] = []
@@ -1726,12 +1733,13 @@ class AutoChessMatch:
         p1_synergies = compute_active_synergies(p1_board)
         hints = self._upgrade_hints_for(vcid)
         shop_view = []
+        catalog_units = get_catalog_units(self.ruleset)
         for idx, slot in enumerate(p1['shop']):
             if slot is None:
                 shop_view.append(None)
                 continue
             s = slot['serial']
-            meta = UNIT_CATALOG[s]
+            meta = catalog_units[s]
             shop_view.append({
                 'slot_index': idx,
                 'serial': s,
@@ -1768,7 +1776,7 @@ class AutoChessMatch:
                 'gold': c['gold'],
                 'level': c['level'],
                 'xp': c['xp'],
-                'xp_to_next': LEVEL_TABLE[c['level']]['xp_to_next'],
+                'xp_to_next': get_level_table(self.ruleset)[c['level']]['xp_to_next'],
                 'max_pop': self.max_pop(c['id']),
                 'board_count': len(self.board_units(c['id'])),
                 'streak': c['streak'],
@@ -1831,6 +1839,7 @@ class AutoChessMatch:
         return {
             'id': self.id,
             'mode': self.mode,
+            'ruleset': self.ruleset,
             'ranked_tier': getattr(self, 'ranked_tier', None) if self.mode == 'ranked' else None,
             'ranked_settlement': getattr(self, 'ranked_settlement', None),
             'arena_preset': self.arena_preset,
@@ -1858,16 +1867,16 @@ class AutoChessMatch:
                 'gold': p1['gold'],
                 'level': p1['level'],
                 'xp': p1['xp'],
-                'xp_to_next': LEVEL_TABLE[p1['level']]['xp_to_next'],
+                'xp_to_next': get_level_table(self.ruleset)[p1['level']]['xp_to_next'],
                 'max_pop': self.max_pop(vcid),
                 'max_interest': p1['max_interest'],
                 'free_rerolls': p1['free_rerolls'],
                 'streak': p1['streak'],
                 'shop_locked': p1['shop_locked'],
                 'shop': shop_view,
-                'board': [dict(u, **UNIT_CATALOG[u['serial']]) for u in p1_board],
+                'board': [dict(u, **catalog_units[u['serial']]) for u in p1_board],
                 'bench_capacity': self.bench_capacity(vcid),
-                'bench': [dict(u, **UNIT_CATALOG[u['serial']]) for u in self.bench_units(vcid)],
+                'bench': [dict(u, **catalog_units[u['serial']]) for u in self.bench_units(vcid)],
                 'synergies': list(p1_synergies.values()),
                 'augments': [next((a for a in AUGMENTS if a['id'] == aid), {'id': aid, 'name': aid}) for aid in p1['augments']],
                 'pending_augments': p1['pending_augments'],
@@ -1885,6 +1894,7 @@ class AutoChessMatch:
         return {
             'id': self.id,
             'mode': self.mode,
+            'ruleset': self.ruleset,
             'ranked_tier': getattr(self, 'ranked_tier', 'bronze'),
             'ranked_settlement': copy.deepcopy(getattr(self, 'ranked_settlement', None)),
             'pool_counts': {str(k): int(v) for k, v in getattr(self, 'pool_counts', POOL_COUNTS).items()},
@@ -1910,6 +1920,7 @@ class AutoChessMatch:
         obj = cls.__new__(cls)
         obj.id = data['id']
         obj.mode = data.get('mode', 'lobby4')
+        obj.ruleset = normalize_ruleset(data.get('ruleset')) if obj.mode in ('lobby4', 'ranked') else 'standard'
         obj.ranked_tier = data.get('ranked_tier', 'bronze')
         obj.ranked_settlement = copy.deepcopy(data.get('ranked_settlement'))
         raw_pc = data.get('pool_counts')
@@ -1931,7 +1942,7 @@ class AutoChessMatch:
         obj.uid_seq = int(data.get('uid_seq', 1))
         obj.pool = dict(data.get('pool', {}))
         for serial in ('Y18', 'Y19'):
-            obj.pool.setdefault(serial, obj.pool_counts[UNIT_CATALOG[serial]['cost']])
+            obj.pool.setdefault(serial, obj.pool_counts[get_unit_cost(serial, obj.ruleset)])
         obj.commanders = copy.deepcopy(data.get('commanders', {}))
         obj.player_id = 'P1'
         obj.logs = list(data.get('logs', []))

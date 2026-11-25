@@ -7,7 +7,7 @@ import { AutoChessAuthModal } from './AutoChessAuthModal';
 import { AutoChessLeaderboardModal } from './AutoChessLeaderboardModal';
 import { AutoChessPage } from './AutoChessPage';
 import { AutoChessTokenModal } from './AutoChessTokenModal';
-import type { AutoChessAccount, AutoChessCatalog } from './types';
+import type { AutoChessAccount, AutoChessCatalog, AutoChessRuleset } from './types';
 import { useMobileLandscape } from './useMobileLandscape';
 import './autochess.css';
 
@@ -30,6 +30,14 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
   });
   const [tokenModal, setTokenModal] = useState<{ open: boolean; serial?: string }>({ open: false });
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [ruleset, setRuleset] = useState<AutoChessRuleset>('standard');
+  const [leaderboardRuleset, setLeaderboardRuleset] = useState<AutoChessRuleset>('standard');
+  const rankedProfile = ruleset === 'half_hs' ? account?.ranked_half_hs : account?.ranked;
+
+  const openLeaderboard = (targetRuleset = ruleset) => {
+    setLeaderboardRuleset(targetRuleset);
+    setLeaderboardOpen(true);
+  };
 
   useEffect(() => {
     document.documentElement.dataset.reduced = String(reduced);
@@ -89,15 +97,15 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
             <span>{connected ? '引擎已连接' : '连接恢复中'}</span>
           </span>
 
-          {account?.ranked && (
+          {rankedProfile && (
             <button
               type="button"
-              className={`button subtle compact-button ac-topbar-rank-pill ac-tier-${account.ranked.rank_info.tier_id}`}
-              onClick={() => setLeaderboardOpen(true)}
-              title={`排位积分 ${account.ranked.total_lp} · 保段卡 ${account.ranked.shield_cards} · 局外金币 ${account.ranked.coins}`}
+              className={`button subtle compact-button ac-topbar-rank-pill ac-tier-${rankedProfile.rank_info.tier_id}`}
+              onClick={() => openLeaderboard()}
+              title={`排位积分 ${rankedProfile.total_lp} · 保段卡 ${rankedProfile.shield_cards} · 局外金币 ${rankedProfile.coins}`}
             >
-              <span>{account.ranked.rank_info.full_label}</span>
-              <span>· {account.ranked.coins}金币</span>
+              <span>{rankedProfile.rank_info.full_label}</span>
+              <span>· {rankedProfile.coins}金币</span>
             </button>
           )}
 
@@ -114,7 +122,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
           <button
             type="button"
             className="button subtle compact-button ac-topbar-lb-btn"
-            onClick={() => setLeaderboardOpen(true)}
+            onClick={() => openLeaderboard()}
             title="查看全服排位段位与积分排行榜"
           >
             <Trophy size={15} />
@@ -173,6 +181,8 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
         )}
         <AutoChessPage
           isMobileLandscape={isMobileLandscape}
+          ruleset={ruleset}
+          onRulesetChange={setRuleset}
           playerName={displayTitle}
           account={account}
           guestTokens={guestTokens}
@@ -180,7 +190,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
           onCatalogLoaded={setCatalog}
           onOpenAuth={(mode = 'login', prompt) => setAuthModal({ open: true, mode, prompt })}
           onOpenTokenEditor={serial => setTokenModal({ open: true, serial })}
-          onOpenLeaderboard={() => setLeaderboardOpen(true)}
+          onOpenLeaderboard={openLeaderboard}
           onPlayerNameChange={updatePlayerName}
           wikiOpenNonce={wikiOpenNonce}
           storyOpenNonce={storyOpenNonce}
@@ -189,7 +199,9 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
       </main>
 
       <AutoChessLeaderboardModal
+        key={leaderboardRuleset}
         open={leaderboardOpen}
+        ruleset={leaderboardRuleset}
         account={account}
         onClose={() => setLeaderboardOpen(false)}
         onRequestLogin={() =>
@@ -203,6 +215,7 @@ export function AutoChessApp({ onSwitchToClassic }: { onSwitchToClassic: () => v
 
       <AutoChessAuthModal
         open={authModal.open}
+        ruleset={ruleset}
         account={account}
         initialMode={authModal.mode}
         promptMessage={authModal.prompt}

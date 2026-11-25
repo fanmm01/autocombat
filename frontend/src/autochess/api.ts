@@ -7,6 +7,7 @@ import type {
   AutoChessMatchState,
   AutoChessMatchSummary,
   AutoChessRankedSettlement,
+  AutoChessRuleset,
   AutoChessRoomState,
   AutoChessRoomSummary,
   AutoChessStoryDetail,
@@ -25,8 +26,9 @@ async function withSession<T>(fn: () => Promise<T>, playerName = '指挥官'): P
   }
 }
 
-export function fetchAutoChessCatalog(): Promise<AutoChessCatalog> {
-  return api<AutoChessCatalog>('/autochess/catalog');
+export function fetchAutoChessCatalog(ruleset: AutoChessRuleset = 'standard'): Promise<AutoChessCatalog> {
+  const path = ruleset === 'half_hs' ? '/autochess/catalog?ruleset=half_hs' : '/autochess/catalog';
+  return api<AutoChessCatalog>(path);
 }
 
 const storyCache = new Map<string, AutoChessStoryDetail>();
@@ -60,6 +62,7 @@ export async function listAutoChessMatches(playerName?: string): Promise<AutoChe
 
 export async function createAutoChessMatch(params: {
   mode: 'lobby4' | 'pve12';
+  ruleset?: AutoChessRuleset;
   arena_preset: string;
   player_name: string;
 }): Promise<AutoChessMatchState> {
@@ -114,6 +117,7 @@ export async function sendAutoChessAction(
 // ── Ranked Mode & Leaderboard API ─────────────────────────────────────────
 
 export function createRankedMatch(params: {
+  ruleset?: AutoChessRuleset;
   arena_preset: string;
 }): Promise<{ match: AutoChessMatchState; resumed: boolean }> {
   return api<{ match: AutoChessMatchState; resumed: boolean }>('/autochess/ranked/matches', params);
@@ -122,8 +126,9 @@ export function createRankedMatch(params: {
 export function fetchRankedLeaderboard(
   tier = 'all',
   limit = 100,
+  ruleset: AutoChessRuleset = 'standard',
 ): Promise<AutoChessLeaderboardResponse> {
-  const qs = new URLSearchParams({ tier, limit: String(limit) });
+  const qs = new URLSearchParams({ tier, limit: String(limit), ruleset });
   return api<AutoChessLeaderboardResponse>(`/autochess/ranked/leaderboard?${qs.toString()}`);
 }
 

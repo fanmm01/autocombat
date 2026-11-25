@@ -1,9 +1,11 @@
 import { Stage } from './engine/ui';
 import {
+  fetchAutoChessCatalog,
   joinRoom,
   type AutoChessAccount,
   type AutoChessCatalog,
   type AutoChessMatchState,
+  type AutoChessRuleset,
   type AutoChessRoomState,
 } from './net/autochessApi';
 import { ensureCloudInitialized } from './net/transport';
@@ -16,7 +18,7 @@ type ActiveSceneName = 'lobby' | 'rooms' | 'match';
 class MiniGameApp {
   readonly stage: Stage;
   private account: AutoChessAccount | null = null;
-  private catalog: AutoChessCatalog | null = null;
+  private readonly catalogs = new Map<AutoChessRuleset, AutoChessCatalog>();
   private activeName: ActiveSceneName = 'lobby';
   private shareRoomCode: string | null = null;
 
@@ -34,9 +36,9 @@ class MiniGameApp {
       setAccount: acc => {
         this.account = acc;
       },
-      getCatalog: () => this.catalog,
+      getCatalog: (ruleset = 'standard') => this.catalogs.get(ruleset) ?? null,
       setCatalog: cat => {
-        this.catalog = cat;
+        this.catalogs.set(cat.ruleset ?? 'standard', cat);
       },
       openMatch: match => this.switchToMatch(match),
       openRooms: () => this.switchToRooms(),
@@ -44,7 +46,7 @@ class MiniGameApp {
 
     this.rooms = new RoomScene({
       stage: this.stage,
-      getCatalog: () => this.catalog,
+      getCatalog: () => this.catalogs.get('standard') ?? null,
       backToLobby: () => this.switchToLobby(),
       enterRoomMatch: room => {
         if (room.match) {
@@ -62,7 +64,7 @@ class MiniGameApp {
       setAccount: acc => {
         this.account = acc;
       },
-      getCatalog: () => this.catalog,
+      getCatalog: (ruleset = 'standard') => this.catalogs.get(ruleset) ?? null,
       backToLobby: () => this.switchToLobby(),
     });
 
@@ -94,6 +96,14 @@ class MiniGameApp {
     this.leaveCurrent();
     this.activeName = 'match';
     this.match.onEnter(match, room);
+    const ruleset = match.ruleset ?? 'standard';
+    if (!this.catalogs.has(ruleset)) {
+      void fetchAutoChessCatalog(ruleset).then(catalog => {
+        this.catalogs.set(ruleset, catalog);
+      }).catch(err => {
+        if (this.activeName === 'match') this.stage.showToast(err instanceof Error ? err.message : String(err));
+      });
+    }
   }
 
   private leaveCurrent(): void {

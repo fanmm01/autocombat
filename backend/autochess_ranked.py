@@ -306,14 +306,16 @@ def settle_ranked_match(profile, placement, match_id=None, rng=None):
     return prof, settlement
 
 
-def build_leaderboard(account_records, viewer_account_id=None, tier_filter=None, limit=100):
+def build_leaderboard(account_records, viewer_account_id=None, tier_filter=None, limit=100, ranked_field='ranked'):
     """Rank all registered accounts by total_lp and tie-breakers, supporting tier filtering."""
     tier_distribution = {t['id']: 0 for t in RANK_TIERS}
     normalized_rows = []
     for rec in account_records or ():
         if not isinstance(rec, dict) or not rec.get('id'):
             continue
-        prof = normalize_ranked_profile(rec.get('ranked'))
+        prof = normalize_ranked_profile(rec.get(ranked_field))
+        if ranked_field != 'ranked':
+            prof['coins'] = normalize_ranked_profile(rec.get('ranked'))['coins']
         rank_info = describe_rank(prof['total_lp'], prof['silver_floor_unlocked'])
         tier_distribution[rank_info['tier_id']] += 1
         games = prof['games']

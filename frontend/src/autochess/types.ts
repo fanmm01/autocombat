@@ -1,3 +1,5 @@
+export type AutoChessRuleset = 'standard' | 'half_hs';
+
 export interface AutoChessUnitMeta {
   serial: string;
   name: string;
@@ -205,6 +207,7 @@ export interface AutoChessRoundReport {
 }
 
 export interface AutoChessMatchState {
+  ruleset?: AutoChessRuleset;
   id: string;
   mode: 'lobby4' | 'pve12' | 'pvp_room' | 'ranked';
   ranked_tier?: string | null;
@@ -266,6 +269,7 @@ export interface AutoChessMatchState {
 }
 
 export interface AutoChessMatchSummary {
+  ruleset?: AutoChessRuleset;
   id: string;
   mode: 'lobby4' | 'pve12' | 'ranked';
   ranked_tier?: string | null;
@@ -457,6 +461,7 @@ export function resolveUnitWiki(catalog: AutoChessCatalog | null, serial: string
 }
 
 export interface AutoChessCatalog {
+  ruleset?: AutoChessRuleset;
   units: AutoChessUnitMeta[];
   available_emblems?: AutoChessEmblemOption[];
   wiki_units?: Record<string, AutoChessUnitWiki>;
@@ -585,6 +590,7 @@ export interface AutoChessLeaderboardEntry {
 }
 
 export interface AutoChessLeaderboardResponse {
+  ruleset?: AutoChessRuleset;
   entries: AutoChessLeaderboardEntry[];
   total_players: number;
   filtered_total: number;
@@ -620,6 +626,7 @@ export interface AutoChessAccount {
   token_overrides: Record<string, string>;
   stats: AutoChessAccountStats;
   ranked?: AutoChessRankedProfile;
+  ranked_half_hs?: AutoChessRankedProfile;
   created_at: number;
   wx_bound?: boolean;
 }

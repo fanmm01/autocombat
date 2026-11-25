@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Award, Coins, Crown, Flame, RefreshCw, Shield, Trophy, X } from 'lucide-react';
 import { ApiError } from '../types';
 import { fetchRankedLeaderboard } from './api';
-import type { AutoChessAccount, AutoChessLeaderboardResponse } from './types';
+import type { AutoChessAccount, AutoChessLeaderboardResponse, AutoChessRuleset } from './types';
 
 const TIER_FILTERS = [
   { id: 'all', name: '全服总榜' },
@@ -16,12 +16,13 @@ const TIER_FILTERS = [
 
 interface Props {
   open: boolean;
+  ruleset?: AutoChessRuleset;
   account: AutoChessAccount | null;
   onClose: () => void;
   onRequestLogin?: () => void;
 }
 
-export function AutoChessLeaderboardModal({ open, account, onClose, onRequestLogin }: Props) {
+export function AutoChessLeaderboardModal({ open, account, onClose, onRequestLogin, ruleset = 'standard' }: Props) {
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [data, setData] = useState<AutoChessLeaderboardResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,7 +32,7 @@ export function AutoChessLeaderboardModal({ open, account, onClose, onRequestLog
     setLoading(true);
     setError('');
     try {
-      const res = await fetchRankedLeaderboard(tier, 100);
+      const res = await fetchRankedLeaderboard(tier, 100, ruleset);
       setData(res);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -43,7 +44,7 @@ export function AutoChessLeaderboardModal({ open, account, onClose, onRequestLog
   useEffect(() => {
     if (!open) return;
     void loadBoard(tierFilter);
-  }, [open, tierFilter, account?.id]);
+  }, [open, tierFilter, account?.id, ruleset]);
 
   useEffect(() => {
     if (!open) return;
@@ -71,7 +72,7 @@ export function AutoChessLeaderboardModal({ open, account, onClose, onRequestLog
           <div>
             <h3>
               <Trophy size={18} style={{ verticalAlign: '-3px', marginRight: 6, color: '#d97706' }} />
-              全服排位段位排行榜
+              {ruleset === 'half_hs' ? '半变身' : '标准'}排位排行榜
             </h3>
             <p>
               统计系统内全部已注册账号的实时排位积分、段位与胜率（共 {data?.total_players ?? '…'} 名棋手入榜）

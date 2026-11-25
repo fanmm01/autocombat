@@ -3,7 +3,7 @@
 import itertools
 import random
 
-from autochess_catalog import AUGMENTS, LEVEL_TABLE, UNIT_CATALOG, compute_active_synergies
+from autochess_catalog import AUGMENTS, UNIT_CATALOG, compute_active_synergies, get_level_table, get_unit_cost
 
 # 12 distinct strategy archetypes present in every tier (> 10 strategies per tier).
 RANKED_AI_ARCHETYPES = (
@@ -463,13 +463,13 @@ def pick_augment_for_commander(commander, choices, rng=None):
     return max(choices, key=_score)['id']
 
 
-def _evaluate_shop_offer(commander, serial, occupied_traits):
+def _evaluate_shop_offer(commander, serial, occupied_traits, ruleset='standard'):
     meta = UNIT_CATALOG.get(serial)
     if not meta:
         return -999.0
     units = commander.get('units', [])
     owned_same = [u for u in units if u['serial'] == serial]
-    score = meta['cost'] * 8.0 + len(owned_same) * 26.0
+    score = get_unit_cost(serial, ruleset) * 8.0 + len(owned_same) * 26.0
     if len(owned_same) == 2:
         score += 45.0  # Instant 2-star!
     for tr in meta['traits']:
@@ -495,7 +495,7 @@ def _evaluate_ranked_shop_offer(match, cid, commander, serial, occupied_traits, 
     pair_scale = float(profile.get('pair_bonus_scale', 1.0))
     syn_look = float(profile.get('synergy_lookahead', 0.4))
 
-    score = meta['cost'] * 7.5 + len(owned_same) * 25.0 * pair_scale
+    score = get_unit_cost(serial, getattr(match, 'ruleset', 'standard')) * 7.5 + len(owned_same) * 25.0 * pair_scale
     if len(owned_same) == 2:
         score += 46.0 * pair_scale
     if any(u['star'] == 2 for u in owned_same):
@@ -535,6 +535,8 @@ def _evaluate_ranked_shop_offer(match, cid, commander, serial, occupied_traits, 
 
 def _legacy_commander_prep(match, cid):
     """Original 4-player Auto-Chess AI preparation logic (benchmarked around Platinum-Diamond)."""
+    ruleset = getattr(match, 'ruleset', 'standard')
+    levels = get_level_table(ruleset)
     cmd = match.commanders[cid]
     if cmd.get('pending_augments'):
         chosen = pick_augment_for_commander(cmd, cmd['pending_augments'])
@@ -546,10 +548,10 @@ def _legacy_commander_prep(match, cid):
 
     for _ in range(4):
         lvl = cmd['level']
-        if lvl >= max(LEVEL_TABLE):
+        if lvl >= max(levels):
             break
         gold = cmd['gold']
-        need_xp = max(0, LEVEL_TABLE[lvl]['xp_to_next'] - cmd['xp'])
+        need_xp = max(0, levels[lvl]['xp_to_next'] - cmd['xp'])
         if personality == 'fast_lv' and gold >= 4 + (0 if lvl < 3 else 4):
             if not match.buy_xp(cid):
                 break
@@ -574,10 +576,10 @@ def _legacy_commander_prep(match, cid):
             if not slot or slot.get('bought'):
                 continue
             serial = slot['serial']
-            cost = UNIT_CATALOG[serial]['cost']
+            cost = get_unit_cost(serial, ruleset)
             if cmd['gold'] < cost:
                 continue
-            val = _evaluate_shop_offer(cmd, serial, board_traits)
+            val = _evaluate_shop_offer(cmd, serial, board_traits, ruleset)
             same_cnt = sum(1 for u in units if u['serial'] == serial)
             if (cmd['gold'] - cost) < interest_floor and same_cnt < 2 and match.round_num > 3:
                 if len([u for u in units if u['location'] == 'board']) >= match.max_pop(cid):
@@ -610,7 +612,7 @@ def _legacy_commander_prep(match, cid):
     def _unit_power(u):
         meta = UNIT_CATALOG.get(u['serial'], {})
         role_w = 4 if meta.get('role') in ('tank', 'bruiser') else (2 if meta.get('role') == 'support' else 3)
-        return (u['star'] * 100 + meta.get('cost', 1) * 12 + role_w, u['id'])
+        return (u['star'] * 100 + get_unit_cost(u['serial'], ruleset) * 12 + role_w, u['id'])
 
     ranked = sorted(all_units, key=_unit_power, reverse=True)
     keep_on_board = {u['id'] for u in ranked[:cap]}
@@ -628,13 +630,13 @@ def _legacy_commander_prep(match, cid):
         and sum(1 for x in cmd['units'] if x['serial'] == u['serial']) == 1
     ]
     if len([u for u in cmd['units'] if u['location'] == 'bench']) >= 5 and bench_surplus:
-        weakest = min(bench_surplus, key=lambda u: UNIT_CATALOG.get(u['serial'], {}).get('cost', 1))
+        weakest = min(bench_surplus, key=lambda u: get_unit_cost(u['serial'], ruleset))
         match.sell_unit(cid, weakest['id'])
 
     match.auto_arrange(cid)
 
 
-def _select_best_board_ids(all_units, cap, profile):
+def _select_best_board_ids(all_units, cap, profile, ruleset='standard'):
     """Select optimal board lineup balancing star/cost power, active synergies, and frontline."""
     if len(all_units) <= cap:
         return {u['id'] for u in all_units}
@@ -642,7 +644,7 @@ def _select_best_board_ids(all_units, cap, profile):
     def _unit_power(u):
         meta = UNIT_CATALOG.get(u['serial'], {})
         role_w = 5 if meta.get('role') in ('tank', 'bruiser') else (2 if meta.get('role') == 'support' else 3)
-        return u['star'] * 100 + meta.get('cost', 1) * 12 + role_w
+        return u['star'] * 100 + get_unit_cost(u['serial'], ruleset) * 12 + role_w
 
     ranked = sorted(all_units, key=lambda u: (_unit_power(u), u['id']), reverse=True)
     syn_weight = float(profile.get('board_synergy_opt', 0.0) or 0.0)
@@ -681,6 +683,8 @@ def _select_best_board_ids(all_units, cap, profile):
 
 def _ranked_commander_prep(match, cid, profile):
     """Tier-scaled Auto-Chess AI preparation using the assigned ranked archetype profile."""
+    ruleset = getattr(match, 'ruleset', 'standard')
+    levels = get_level_table(ruleset)
     cmd = match.commanders[cid]
     roller = getattr(match, '_rng', random)
 
@@ -697,10 +701,10 @@ def _ranked_commander_prep(match, cid, profile):
     # 1. Leveling with tier discipline and all-in survival override
     for _ in range(4):
         lvl = cmd['level']
-        if lvl >= max(LEVEL_TABLE):
+        if lvl >= max(levels):
             break
         gold = cmd['gold']
-        need_xp = max(0, LEVEL_TABLE[lvl]['xp_to_next'] - cmd['xp'])
+        need_xp = max(0, levels[lvl]['xp_to_next'] - cmd['xp'])
         if roller.random() > min(1.0, lvl_disc + (0.25 if all_in else 0.0)):
             break
         if all_in and gold >= 4 and need_xp <= 8:
@@ -732,7 +736,7 @@ def _ranked_commander_prep(match, cid, profile):
             if not slot or slot.get('bought'):
                 continue
             serial = slot['serial']
-            cost = UNIT_CATALOG[serial]['cost']
+            cost = get_unit_cost(serial, ruleset)
             if cmd['gold'] < cost:
                 continue
             val = _evaluate_ranked_shop_offer(match, cid, cmd, serial, board_traits, profile, roller)
@@ -771,10 +775,11 @@ def _ranked_commander_prep(match, cid, profile):
             if not slot or slot.get('bought'):
                 continue
             s = slot['serial']
-            cost = UNIT_CATALOG[s]['cost']
+            cost = get_unit_cost(s, ruleset)
             if cmd['gold'] < cost:
                 same_1 = sum(1 for u in cmd['units'] if u['serial'] == s and u['star'] == 1)
-                if same_1 >= 2 or (same_1 >= 1 and cost >= 3) or cost >= 5:
+                rare_cost = 4 if ruleset == 'half_hs' else 5
+                if same_1 >= 2 or (same_1 >= 1 and cost >= 3) or cost >= rare_cost:
                     wants_lock = True
                     break
         if wants_lock and roller.random() < lock_prob:
@@ -783,7 +788,7 @@ def _ranked_commander_prep(match, cid, profile):
     # 4. Optimal deployment & role stances
     cap = match.max_pop(cid)
     all_units = list(cmd['units'])
-    keep_on_board = _select_best_board_ids(all_units, cap, profile)
+    keep_on_board = _select_best_board_ids(all_units, cap, profile, ruleset)
 
     for u in list(cmd['units']):
         if u['location'] == 'board' and u['id'] not in keep_on_board:
@@ -799,7 +804,7 @@ def _ranked_commander_prep(match, cid, profile):
         and sum(1 for x in cmd['units'] if x['serial'] == u['serial']) == 1
     ]
     if len([u for u in cmd['units'] if u['location'] == 'bench']) >= 5 and bench_surplus:
-        weakest = min(bench_surplus, key=lambda u: UNIT_CATALOG.get(u['serial'], {}).get('cost', 1))
+        weakest = min(bench_surplus, key=lambda u: get_unit_cost(u['serial'], ruleset))
         match.sell_unit(cid, weakest['id'])
 
     # Assign role-sensitive tactical stance for higher tiers

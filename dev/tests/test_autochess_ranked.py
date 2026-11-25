@@ -36,6 +36,60 @@ class AutoChessRankedTests(unittest.TestCase):
         self.created_accounts.append(acc['id'])
         return uname, acc
 
+    def test_half_hs_ranked_saves_and_settlement_are_independent(self):
+        api = '/api/ui/autochess'
+        client = self.app.test_client()
+        _, account = self._register(client, 'rk_half')
+        raw = self.store.get('autochess_account', account['id'])
+        raw.pop('ranked_half_hs')
+        raw['ranked'].update(total_lp=380, coins=25)
+        self.store.put('autochess_account', raw)
+
+        matches = {}
+        for ruleset in ('standard', 'half_hs'):
+            result = client.post(f'{api}/ranked/matches', json={'ruleset': ruleset, 'seed': 7})
+            self.assertEqual(result.status_code, 200)
+            body = result.get_json()
+            self.assertFalse(body['resumed'])
+            self.assertEqual(body['match']['ruleset'], ruleset)
+            matches[ruleset] = body['match']['id']
+            self.created_matches.append(matches[ruleset])
+            self.assertEqual(body['match']['ranked_tier'], 'silver' if ruleset == 'standard' else 'bronze')
+        self.assertNotEqual(matches['standard'], matches['half_hs'])
+
+        listing = client.get(f'{api}/matches').get_json()['matches']
+        self.assertEqual({row['ruleset']: row['id'] for row in listing}, matches)
+        for ruleset, mid in matches.items():
+            body = client.post(f'{api}/ranked/matches', json={'ruleset': ruleset}).get_json()
+            self.assertTrue(body['resumed'])
+            self.assertEqual(body['match']['id'], mid)
+
+        half_id = matches['half_hs']
+        result = client.post(f'{api}/matches/{half_id}/action', json={'action': 'surrender'})
+        self.assertEqual(result.status_code, 200)
+        body = result.get_json()
+        self.assertEqual(body['account']['ranked']['total_lp'], 380)
+        self.assertEqual(body['account']['ranked']['games'], 0)
+        self.assertEqual(body['account']['ranked_half_hs']['games'], 1)
+
+        auth = self.ac_ui.auth
+        _, duplicate = auth.record_ranked_result(account['id'], 1, match_id=half_id, ruleset='half_hs')
+        self.assertIsNone(duplicate)
+        updated, settlement = auth.record_ranked_result(account['id'], 1, match_id='second-half', ruleset='half_hs')
+        self.assertGreater(settlement['coins_earned'], 0)
+        self.assertEqual(updated['ranked']['coins'], 25 + settlement['coins_earned'])
+        self.assertEqual(updated['ranked']['coins'], updated['ranked_half_hs']['coins'])
+
+        for ruleset in matches:
+            data = client.get(f'{api}/ranked/leaderboard?ruleset={ruleset}').get_json()
+            self.assertEqual(data['ruleset'], ruleset)
+            field = 'ranked_half_hs' if ruleset == 'half_hs' else 'ranked'
+            self.assertEqual(data['my_entry']['total_lp'], updated[field]['total_lp'])
+            self.assertEqual(data['my_entry']['coins'], updated['ranked']['coins'])
+        half_catalog = client.get(f'{api}/catalog?ruleset=half_hs').get_json()
+        self.assertEqual(half_catalog['ruleset'], 'half_hs')
+        self.assertEqual(half_catalog['wiki_units']['Y16']['cost'], 4)
+
     def test_rank_divisions_lp_tables_silver_floor_shields_and_coins(self):
         # Tier and 100-LP division boundaries across all 6 tiers (Bronze 3, Silver 4, Gold 5, Plat 5, Diamond 5, King inf)
         expected = [

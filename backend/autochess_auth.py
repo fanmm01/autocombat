@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from autochess_catalog import UNIT_CATALOG
+from autochess_catalog import UNIT_CATALOG, normalize_ruleset
 from autochess_ranked import (
     build_leaderboard,
     default_ranked_profile,
@@ -212,6 +212,7 @@ class AutoChessAuthService:
                     'token_overrides': {},
                     'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
                     'ranked': default_ranked_profile(),
+                    'ranked_half_hs': default_ranked_profile(),
                 }
                 self.store.put(KIND_ACCOUNT, rec, updated_at=0.5)
                 return rec
@@ -235,6 +236,9 @@ class AutoChessAuthService:
         stats = rec.get('stats') or {}
         role = normalize_role(rec)
         perms = normalize_permissions(rec, role)
+        ranked = public_ranked_profile(rec.get('ranked'))
+        ranked_half_hs = public_ranked_profile(rec.get('ranked_half_hs'))
+        ranked_half_hs['coins'] = ranked['coins']
         return {
             'id': rec['id'],
             'username': rec.get('username', rec['id']),
@@ -252,7 +256,8 @@ class AutoChessAuthService:
                 'top2': int(stats.get('top2', 0) or 0),
                 'pve_clears': int(stats.get('pve_clears', 0) or 0),
             },
-            'ranked': public_ranked_profile(rec.get('ranked')),
+            'ranked': ranked,
+            'ranked_half_hs': ranked_half_hs,
             'wx_bound': bool(rec.get('wx_openid')),
         }
 
@@ -313,6 +318,7 @@ class AutoChessAuthService:
                 'token_overrides': {},
                 'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
                 'ranked': default_ranked_profile(),
+                'ranked_half_hs': default_ranked_profile(),
             }
             self.store.put(KIND_ACCOUNT, rec)
             tok = self._issue_token(acc_id)
@@ -374,6 +380,7 @@ class AutoChessAuthService:
                 'token_overrides': {},
                 'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
                 'ranked': default_ranked_profile(),
+                'ranked_half_hs': default_ranked_profile(),
             }
             self.store.put(KIND_ACCOUNT, rec)
             self.store.put(
@@ -418,6 +425,7 @@ class AutoChessAuthService:
                 if old_rec:
                     old_games = int((old_rec.get('stats') or {}).get('games', 0) or 0)
                     old_ranked_games = int((old_rec.get('ranked') or {}).get('games', 0) or 0)
+                    old_ranked_games += int((old_rec.get('ranked_half_hs') or {}).get('games', 0) or 0)
                     if old_rec.get('wx_auto_created') and old_games == 0 and old_ranked_games == 0:
                         old_rec.pop('wx_openid', None)
                         self.store.put(KIND_ACCOUNT, old_rec)
@@ -524,7 +532,7 @@ class AutoChessAuthService:
             self.store.put(KIND_ACCOUNT, rec)
             return self.public_account(rec)
 
-    def record_ranked_result(self, account_id, placement, match_id=None, rng=None):
+    def record_ranked_result(self, account_id, placement, match_id=None, rng=None, ruleset='standard'):
         """Idempotently settle an 8-player ranked match into account LP, shield cards, coins, and stats."""
         if not account_id:
             return None, None
@@ -532,15 +540,22 @@ class AutoChessAuthService:
             rec = self.store.get(KIND_ACCOUNT, account_id)
             if not rec:
                 return None, None
-            raw_ranked = rec.get('ranked') or {}
+            ranked_field = 'ranked_half_hs' if normalize_ruleset(ruleset) == 'half_hs' else 'ranked'
+            raw_ranked = dict(rec.get(ranked_field) or {})
             settled_ids = raw_ranked.get('settled_match_ids') or []
             if match_id and str(match_id) in settled_ids:
                 return self.public_account(rec), None
 
+            if ranked_field == 'ranked_half_hs':
+                standard = dict(rec.get('ranked') or default_ranked_profile())
+                raw_ranked['coins'] = standard.get('coins', 0)
             updated_ranked, settlement = settle_ranked_match(
                 raw_ranked, placement, match_id=match_id, rng=rng
             )
-            rec['ranked'] = updated_ranked
+            rec[ranked_field] = updated_ranked
+            if ranked_field == 'ranked_half_hs':
+                standard['coins'] = updated_ranked['coins']
+                rec['ranked'] = standard
 
             st = dict(rec.get('stats') or {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0})
             st['games'] = int(st.get('games', 0) or 0) + 1
@@ -553,7 +568,7 @@ class AutoChessAuthService:
             self.store.put(KIND_ACCOUNT, rec)
             return self.public_account(rec), settlement
 
-    def get_ranked_leaderboard(self, viewer_account_id=None, tier_filter=None, limit=100):
+    def get_ranked_leaderboard(self, viewer_account_id=None, tier_filter=None, limit=100, ruleset='standard'):
         """Return server-wide ranked leaderboard across all registered Auto-Chess accounts."""
         accounts = self.store.list(KIND_ACCOUNT)
         return build_leaderboard(
@@ -561,6 +576,7 @@ class AutoChessAuthService:
             viewer_account_id=viewer_account_id,
             tier_filter=tier_filter,
             limit=limit,
+            ranked_field='ranked_half_hs' if normalize_ruleset(ruleset) == 'half_hs' else 'ranked',
         )
 
     @staticmethod
@@ -646,6 +662,7 @@ class AutoChessAuthService:
                 'token_overrides': {},
                 'stats': {'games': 0, 'wins': 0, 'top2': 0, 'pve_clears': 0},
                 'ranked': default_ranked_profile(),
+                'ranked_half_hs': default_ranked_profile(),
             }
             self.store.put(KIND_ACCOUNT, rec)
             return self.public_account(rec), True

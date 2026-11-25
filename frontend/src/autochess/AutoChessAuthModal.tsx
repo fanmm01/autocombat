@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError } from '../types';
 import { loginAccount, logoutAccount, registerAccount, updateProfile } from './api';
-import type { AutoChessAccount } from './types';
+import type { AutoChessAccount, AutoChessRuleset } from './types';
 
 const AC_PERM_LABELS: Record<string, string> = {
   player_manage: '玩家管理',
@@ -13,6 +13,7 @@ const AC_PERM_LABELS: Record<string, string> = {
 interface Props {
   open: boolean;
   account: AutoChessAccount | null;
+  ruleset?: AutoChessRuleset;
   initialMode?: 'login' | 'register';
   promptMessage?: string;
   onClose: () => void;
@@ -22,6 +23,7 @@ interface Props {
 export function AutoChessAuthModal({
   open,
   account,
+  ruleset = 'standard',
   initialMode = 'login',
   promptMessage,
   onClose,
@@ -36,6 +38,7 @@ export function AutoChessAuthModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const rankedProfile = ruleset === 'half_hs' ? account?.ranked_half_hs : account?.ranked;
 
   useEffect(() => {
     if (!open) return;
@@ -242,22 +245,22 @@ export function AutoChessAuthModal({
           </div>
         ) : (
           <div className="ac-auth-body">
-            {account.ranked && (
+            {rankedProfile && (
               <div className="ac-auth-ranked-card">
                 <div className="ac-auth-ranked-head">
-                  <span className={`ac-tier-badge ac-tier-${account.ranked.rank_info.tier_id}`}>
-                    {account.ranked.rank_info.full_label}
+                  <span className={`ac-tier-badge ac-tier-${rankedProfile.rank_info.tier_id}`}>
+                    {rankedProfile.rank_info.full_label}
                   </span>
-                  <strong>{account.ranked.total_lp} 排位分</strong>
+                  <strong>{rankedProfile.total_lp} {ruleset === 'half_hs' ? '半变身' : '标准'}排位分</strong>
                   <span className="muted" style={{ fontSize: '0.76rem' }}>
-                    {account.ranked.silver_floor_unlocked ? '已解锁白银永不掉青铜保护' : '距白银保护还需晋级白银'}
+                    {rankedProfile.silver_floor_unlocked ? '已解锁白银永不掉青铜保护' : '距白银保护还需晋级白银'}
                   </span>
                 </div>
                 <div className="ac-auth-ranked-meta">
-                  <span>排位 {account.ranked.wins}/{account.ranked.games} 胜 ({account.ranked.firsts}吃鸡)</span>
-                  <span>连胜 {account.ranked.win_streak}</span>
-                  <span>保段卡 {account.ranked.shield_cards}/{account.ranked.shield_card_cap}</span>
-                  <span>局外金币 {account.ranked.coins}</span>
+                  <span>排位 {rankedProfile.wins}/{rankedProfile.games} 胜 ({rankedProfile.firsts}吃鸡)</span>
+                  <span>连胜 {rankedProfile.win_streak}</span>
+                  <span>保段卡 {rankedProfile.shield_cards}/{rankedProfile.shield_card_cap}</span>
+                  <span>局外金币 {rankedProfile.coins}</span>
                 </div>
               </div>
             )}

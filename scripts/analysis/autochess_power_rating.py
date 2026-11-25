@@ -44,12 +44,13 @@ def _ensure_backend_path():
         sys.path.insert(0, _BACKEND)
 
 
-def _run_bout(preset, y_cfgs, x_cfgs, bout_seed):
+def _run_bout(preset, y_cfgs, x_cfgs, bout_seed, ruleset='standard'):
     """Simulate a single Auto-Chess spatial bout under autochess_mode=True."""
+    random.seed(bout_seed)
     md = build_arena_map(preset)
     eng = BattleEngine(display_level=DisplayLevel.WINLOSS, delay=0, quiet=True, max_rounds=22)
-    y_uids, y_sh = ac.apply_autochess_modifiers(eng, 'Y', y_cfgs, ac.compute_active_synergies(y_cfgs))
-    x_uids, x_sh = ac.apply_autochess_modifiers(eng, 'X', x_cfgs, ac.compute_active_synergies(x_cfgs))
+    y_uids, y_sh = ac.apply_autochess_modifiers(eng, 'Y', y_cfgs, ac.compute_active_synergies(y_cfgs), ruleset=ruleset)
+    x_uids, x_sh = ac.apply_autochess_modifiers(eng, 'X', x_cfgs, ac.compute_active_synergies(x_cfgs), ruleset=ruleset)
     ai_map = {c['uid']: AIController(c['uid'], ac.CHAR_DATA_BY_SERIAL[c['serial']], 'Y') for c in y_cfgs}
     ai_map.update({c['uid']: AIController(c['uid'], ac.CHAR_DATA_BY_SERIAL[c['serial']], 'X') for c in x_cfgs})
 
@@ -91,7 +92,7 @@ def _record_unit_stats(eng, res, y_cfgs, x_cfgs, stats, star_override=None):
 def _run_mixed_shard(task):
     """Worker entrypoint: simulate mixed-star 2v2/3v3 bouts for one RNG shard."""
     _ensure_backend_path()
-    shard_seed, count, start_idx, serials = task
+    shard_seed, count, start_idx, serials, ruleset = task
     rng = random.Random(shard_seed)
     bouts = []
     stats = {f'{s}:{st}': [0, 0, 0, 0] for s in serials for st in (1, 2, 3)}
@@ -105,7 +106,7 @@ def _run_mixed_shard(task):
         y_cfgs = [{'uid': f'Y{k}_{s}', 'serial': s, 'star': rng.randint(1, 3)} for k, s in enumerate(pick[:sz])]
         x_cfgs = [{'uid': f'X{k}_{s}', 'serial': s, 'star': rng.randint(1, 3)} for k, s in enumerate(pick[sz:])]
         bseed = rng.randint(1, 10**8)
-        eng, res = _run_bout(preset, y_cfgs, x_cfgs, bseed)
+        eng, res = _run_bout(preset, y_cfgs, x_cfgs, bseed, ruleset)
         rounds_sum += int(res.get('rounds', 0) or 0)
         if res.get('timeout'):
             timeouts += 1
@@ -120,7 +121,7 @@ def _run_mixed_shard(task):
 def _run_peer_shard(task):
     """Worker entrypoint: simulate same-star 2v2/3v3 bouts at a fixed star level."""
     _ensure_backend_path()
-    shard_seed, star, count, serials = task
+    shard_seed, star, count, serials, ruleset = task
     rng = random.Random(shard_seed)
     stats = {s: [0, 0, 0, 0] for s in serials}
     rounds_sum = 0
@@ -132,7 +133,7 @@ def _run_peer_shard(task):
         y_cfgs = [{'uid': f'Y{k}_{s}', 'serial': s, 'star': star} for k, s in enumerate(pick[:sz])]
         x_cfgs = [{'uid': f'X{k}_{s}', 'serial': s, 'star': star} for k, s in enumerate(pick[sz:])]
         bseed = rng.randint(1, 10**8)
-        eng, res = _run_bout(preset, y_cfgs, x_cfgs, bseed)
+        eng, res = _run_bout(preset, y_cfgs, x_cfgs, bseed, ruleset)
         rounds_sum += int(res.get('rounds', 0) or 0)
         if res.get('timeout'):
             timeouts += 1
@@ -143,7 +144,7 @@ def _run_peer_shard(task):
 def _run_focus_shard(task):
     """Worker entrypoint: run high-sample mixed + same-star bouts for one focus star."""
     _ensure_backend_path()
-    shard_seed, focus_serial, star, mix_count, peer_count, serials = task
+    shard_seed, focus_serial, star, mix_count, peer_count, serials, ruleset = task
     others = [s for s in serials if s != focus_serial]
     rng = random.Random(shard_seed)
     mix_bouts = []
@@ -171,7 +172,7 @@ def _run_focus_shard(task):
             ]
             focus_uid, focus_side = f'X0_{focus_serial}', 'X'
         bseed = rng.randint(1, 10**8)
-        eng, res = _run_bout(preset, y_cfgs, x_cfgs, bseed)
+        eng, res = _run_bout(preset, y_cfgs, x_cfgs, bseed, ruleset)
         bst = getattr(eng, '_battle_stats', {}) or {}
         st = bst.get(eng._resolve_uid(focus_uid), {})
         target_stat = peer_stat if same_star else mix_stat
@@ -266,7 +267,7 @@ def compute_composite_power(bt_rating, mix_wr, peer_wr):
     return 100.0 * (0.65 * bt_prob + 0.25 * mix_wr + 0.10 * peer_wr), bt_prob
 
 
-def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam):
+def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam, ruleset='standard'):
     """Run full-roster mixed-star and same-star benchmarks and score all unit tiers."""
     serials = sorted(ac.UNIT_CATALOG.keys(), key=lambda x: int(x[1:]))
     keys = [f'{s}:{st}' for s in serials for st in (1, 2, 3)]
@@ -279,10 +280,10 @@ def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam):
         for idx in range(n_shards):
             cnt = base_cnt + (1 if idx < rem else 0)
             if cnt > 0:
-                mix_tasks.append((seed + idx * 10001, cnt, cursor, serials))
+                mix_tasks.append((seed + idx * 10001, cnt, cursor, serials, ruleset))
                 cursor += cnt
 
-    peer_tasks = [(seed + 30000 + star * 1001, star, peer_bouts, serials) for star in (1, 2, 3)]
+    peer_tasks = [(seed + 30000 + star * 1001, star, peer_bouts, serials, ruleset) for star in (1, 2, 3)]
 
     if workers <= 1:
         mix_results = [_run_mixed_shard(t) for t in mix_tasks]
@@ -322,7 +323,7 @@ def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam):
     by_unit = {s: {} for s in serials}
     for s in serials:
         meta = ac.UNIT_CATALOG[s]
-        base_cost = meta['cost']
+        base_cost = ac.get_unit_cost(s, ruleset)
         for star in (1, 2, 3):
             k = f'{s}:{star}'
             mg, mw, mdmg, mheal = mix_stats[k]
@@ -364,7 +365,7 @@ def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam):
         unit_summaries.append({
             'serial': s,
             'name': meta['name'],
-            'cost': meta['cost'],
+            'cost': ac.get_unit_cost(s, ruleset),
             'role': meta['role'],
             'traits': list(meta['traits']),
             'star1': s1,
@@ -379,6 +380,7 @@ def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam):
     total_games = total_mix_games + peer_bouts * 3
     return {
         'serials': serials,
+        'ruleset': ruleset,
         'rows': sorted(rows, key=lambda r: (-r['power'], r['serial'], r['star'])),
         'by_unit': by_unit,
         'unit_summaries': unit_summaries,
@@ -391,11 +393,11 @@ def evaluate_roster(mix_bouts, peer_bouts, workers, seed, lam):
     }
 
 
-def evaluate_focus(focus_serial, anchor_ratings, focus_mix_per_star, focus_peer_per_star, workers, seed, lam):
+def evaluate_focus(focus_serial, anchor_ratings, focus_mix_per_star, focus_peer_per_star, workers, seed, lam, ruleset='standard'):
     """Run high-precision focused evaluation for a single unit anchored on roster ratings."""
     serials = sorted(ac.UNIT_CATALOG.keys(), key=lambda x: int(x[1:]))
     tasks = [
-        (seed + 70000 + star * 701, focus_serial, star, focus_mix_per_star, focus_peer_per_star, serials)
+        (seed + 70000 + star * 701, focus_serial, star, focus_mix_per_star, focus_peer_per_star, serials, ruleset)
         for star in (1, 2, 3)
     ]
     results = _dispatch_tasks(tasks, _run_focus_shard, workers)
@@ -447,7 +449,7 @@ def evaluate_focus(focus_serial, anchor_ratings, focus_mix_per_star, focus_peer_
     return {
         'serial': focus_serial,
         'name': ac.UNIT_CATALOG[focus_serial]['name'],
-        'cost': ac.UNIT_CATALOG[focus_serial]['cost'],
+        'cost': ac.get_unit_cost(focus_serial, ruleset),
         'scaled_lam': round(scaled_lam, 2),
         'raw_lam': lam,
         'mix_per_star': focus_mix_per_star,
@@ -462,7 +464,7 @@ def evaluate_focus(focus_serial, anchor_ratings, focus_mix_per_star, focus_peer_
 
 def render_markdown(report_data, star1_only=False):
     lines = [
-        '# 自走棋棋子分星级综合强度评估报告',
+        f"# 自走棋棋子分星级综合强度评估报告（{report_data.get('ruleset', 'standard')}）",
         '',
         f'- 生成时间：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
         f'- 样本规模：混星 {report_data["mix_bouts"]} 场 + 同星 {report_data["peer_bouts_per_star"]}×3 场（共 {report_data["total_bouts"]} 场）'
@@ -567,6 +569,7 @@ def render_markdown(report_data, star1_only=False):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description='Auto-Chess multi-star composite strength rating & calibration tool.')
+    parser.add_argument('--ruleset', choices=ac.RULESETS, default=ac.DEFAULT_RULESET)
     parser.add_argument('--mix-bouts', type=int, default=1050, help='Total mixed-star 2v2/3v3 bouts (default: 1050)')
     parser.add_argument('--peer-bouts', type=int, default=260, help='Same-star bouts per star 1★/2★/3★ (default: 260)')
     parser.add_argument('--workers', type=int, default=4, help='Worker processes for parallel simulation (default: 4)')
@@ -596,6 +599,7 @@ def main(argv=None):
         workers=max(1, args.workers),
         seed=args.seed,
         lam=args.lam,
+        ruleset=args.ruleset,
     )
     if focus_serial:
         report_data['focus'] = evaluate_focus(
@@ -606,6 +610,7 @@ def main(argv=None):
             workers=max(1, args.workers),
             seed=args.seed,
             lam=args.lam,
+            ruleset=args.ruleset,
         )
 
     md_text = render_markdown(report_data, star1_only=args.star1_only)

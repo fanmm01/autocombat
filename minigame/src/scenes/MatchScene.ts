@@ -9,6 +9,7 @@ import {
   type AutoChessMatchState,
   type AutoChessOwnedUnit,
   type AutoChessRoomState,
+  type AutoChessRuleset,
 } from '../net/autochessApi';
 import { LongPoller } from '../net/poller';
 import { ApiError } from '../net/transport';
@@ -34,7 +35,7 @@ export interface MatchHost {
   stage: Stage;
   getAccount(): AutoChessAccount | null;
   setAccount(acc: AutoChessAccount | null): void;
-  getCatalog(): AutoChessCatalog | null;
+  getCatalog(ruleset?: AutoChessRuleset): AutoChessCatalog | null;
   backToLobby(): void;
 }
 
@@ -376,12 +377,12 @@ export class MatchScene {
   }
 
   private unitAccent(serial: string): string {
-    const meta = this.host.getCatalog()?.units.find(u => u.serial === serial);
+    const meta = this.host.getCatalog(this.match?.ruleset)?.units.find(u => u.serial === serial);
     return meta?.accent || costColor(meta?.cost || 1);
   }
 
   private unitEmblem(serial: string, isSummon = false): string {
-    const meta = this.host.getCatalog()?.units.find(u => u.serial === serial);
+    const meta = this.host.getCatalog(this.match?.ruleset)?.units.find(u => u.serial === serial);
     if (meta?.emblem) return meta.emblem;
     return isSummon ? 'star' : 'flame';
   }
@@ -473,7 +474,7 @@ export class MatchScene {
     } else if (m.phase === 'finished') {
       this.renderFinishedModal(m);
     }
-    this.wikiModal.render(stage, this.host.getCatalog());
+    this.wikiModal.render(stage, this.host.getCatalog(m.ruleset));
   }
 
   private renderTopHud(padX: number, rightX: number, m: AutoChessMatchState): void {
@@ -513,7 +514,8 @@ export class MatchScene {
               : '回合结算'
             : '已结束';
 
-    drawPill(ctx, padX + 90, 15, 138, 28, 'rgba(156,134,236,0.16)', PALETTE.violet, `${modeLabel} · R${m.round_num}`, PALETTE.textMain, 12);
+    const rulesetPrefix = m.ruleset === 'half_hs' ? '半变身 · ' : '';
+    drawPill(ctx, padX + 90, 15, 138, 28, 'rgba(156,134,236,0.16)', PALETTE.violet, `${rulesetPrefix}${modeLabel} · R${m.round_num}`, PALETTE.textMain, 12);
     drawPill(
       ctx,
       padX + 234,

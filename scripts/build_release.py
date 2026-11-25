@@ -21,8 +21,8 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'releases')
     args = parser.parse_args()
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
-    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){2,3}(?:-[A-Za-z0-9.-]+)?', version):
-        parser.error('VERSION must contain a three- or four-part numeric version')
+    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){2,4}(?:-[A-Za-z0-9.-]+)?', version):
+        parser.error('VERSION must contain a three- to five-part numeric version')
     if not args.skip_frontend_build:
         npm = shutil.which('npm.cmd' if sys.platform == 'win32' else 'npm')
         if not npm:

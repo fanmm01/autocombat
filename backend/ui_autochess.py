@@ -11,7 +11,7 @@ from werkzeug.exceptions import BadRequest, Conflict, Forbidden, NotFound
 
 from arena_presets import ARENA_PRESETS, TERRAIN_DESCRIPTIONS
 from autochess_auth import AuthError, AutoChessAuthService, exchange_wechat_code
-from autochess_catalog import catalog_summary
+from autochess_catalog import catalog_summary, normalize_ruleset
 from autochess_lore import get_story_detail, list_story_index
 from autochess_match import AutoChessMatch
 from ui_origin import check_origin
@@ -268,7 +268,7 @@ class AutoChessUI:
     # ── Catalog ─────────────────────────────────────────────────────────────
 
     def catalog(self):
-        data = catalog_summary()
+        data = catalog_summary(request.args.get('ruleset'))
         data['arenas'] = list(ARENA_PRESETS.values())
         data['terrains'] = TERRAIN_DESCRIPTIONS
         return jsonify(data)
@@ -306,6 +306,7 @@ class AutoChessUI:
                 'id': match.id,
                 'owner': owner,
                 'mode': match.mode,
+                'ruleset': match.ruleset,
                 'ranked_tier': getattr(match, 'ranked_tier', None) if match.mode == 'ranked' else None,
                 'arena_preset': match.arena_preset,
                 'round_num': match.round_num,
@@ -340,6 +341,7 @@ class AutoChessUI:
 
     def ranked_leaderboard(self):
         acc = self._current_account()
+        ruleset = normalize_ruleset(request.args.get('ruleset'))
         tier_filter = request.args.get('tier', 'all')
         try:
             limit = max(1, min(500, int(request.args.get('limit', 100) or 100)))
@@ -349,16 +351,20 @@ class AutoChessUI:
             viewer_account_id=acc['id'] if acc else None,
             tier_filter=tier_filter,
             limit=limit,
+            ruleset=ruleset,
         )
+        board['ruleset'] = ruleset
         return jsonify(board)
 
     def _create_or_resume_ranked_match(self, acc, payload):
         owner = f"acc:{acc['id']}"
+        ruleset = normalize_ruleset(payload.get('ruleset'))
         with self.lock:
             for rec in self.store.list(_STORE_KIND):
                 if (
                     rec.get('owner') == owner
                     and rec.get('mode') == 'ranked'
+                    and normalize_ruleset(rec.get('ruleset')) == ruleset
                     and rec.get('phase') != 'finished'
                 ):
                     match, _ = self._load_match(rec['id'], owner)
@@ -366,10 +372,12 @@ class AutoChessUI:
 
             arena = payload.get('arena_preset', 'autochess_standard')
             seed = payload.get('seed')
-            tier_id = ((acc.get('ranked') or {}).get('rank_info') or {}).get('tier_id', 'bronze')
+            ranked_field = 'ranked_half_hs' if ruleset == 'half_hs' else 'ranked'
+            tier_id = ((acc.get(ranked_field) or {}).get('rank_info') or {}).get('tier_id', 'bronze')
             player_name = str(payload.get('player_name') or acc['display_name'])[:24]
             match = AutoChessMatch(
                 mode='ranked',
+                ruleset=ruleset,
                 ranked_tier=tier_id,
                 arena_preset=arena,
                 seed=seed,
@@ -402,6 +410,7 @@ class AutoChessUI:
                 {
                     'id': rec['id'],
                     'mode': rec.get('mode', 'lobby4'),
+                    'ruleset': normalize_ruleset(rec.get('ruleset')),
                     'ranked_tier': rec.get('ranked_tier'),
                     'arena_preset': rec.get('arena_preset', 'autochess_standard'),
                     'round_num': rec.get('round_num', 1),
@@ -432,7 +441,8 @@ class AutoChessUI:
         default_name = acc['display_name'] if acc else '指挥官'
         player_name = str(payload.get('player_name') or default_name)[:24]
         seed = payload.get('seed')
-        match = AutoChessMatch(mode=mode, arena_preset=arena, seed=seed, player_name=player_name)
+        match = AutoChessMatch(mode=mode, arena_preset=arena, seed=seed, player_name=player_name,
+                               ruleset=payload.get('ruleset'))
         if acc:
             match.commanders[match.player_id]['account_id'] = acc['id']
             match.commanders[match.player_id]['token_overrides'] = dict(acc.get('token_overrides') or {})
@@ -479,7 +489,7 @@ class AutoChessUI:
                 if match.mode == 'ranked':
                     placement = p1.get('placement') or (1 if match.winner_id == match.player_id else 8)
                     updated_acc, settlement = self.auth.record_ranked_result(
-                        acc['id'], placement=placement, match_id=match.id
+                        acc['id'], placement=placement, match_id=match.id, ruleset=match.ruleset
                     )
                     if settlement:
                         match.ranked_settlement = settlement

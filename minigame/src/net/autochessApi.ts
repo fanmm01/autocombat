@@ -6,6 +6,7 @@ import type {
   AutoChessMatchState,
   AutoChessMatchSummary,
   AutoChessRankedSettlement,
+  AutoChessRuleset,
   AutoChessRoomState,
   AutoChessRoomSummary,
   AutoChessStoryDetail,
@@ -32,6 +33,7 @@ export type {
   AutoChessMatchSummary,
   AutoChessOwnedUnit,
   AutoChessRankedSettlement,
+  AutoChessRuleset,
   AutoChessRoomState,
   AutoChessRoomSummary,
   AutoChessRoundReport,
@@ -84,8 +86,9 @@ export function ensureSession(name?: string): Promise<{ id: string; name: string
   });
 }
 
-export function fetchAutoChessCatalog(): Promise<AutoChessCatalog> {
-  return apiRequest<AutoChessCatalog>('/autochess/catalog', { method: 'GET' });
+export function fetchAutoChessCatalog(ruleset: AutoChessRuleset = 'standard'): Promise<AutoChessCatalog> {
+  const path = ruleset === 'half_hs' ? '/autochess/catalog?ruleset=half_hs' : '/autochess/catalog';
+  return apiRequest<AutoChessCatalog>(path, { method: 'GET' });
 }
 
 export function getAuthMe(): Promise<AutoChessAuthState> {
@@ -181,6 +184,7 @@ export async function listAutoChessMatches(playerName?: string): Promise<AutoChe
 
 export async function createAutoChessMatch(params: {
   mode: 'lobby4' | 'pve12';
+  ruleset?: AutoChessRuleset;
   arena_preset: string;
   player_name: string;
 }): Promise<AutoChessMatchState> {
@@ -240,13 +244,14 @@ export function pollAutoChessMatch(
 }
 
 export function createRankedMatch(params: {
+  ruleset?: AutoChessRuleset;
   arena_preset: string;
 }): Promise<{ match: AutoChessMatchState; resumed: boolean }> {
   return apiRequest('/autochess/ranked/matches', { method: 'POST', data: params });
 }
 
-export function fetchRankedLeaderboard(tier = 'all', limit = 100): Promise<AutoChessLeaderboardResponse> {
-  return apiRequest(`/autochess/ranked/leaderboard?tier=${encodeURIComponent(tier)}&limit=${limit}`, {
+export function fetchRankedLeaderboard(tier = 'all', limit = 100, ruleset: AutoChessRuleset = 'standard'): Promise<AutoChessLeaderboardResponse> {
+  return apiRequest(`/autochess/ranked/leaderboard?tier=${encodeURIComponent(tier)}&limit=${limit}&ruleset=${ruleset}`, {
     method: 'GET',
   });
 }

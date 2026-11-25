@@ -19,6 +19,7 @@ import {
   type AutoChessLeaderboardResponse,
   type AutoChessMatchState,
   type AutoChessMatchSummary,
+  type AutoChessRuleset,
 } from '../net/autochessApi';
 import { getSavedPlayerName, setSavedPlayerName } from '../net/transport';
 import {
@@ -40,7 +41,7 @@ export interface LobbyHost {
   stage: Stage;
   getAccount(): AutoChessAccount | null;
   setAccount(acc: AutoChessAccount | null): void;
-  getCatalog(): AutoChessCatalog | null;
+  getCatalog(ruleset?: AutoChessRuleset): AutoChessCatalog | null;
   setCatalog(cat: AutoChessCatalog): void;
   openMatch(match: AutoChessMatchState): void;
   openRooms(): void;
@@ -55,6 +56,7 @@ export class LobbyScene {
   private busy = false;
   private statusText = '正在连接星序云端引擎…';
   private matches: AutoChessMatchSummary[] = [];
+  private ruleset: AutoChessRuleset = 'standard';
   private selectedArena = 'autochess_standard';
   private modal: ModalState = 'none';
   private leaderboard: AutoChessLeaderboardResponse | null = null;
@@ -82,8 +84,9 @@ export class LobbyScene {
       const name = getSavedPlayerName();
       await ensureSession(name);
       this.connected = true;
+      const ruleset = this.ruleset;
       const [cat, auth, savedMatches] = await Promise.all([
-        this.host.getCatalog() ? Promise.resolve(this.host.getCatalog()!) : fetchAutoChessCatalog(),
+        this.host.getCatalog(ruleset) ?? fetchAutoChessCatalog(ruleset),
         getAuthMe().catch(() => ({ authenticated: false, account: null })),
         listAutoChessMatches(name).catch(() => []),
       ]);
@@ -102,6 +105,18 @@ export class LobbyScene {
     }
   }
 
+  private selectRuleset(ruleset: AutoChessRuleset): void {
+    if (ruleset === this.ruleset || this.busy || this.loading) return;
+    void this.runBusy(async () => {
+      if (!this.host.getCatalog(ruleset)) {
+        this.host.setCatalog(await fetchAutoChessCatalog(ruleset));
+      }
+      this.ruleset = ruleset;
+      this.leaderboard = null;
+      this.wikiModal.close();
+    });
+  }
+
   private async runBusy(fn: () => Promise<void>): Promise<void> {
     if (this.busy) return;
     this.busy = true;
@@ -115,12 +130,12 @@ export class LobbyScene {
   }
 
   private currentArena(): AutoChessArenaPreset | null {
-    const arenas = this.host.getCatalog()?.arenas || [];
+    const arenas = this.host.getCatalog(this.ruleset)?.arenas || [];
     return arenas.find(a => a.id === this.selectedArena) || arenas[0] || null;
   }
 
   private cycleArena(): void {
-    const arenas = this.host.getCatalog()?.arenas || [];
+    const arenas = this.host.getCatalog(this.ruleset)?.arenas || [];
     if (arenas.length <= 1) return;
     const idx = arenas.findIndex(a => a.id === this.selectedArena);
     this.selectedArena = arenas[(idx + 1) % arenas.length].id;
@@ -134,7 +149,7 @@ export class LobbyScene {
           this.host.stage.showToast('请先微信一键登录或登录账号再参加排位赛');
           return;
         }
-        const res = await createRankedMatch({ arena_preset: this.selectedArena });
+        const res = await createRankedMatch({ arena_preset: this.selectedArena, ruleset: this.ruleset });
         if (res.resumed) {
           this.host.stage.showToast('已为你恢复进行中的 8 人排位赛');
         }
@@ -145,6 +160,7 @@ export class LobbyScene {
       const playerName = acc?.display_name || getSavedPlayerName();
       const match = await createAutoChessMatch({
         mode,
+        ruleset: this.ruleset,
         arena_preset: this.selectedArena,
         player_name: playerName,
       });
@@ -201,7 +217,7 @@ export class LobbyScene {
     this.lbScroll = 0;
     this.modal = 'leaderboard';
     await this.runBusy(async () => {
-      this.leaderboard = await fetchRankedLeaderboard(tier, 50);
+      this.leaderboard = await fetchRankedLeaderboard(tier, 50, this.ruleset);
     });
   }
 
@@ -209,6 +225,8 @@ export class LobbyScene {
     const stage = this.host.stage;
     const ctx = stage.ctx;
     const acc = this.host.getAccount();
+    const halfHs = this.ruleset === 'half_hs';
+    const ranked = halfHs ? acc?.ranked_half_hs : acc?.ranked;
     const padX = Math.max(24, stage.safeLeft);
     const rightX = 1280 - Math.max(24, stage.safeRight);
 
@@ -272,11 +290,11 @@ export class LobbyScene {
       disabled: !this.connected || this.busy,
     });
 
-    if (acc?.ranked) {
+    if (ranked) {
       rx -= 154;
-      const rk = acc.ranked.rank_info;
+      const rk = ranked.rank_info;
       if (rx > padX + 360) {
-        drawButton(stage, ctx, { x: rx, y: 15, w: 146, h: 38 }, `${rk.full_label} · ${acc.ranked.coins}币`, () => {
+        drawButton(stage, ctx, { x: rx, y: 15, w: 146, h: 38 }, `${rk.full_label} · ${ranked.coins}币`, () => {
           void this.loadLeaderboard('all');
         }, {
           fontSize: 12,
@@ -295,11 +313,17 @@ export class LobbyScene {
     const arena = this.currentArena();
     fillRoundRect(ctx, padX, colY, leftW, 56, 12, PALETTE.bgPanel);
     strokeRoundRect(ctx, padX, colY, leftW, 56, 12, PALETTE.border, 1.2);
-    drawClippedText(ctx, `战场棋盘：${arena ? arena.name : this.selectedArena}`, padX + 18, colY + 20, 420, PALETTE.textMain, '700 16px "PingFang SC", sans-serif');
-    drawClippedText(ctx, arena?.description || this.statusText, padX + 18, colY + 41, 520, PALETTE.textSub, '12px "PingFang SC", sans-serif');
+    drawClippedText(ctx, `战场棋盘：${arena ? arena.name : this.selectedArena}`, padX + 18, colY + 20, 340, PALETTE.textMain, '700 16px "PingFang SC", sans-serif');
+    drawClippedText(ctx, arena?.description || this.statusText, padX + 18, colY + 41, 340, PALETTE.textSub, '12px "PingFang SC", sans-serif');
+    drawButton(stage, ctx, { x: padX + leftW - 348, y: colY + 10, w: 94, h: 36 }, '标准', () => this.selectRuleset('standard'), {
+      fontSize: 13, bg: halfHs ? PALETTE.bgPanel : PALETTE.violetDark, disabled: this.busy || this.loading,
+    });
+    drawButton(stage, ctx, { x: padX + leftW - 244, y: colY + 10, w: 94, h: 36 }, '半变身', () => this.selectRuleset('half_hs'), {
+      fontSize: 13, bg: halfHs ? PALETTE.violetDark : PALETTE.bgPanel, disabled: this.busy || this.loading,
+    });
     drawButton(stage, ctx, { x: padX + leftW - 140, y: colY + 10, w: 126, h: 36 }, '切换棋盘', () => this.cycleArena(), {
       fontSize: 14,
-      disabled: (this.host.getCatalog()?.arenas.length || 0) <= 1,
+      disabled: (this.host.getCatalog(this.ruleset)?.arenas.length || 0) <= 1,
     });
 
     // 2x2 Mode Grid
@@ -323,7 +347,7 @@ export class LobbyScene {
         onTap: () => void this.startMatch('pve12'),
       },
       {
-        title: '4 人标准演习局',
+        title: halfHs ? '半变身 4 人演习局' : '4 人标准演习局',
         en: '4-PLAYER LOBBY',
         desc: '1 名人类指挥官 + 3 名不同流派 AI 同台竞技，快速检验经济运营与追三星策略。',
         badge: '快速对战',
@@ -331,7 +355,7 @@ export class LobbyScene {
         onTap: () => void this.startMatch('lobby4'),
       },
       {
-        title: '8 人排位混战',
+        title: halfHs ? '半变身 8 人排位' : '8 人排位混战',
         en: 'RANKED 8-PLAYER',
         desc: '冲刺青铜到王者段位，支持保段卡与局外星币结算，需登录账号参与。',
         badge: '段位积分',
@@ -355,7 +379,8 @@ export class LobbyScene {
       },
     ];
 
-    modes.forEach((m, idx) => {
+    const visibleModes = halfHs ? modes.slice(1, 3) : modes;
+    visibleModes.forEach((m, idx) => {
       const col = idx % 2;
       const row = Math.floor(idx / 2);
       const x = padX + col * (cardW + 16);
@@ -393,11 +418,11 @@ export class LobbyScene {
         PALETTE.textSub,
         '13px "PingFang SC", sans-serif',
       );
-      if (acc.ranked) {
-        const rk = acc.ranked.rank_info;
+      if (ranked) {
+        const rk = ranked.rank_info;
         drawClippedText(
           ctx,
-          `排位 ${rk.full_label} (${acc.ranked.total_lp} LP) · 保段卡 ${acc.ranked.shield_cards}`,
+          `排位 ${rk.full_label} (${ranked.total_lp} LP) · 保段卡 ${ranked.shield_cards}`,
           rightColX + 28,
           panelY + 114,
           rightColW - 56,
@@ -458,7 +483,8 @@ export class LobbyScene {
         fillRoundRect(ctx, listRect.x, iy, listRect.w, itemH, 10, PALETTE.bgCard);
         strokeRoundRect(ctx, listRect.x, iy, listRect.w, itemH, 10, PALETTE.border, 1);
         const modeTitle = m.mode === 'ranked' ? '8人排位' : m.mode === 'pve12' ? 'PvE 12关' : '4人标准局';
-        drawClippedText(ctx, `${modeTitle} · R${m.round_num}`, listRect.x + 14, iy + 24, listRect.w - 150, PALETTE.textMain, '700 15px "PingFang SC", sans-serif');
+        const rulesetPrefix = m.ruleset === 'half_hs' ? '半变身 · ' : '';
+        drawClippedText(ctx, `${rulesetPrefix}${modeTitle} · R${m.round_num}`, listRect.x + 14, iy + 24, listRect.w - 150, PALETTE.textMain, '700 15px "PingFang SC", sans-serif');
         drawClippedText(ctx, `阶段 ${m.phase} · HP ${m.hp}`, listRect.x + 14, iy + 50, listRect.w - 150, PALETTE.textSub, '12px "PingFang SC", sans-serif');
         drawButton(stage, ctx, { x: listRect.x + listRect.w - 134, y: iy + 19, w: 64, h: 34 }, '继续', () => {
           void this.runBusy(async () => {
@@ -486,7 +512,7 @@ export class LobbyScene {
     } else if (this.modal === 'leaderboard') {
       this.renderLeaderboardModal();
     }
-    this.wikiModal.render(stage, this.host.getCatalog());
+    this.wikiModal.render(stage, this.host.getCatalog(this.ruleset));
   }
 
   private renderAuthModal(): void {
@@ -573,7 +599,7 @@ export class LobbyScene {
     strokeRoundRect(ctx, mx, my, mw, mh, 16, PALETTE.goldSoft, 1.8);
     stage.addHitRegion({ x: mx, y: my, w: mw, h: mh, onTap: () => {} });
 
-    drawClippedText(ctx, '全服 8 人排位段位排行榜', mx + 24, my + 32, 420, PALETTE.gold, '700 20px "PingFang SC", sans-serif');
+    drawClippedText(ctx, this.ruleset === 'half_hs' ? '半变身排位排行榜' : '标准排位排行榜', mx + 24, my + 32, 420, PALETTE.gold, '700 20px "PingFang SC", sans-serif');
     drawButton(stage, ctx, { x: mx + mw - 56, y: my + 14, w: 40, h: 34 }, '✕', () => { this.modal = 'none'; }, { fontSize: 16 });
 
     const tiers = [

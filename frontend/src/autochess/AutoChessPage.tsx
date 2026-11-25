@@ -57,6 +57,7 @@ import {
   type AutoChessMatchSummary,
   type AutoChessOwnedUnit,
   type AutoChessRankedSettlement,
+  type AutoChessRuleset,
   type AutoChessRoomState,
   type AutoChessRoomSummary,
   type AutoChessUnitMeta,
@@ -89,6 +90,8 @@ function sellValue(cost: number, star: number): number {
 
 interface AutoChessPageProps {
   isMobileLandscape: boolean;
+  ruleset: AutoChessRuleset;
+  onRulesetChange: (ruleset: AutoChessRuleset) => void;
   playerName: string;
   account: AutoChessAccount | null;
   guestTokens: Record<string, string>;
@@ -96,7 +99,7 @@ interface AutoChessPageProps {
   onCatalogLoaded?: (cat: AutoChessCatalog) => void;
   onOpenAuth?: (mode?: 'login' | 'register', prompt?: string) => void;
   onOpenTokenEditor?: (serial?: string) => void;
-  onOpenLeaderboard?: () => void;
+  onOpenLeaderboard?: (ruleset: AutoChessRuleset) => void;
   onPlayerNameChange?: (name: string) => Promise<void> | void;
   wikiOpenNonce?: number;
   storyOpenNonce?: number;
@@ -105,6 +108,8 @@ interface AutoChessPageProps {
 
 export function AutoChessPage({
   isMobileLandscape,
+  ruleset,
+  onRulesetChange,
   playerName,
   account,
   guestTokens,
@@ -118,7 +123,7 @@ export function AutoChessPage({
   storyOpenNonce = 0,
   onError,
 }: AutoChessPageProps) {
-  const [catalog, setCatalog] = useState<AutoChessCatalog | null>(null);
+  const [loadedCatalog, setCatalog] = useState<AutoChessCatalog | null>(null);
   const [matches, setMatches] = useState<AutoChessMatchSummary[]>([]);
   const [match, setMatch] = useState<AutoChessMatchState | null>(null);
   const [mode, setMode] = useState<'lobby4' | 'pve12'>('lobby4');
@@ -176,6 +181,21 @@ export function AutoChessPage({
   const resolveAfterStep = useRef(false);
 
   const activeMatch = room?.match ?? match;
+  const viewRuleset = activeMatch ? activeMatch.ruleset ?? 'standard' : ruleset;
+  const catalog = (loadedCatalog?.ruleset ?? 'standard') === viewRuleset ? loadedCatalog : null;
+  const halfHsLobby = ruleset === 'half_hs';
+
+  useEffect(() => {
+    let current = true;
+    fetchAutoChessCatalog(viewRuleset).then(cat => {
+      if (!current) return;
+      setCatalog(cat);
+      onCatalogLoaded?.(cat);
+    }).catch(error => {
+      if (current) onError((error as Error).message);
+    });
+    return () => { current = false; };
+  }, [viewRuleset, onCatalogLoaded, onError]);
   const isPvpRoom = Boolean(room);
 
   const catalogBySerial = useMemo(() => {
@@ -206,18 +226,15 @@ export function AutoChessPage({
 
   const refreshLobby = useCallback(async () => {
     try {
-      const catPromise = catalog ? Promise.resolve(catalog) : fetchAutoChessCatalog();
       const matchPromise = listAutoChessMatches(playerName);
       const roomsPromise = account ? listRooms().catch(() => [] as AutoChessRoomSummary[]) : Promise.resolve([] as AutoChessRoomSummary[]);
-      const [cat, list, roomListRes] = await Promise.all([catPromise, matchPromise, roomsPromise]);
-      setCatalog(cat);
-      onCatalogLoaded?.(cat);
+      const [list, roomListRes] = await Promise.all([matchPromise, roomsPromise]);
       setMatches(list);
       setRooms(roomListRes);
     } catch (e) {
       onError((e as Error).message);
     }
-  }, [account, catalog, onCatalogLoaded, onError, playerName]);
+  }, [account, onError, playerName]);
 
   useEffect(() => {
     void refreshLobby();
@@ -381,7 +398,8 @@ export function AutoChessPage({
     setBusy(true);
     try {
       const created = await createAutoChessMatch({
-        mode,
+        mode: halfHsLobby ? 'lobby4' : mode,
+        ruleset,
         arena_preset: arenaPreset,
         player_name: playerName || '指挥官',
       });
@@ -407,7 +425,7 @@ export function AutoChessPage({
     }
     setBusy(true);
     try {
-      const res = await createRankedMatch({ arena_preset: rankedArena });
+      const res = await createRankedMatch({ arena_preset: rankedArena, ruleset: viewRuleset });
       setRoom(null);
       setMatch(res.match);
       setRankedSettlement(null);
@@ -429,6 +447,7 @@ export function AutoChessPage({
       const loaded = await getAutoChessMatch(id, playerName);
       setRoom(null);
       setMatch(loaded);
+      onRulesetChange(loaded.ruleset ?? 'standard');
       setRankedSettlement(null);
       setConfirmSurrender(false);
       setSelectedId(null);
@@ -921,6 +940,17 @@ export function AutoChessPage({
           </div>
         )}
 
+        <div className="ac-hud-group" role="group" aria-label="自走棋规则集">
+          <button type="button" className={'button ' + (halfHsLobby ? 'subtle' : 'primary')}
+            aria-pressed={!halfHsLobby} onClick={() => onRulesetChange('standard')}>标准模式</button>
+          <button type="button" className={'button ' + (halfHsLobby ? 'primary' : 'subtle')}
+            aria-pressed={halfHsLobby} onClick={() => {
+              onRulesetChange('half_hs');
+              setMode('lobby4');
+              if (lobbyMobileTab === 'pvp') setLobbyMobileTab('ranked');
+            }}>半变身模式（1/2 经典）</button>
+        </div>
+
         <div className="ac-landscape-lobby-tabs" role="tablist" aria-label="手机横屏大厅模式切换">
           <button
             type="button"
@@ -938,9 +968,9 @@ export function AutoChessPage({
             className={lobbyMobileTab === 'pve' ? 'active' : ''}
             onClick={() => setLobbyMobileTab('pve')}
           >
-            ⚔️ 单人 / PvE
+            {halfHsLobby ? '4 人演习' : '⚔️ 单人 / PvE'}
           </button>
-          <button
+          {!halfHsLobby && <button
             type="button"
             role="tab"
             aria-selected={lobbyMobileTab === 'pvp'}
@@ -948,13 +978,13 @@ export function AutoChessPage({
             onClick={() => setLobbyMobileTab('pvp')}
           >
             👥 多人联机
-          </button>
+          </button>}
         </div>
 
         {/* Top Full-Width Ranked Mode Hero */}
         {(() => {
-          const rankedProfile = account?.ranked;
-          const activeRankedSave = matches.find(m => m.mode === 'ranked' && m.phase !== 'finished');
+          const rankedProfile = halfHsLobby ? account?.ranked_half_hs : account?.ranked;
+          const activeRankedSave = matches.find(m => m.mode === 'ranked' && m.phase !== 'finished' && (m.ruleset ?? 'standard') === ruleset);
           const tierNames = [
             { id: 'bronze', label: '青铜 3段 (+100~0)' },
             { id: 'silver', label: '白银 4段 (+75~-25)' },
@@ -969,7 +999,7 @@ export function AutoChessPage({
                 <div>
                   <h3 style={{ margin: 0 }}>
                     <Trophy size={18} style={{ verticalAlign: '-3px', marginRight: 6, color: '#d97706' }} />
-                    8 人混战排位模式 · 全服段位天梯
+                    {halfHsLobby ? '半变身 8 人排位' : '8 人混战排位模式 · 全服段位天梯'}
                   </h3>
                   <small className="muted">
                     7 位随机命名、每段位 12 套差异化策略 AI 混战 · 前 4 上分得金币，白银永不降青铜
@@ -1003,7 +1033,7 @@ export function AutoChessPage({
                     <button type="button" className="button subtle" onClick={() => onOpenAuth?.('register')}>
                       注册账号
                     </button>
-                    <button type="button" className="button subtle" onClick={() => onOpenLeaderboard?.()}>
+                    <button type="button" className="button subtle" onClick={() => onOpenLeaderboard?.(viewRuleset)}>
                       <Trophy size={15} /> 全服排位排行榜
                     </button>
                   </div>
@@ -1093,7 +1123,7 @@ export function AutoChessPage({
                       <button
                         type="button"
                         className="button subtle"
-                        onClick={() => onOpenLeaderboard?.()}
+                        onClick={() => onOpenLeaderboard?.(viewRuleset)}
                       >
                         <Trophy size={15} /> 全服排行榜
                       </button>
@@ -1105,12 +1135,13 @@ export function AutoChessPage({
           );
         })()}
 
-        <div className={'ac-lobby-grid ' + (lobbyMobileTab !== 'ranked' ? 'ac-lobby-grid-mobile-active' : '')}>
+        <div className={'ac-lobby-grid ' + (lobbyMobileTab !== 'ranked' ? 'ac-lobby-grid-mobile-active' : '')}
+          style={halfHsLobby ? { gridTemplateColumns: 'minmax(0, 1fr)' } : undefined}>
           {/* Left Panel: Singleplayer / PvE (Available to Guests & Logged-in Accounts) */}
           <section className={'panel ac-pve-panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pve' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
             <div className="ac-pve-setup">
               <div className="ac-section-head" style={{ marginBottom: 8 }}>
-                <h3 style={{ margin: 0 }}>单人模式 · PvE 试炼与 AI 练习</h3>
+                <h3 style={{ margin: 0 }}>{halfHsLobby ? '半变身 4 人演习' : '单人模式 · PvE 试炼与 AI 练习'}</h3>
                 <span className="ac-badge-free">{account ? '账号云同步中' : '游客免登录可用'}</span>
               </div>
               <div className="ac-mode-pills">
@@ -1119,17 +1150,17 @@ export function AutoChessPage({
                   className={'ac-mode-pill ' + (mode === 'lobby4' ? 'active' : '')}
                   onClick={() => setMode('lobby4')}
                 >
-                  <strong>4 人 AI 锦标大厅</strong>
+                  <strong>{halfHsLobby ? '半变身 4 人大厅' : '4 人 AI 锦标大厅'}</strong>
                   <small>与 3 名策略各异的 AI 指挥官争夺第一名，第 4、8、12 回合可选星序祝福</small>
                 </button>
-                <button
+                {!halfHsLobby && <button
                   type="button"
                   className={'ac-mode-pill ' + (mode === 'pve12' ? 'active' : '')}
                   onClick={() => setMode('pve12')}
                 >
                   <strong>12 波星序试炼 (PvE)</strong>
                   <small>迎战 12 波逐步强化的主题守卫阵营，检验构筑上限</small>
-                </button>
+                </button>}
               </div>
 
               <h4 className="ac-pve-subhead">选择对称战场形制</h4>
@@ -1148,7 +1179,7 @@ export function AutoChessPage({
               </div>
 
               <button className="button primary ac-pve-start-btn" disabled={busy} onClick={handleCreate}>
-                <Sparkles size={16} /> 开启单人 / PvE 对局
+                <Sparkles size={16} /> {halfHsLobby ? '开启半变身 4 人局' : '开启单人 / PvE 对局'}
               </button>
             </div>
 
@@ -1171,6 +1202,7 @@ export function AutoChessPage({
                     <div key={m.id} className="ac-saved-item">
                       <div>
                         <strong>
+                          {m.ruleset === 'half_hs' && '半变身 · '}
                           {m.mode === 'ranked'
                             ? '8人排位赛'
                             : m.mode === 'lobby4'
@@ -1199,7 +1231,7 @@ export function AutoChessPage({
           </section>
 
           {/* Right Panel: Multiplayer Room Mode (Login Required) */}
-          <section className={'panel ac-pvp-panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pvp' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
+          {!halfHsLobby && <section className={'panel ac-pvp-panel ac-lobby-tab-pane ' + (lobbyMobileTab === 'pvp' ? 'ac-lobby-tab-active' : '')} style={{ padding: 16 }}>
             <div className="ac-section-head" style={{ marginBottom: 8 }}>
               <h3 style={{ margin: 0 }}>
                 <Users size={17} style={{ verticalAlign: '-3px', marginRight: 6 }} />
@@ -1366,7 +1398,7 @@ export function AutoChessPage({
                 </div>
               </div>
             )}
-          </section>
+          </section>}
         </div>
 
         {wikiOverlays}
@@ -1618,6 +1650,7 @@ export function AutoChessPage({
           >
             ← 大厅/换局
           </button>
+          {activeMatch.ruleset === 'half_hs' && <span className="ac-stat-chip">半变身</span>}
           {room && <span className="ac-stat-chip ac-room-chip">联机房 {room.code}</span>}
           {activeMatch.mode === 'ranked' && (
             <span className={`ac-tier-badge ac-tier-${activeMatch.ranked_tier || 'bronze'}`}>
@@ -2541,7 +2574,7 @@ export function AutoChessPage({
         }}
         onOpenLeaderboard={() => {
           setRankedSettlement(null);
-          onOpenLeaderboard?.();
+          onOpenLeaderboard?.(viewRuleset);
         }}
         onBackToLobby={() => {
           setRankedSettlement(null);
